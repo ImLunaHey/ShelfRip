@@ -23,20 +23,37 @@ import base64, ctypes, ctypes.wintypes  # noqa: E401,F401
 HERE = pathlib.Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) \
     else pathlib.Path(__file__).resolve().parent
 
+def fail(text: str) -> None:
+    """Show an error: in the console if there is one, else in a message box."""
+    if sys.stdout is not None and sys.stdin is not None:
+        print(text)
+        input("Press Enter to close.")
+    else:
+        try:
+            import desktop
+            desktop.message_box("Shelfrip", text)
+        except Exception:
+            pass
+    sys.exit(1)
+
+
 if (HERE / "app.py").exists():
     os.chdir(HERE)
     sys.path.insert(0, str(HERE))
-    runpy.run_path(str(HERE / "app.py"), run_name="__main__")
+    try:
+        runpy.run_path(str(HERE / "app.py"), run_name="__main__")
+    except SystemExit:
+        raise
+    except Exception:
+        fail("Shelfrip stopped because of an error:\n\n" + traceback.format_exc()[-1500:])
 else:
     try:
         import app  # the copy built into the exe (Build Installer.bat)
     except ImportError:
-        print(f"app.py isn't next to {sys.executable}. Keep the exe in the same folder as the rest of the app.")
-        input("Press Enter to close.")
-        sys.exit(1)
+        fail(f"app.py isn't next to {sys.executable}. Keep the exe in the same folder as the rest of the app.")
     try:
         app.main()
+    except SystemExit:
+        raise
     except Exception:
-        traceback.print_exc()
-        input("Shelfrip stopped because of the error above. Press Enter to close.")
-        sys.exit(1)
+        fail("Shelfrip stopped because of an error:\n\n" + traceback.format_exc()[-1500:])

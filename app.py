@@ -445,6 +445,8 @@ def start_tray(url: str, use_window: bool) -> None:
         items.append(("Pause auto-rip" if RIPPER and RIPPER.auto else "Turn auto-rip on", toggle_auto))
         if console:
             items.append(("Hide log window" if shown["console"] else "Show log window", toggle_console))
+        elif desktop.LOG_PATH.exists():
+            items.append(("Open the log", lambda: desktop.open_file(desktop.LOG_PATH)))
         items += [None, ("Quit Shelfrip", quit_app)]
         return items
 
@@ -906,6 +908,8 @@ def open_server() -> tuple[Server | None, int]:
 
 def main() -> None:
     global RIPPER
+    if desktop.use_log_file():
+        print(f"\n=== Shelfrip {paths.APP_VERSION} started {time.strftime('%Y-%m-%d %H:%M:%S')}")
     srv, port = open_server()
     review.PORT = port
     url = f"http://127.0.0.1:{port}/"
@@ -925,9 +929,9 @@ def main() -> None:
             print(f"  {review.plan_new_folders()} new disc(s) named.")
     except Exception as exc:
         print(f"  couldn't name new rips: {exc}")
-    print(f"Shelfrip: {url}  (keep this window open; use Quit on the page to stop)")
-    if cfg.get("tray_icon", True):
-        start_tray(url, use_window)
+    print(f"Shelfrip: {url}  (quit from the tray icon by the clock, or the Quit button on the page)")
+    if cfg.get("tray_icon", True) or sys.stdout is None or not desktop.owns_console():
+        start_tray(url, use_window)  # with no console window, the tray icon is the way to quit
     if "--background" not in sys.argv:  # started with Windows: don't pop the page open
         threading.Timer(0.8, lambda: desktop.open_window(url, use_window)).start()
     try:
