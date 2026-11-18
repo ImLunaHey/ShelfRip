@@ -385,3 +385,32 @@ class Tray:
         while u.GetMessageW(self.c.byref(msg), None, 0, 0) > 0:
             u.TranslateMessage(self.c.byref(msg))
             u.DispatchMessageW(self.c.byref(msg))
+
+
+# --------------------------------------------------------------------------- pickers
+
+def pick(kind: str = "folder", start: str = "", title: str = "") -> str | None:
+    """Windows' own folder (or .exe file) picker, for the Settings page. '' if cancelled,
+    None if there's no picker on this system."""
+    if os.name != "nt":
+        return None
+    esc = lambda x: str(x or "").replace("'", "''")
+    if kind == "file":
+        ps = ("Add-Type -AssemblyName System.Windows.Forms;"
+              "$d = New-Object System.Windows.Forms.OpenFileDialog;"
+              f"$d.Title = '{esc(title) or 'Choose the program'}'; $d.Filter = 'Programs (*.exe)|*.exe';"
+              f"if ('{esc(start)}') {{ $d.InitialDirectory = Split-Path -Parent '{esc(start)}' }};")
+    else:
+        ps = ("Add-Type -AssemblyName System.Windows.Forms;"
+              "$d = New-Object System.Windows.Forms.FolderBrowserDialog;"
+              f"$d.Description = '{esc(title) or 'Choose a folder'}'; $d.ShowNewFolderButton = $true;"
+              f"if ('{esc(start)}') {{ $d.SelectedPath = '{esc(start)}' }};")
+    ps += ("$o = New-Object System.Windows.Forms.Form; $o.TopMost = $true;"
+           "if ($d.ShowDialog($o) -eq 'OK') { [Console]::OutputEncoding = [Text.Encoding]::UTF8;"
+           + ("$d.FileName" if kind == "file" else "$d.SelectedPath") + " }")
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-STA", "-Command", ps], capture_output=True,
+                           timeout=600, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return r.stdout.decode("utf-8", "replace").strip()
+    except Exception:
+        return None

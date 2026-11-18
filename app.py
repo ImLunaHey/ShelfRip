@@ -809,6 +809,10 @@ class Handler(review.Handler):
                 threading.Thread(target=build_report, daemon=True).start()
                 REPORT.update(state="running", step="Starting")
             return self.send(200, REPORT)
+        if u.path == "/api/pick":  # the Browse buttons on the Settings page
+            b = self.body()
+            got = desktop.pick("file" if b.get("kind") == "file" else "folder", str(b.get("start") or ""), str(b.get("title") or ""))
+            return self.send(200, {"path": got, "available": got is not None})
         if u.path not in ("/api/rip", "/api/settings", "/api/quit"):
             return super().do_POST()
         try:
