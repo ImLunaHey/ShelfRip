@@ -172,6 +172,30 @@ tr.splitrow td{background:var(--card2);border-bottom:1px solid var(--line)}
 .play{border-radius:50%;width:34px;height:34px;padding:0;display:flex;align-items:center;justify-content:center}
 @media (max-width:700px){ td.src{display:none} th.src{display:none} .lvl{min-width:0} .lvl .t{display:none} .poster.big{width:110px;height:162px} }
 #upd{font-size:13px;font-weight:600}
+.setwrap{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
+.setnav{flex:0 1 220px;display:grid;gap:2px;position:sticky;top:80px}
+.setnav button{display:flex;gap:10px;align-items:center;text-align:left;border:0;background:transparent;color:var(--muted);padding:10px 12px;border-radius:10px;font-weight:500}
+.setnav button:hover{background:var(--card2);color:var(--ink)}
+.setnav button.cur{background:var(--card);color:var(--ink);font-weight:600;box-shadow:inset 0 0 0 1px var(--line)}
+.setnav .dot{width:8px;height:8px;border-radius:50%;background:var(--xp);margin-left:auto}
+.setbody{flex:999 1 520px;min-width:0;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:24px}
+.setbody h2{margin:0;font-size:22px} .setbody .intro{margin:4px 0 0;color:var(--muted)}
+.sgroup{display:grid;margin-top:12px}
+.srow{display:flex;gap:16px 24px;align-items:center;flex-wrap:wrap;padding:16px 0;border-top:1px solid var(--line)}
+.srow .lbl{flex:1 1 280px;min-width:0} .srow .lbl>label{font-weight:600}
+.srow .help{color:var(--muted);font-size:13px;margin-top:3px}
+.srow .ctl{flex:1 1 360px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.srow .ctl input,.srow .ctl select{flex:1 1 220px;min-width:0;padding:8px 10px}
+.srow .ctl input.short{flex:0 1 110px}
+.srow .unit{color:var(--muted)}
+.srow.sw{flex-wrap:nowrap}
+.switch.bare{border:0;background:transparent;padding:0}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.saved{font-size:12px;color:var(--ok);opacity:0;transition:opacity .3s;min-width:56px} .saved.on{opacity:1} .saved.err{color:var(--err)}
+.advtoggle{margin-top:14px;background:transparent;border-color:var(--line2);color:var(--muted)}
+.foot2{color:var(--muted);font-size:12px;margin:24px 0 0;border-top:1px solid var(--line);padding-top:14px}
+@media (max-width:760px){.setnav{position:static;flex-basis:100%;grid-auto-flow:column;overflow-x:auto}.setnav button span{white-space:nowrap}}
+
 </style>
 </head>
 <body>
@@ -1144,7 +1168,7 @@ function wizard(j){
 function wireWizard(el){
   const b = $("#wizsave", el);
   if (!b) return;
-  if ($("#wizall", el)) $("#wizall", el).onclick = () => { $(".set", el).style.display = ""; $("#wizall", el).remove(); };
+  if ($("#wizall", el)) $("#wizall", el).onclick = () => renderSettings();
   b.onclick = async () => {
     const values = {};
     el.querySelectorAll("[data-w]").forEach(i => {
@@ -1162,36 +1186,153 @@ function wireWizard(el){
     } catch(e){ $("#wizmsg").textContent = e.message; }
   };
 }
+// ------------------------------------------------------------------ Settings
+// Grouped, in plain words. Each change saves on its own (no Save button to forget).
+const SET_GROUPS = [
+  {id:"library", name:"Library and folders", icon:"M3 7h6l2 2h10v10H3z", intro:"Where discs are ripped to, and where finished files go.", items:[
+    ["plex_library_root", "Media library folder", "The folder that holds (or will hold) your Movies and TV Shows folders.", {pick:"folder"}],
+    ["output_root", "Rip folder", "Discs are ripped here first, then moved into your library once you've checked the names. Needs room: about 50 GB per Blu-ray, 100 GB per 4K disc.", {pick:"folder"}],
+    ["media_server", "Media server", "Files are named the way it expects."],
+    ["format_folders", "Keep each format in its own folder", "Movies\\Blu-Ray\\…, Movies\\DVD\\… instead of one Movies folder."],
+    ["music_library_root", "Music library folder", "Leave empty to use a Music folder inside your media library.", {pick:"folder", adv:1}],
+  ]},
+  {id:"ripping", name:"Ripping", icon:"M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0-18 0M12 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0", intro:"What happens when a disc goes in.", items:[
+    ["auto_rip", "Start with auto-rip on", "Rip every disc as soon as it's inserted, from the moment Shelfrip opens."],
+    ["check_plex_before_rip", "Skip discs you already have", "If your library already has it in the same or better quality, the disc isn't ripped. You can still click Rip anyway."],
+    ["retry_failed_titles", "Retry titles that hit read errors", "Tries once more before giving up on a scratched section."],
+    ["eject_when_done", "Eject as soon as the rip finishes", "Normally the disc stays in until you file it, so you can check its extras."],
+    ["min_length_seconds", "Ignore titles shorter than", "Menus, logos and warnings.", {unit:"seconds", adv:1}],
+    ["min_free_gb_rips", "Keep this much space free in the rip folder", "A rip waits if there's less than this.", {unit:"GB", adv:1}],
+    ["watch_poll_seconds", "Check the drives every", "", {unit:"seconds", adv:1}],
+  ]},
+  {id:"filing", name:"Review and filing", icon:"M5 13l4 4L19 7", intro:"How discs get from the rip folder into your library.", items:[
+    ["auto_file", "File discs automatically when everything matched", "Only discs Shelfrip is sure about; anything uncertain waits for you."],
+    ["auto_file_minutes", "…after waiting", "Time to step in first. Touching a disc on the Review tab holds it for you.", {unit:"minutes"}],
+    ["eject_after_filing", "Eject each disc once it's filed", ""],
+    ["skip_extras_under_seconds", "Mark extras shorter than this as Skip", "You can still keep them on the Review tab.", {unit:"seconds", adv:1}],
+    ["audio_language", "Default audio language", "Three-letter code, for example eng, jpn or fra. That track plays first.", {short:1}],
+    ["subtitle_language", "Turn on subtitles in", "Leave empty for no subtitles by default.", {short:1}],
+    ["forced_subtitles", "Show forced subtitles automatically", "The lines shown when characters speak another language."],
+  ]},
+  {id:"names", name:"Names and lookups", icon:"M4 6h16M4 12h10M4 18h7", intro:"Where movie, episode and extras names come from.", items:[
+    ["tmdb_api_key", "TMDB key", "Needed: TMDB is where every movie and episode name comes from. Free.", {link:"https://www.themoviedb.org/settings/api", linkText:"Get a free key"}],
+    ["use_community", "Use the shared Shelfrip disc database", "Discs other people have already named are recognised straight away."],
+    ["share_discs", "Share what I file", "Anonymous: only the disc's fingerprint, title lengths and the names you chose. Makes the next person's rip of the same disc more reliable."],
+    ["use_dvdcompare", "Also look up extras on DVDCompare", "Reads DVDCompare's web pages for extras lists by release."],
+    ["omdb_api_key", "OMDb key", "Optional second opinion on a movie's year and length.", {link:"https://www.omdbapi.com/apikey.aspx", linkText:"Get a free key", adv:1}],
+  ]},
+  {id:"plex", name:"Plex", icon:"M8 5l10 7-10 7z", intro:"Optional: lets Shelfrip check what Plex matched after filing.", only:"plex", items:[
+    ["plex_url", "Plex address", "For example http://localhost:32400"],
+    ["plex_token", "Plex token", "", {link:"https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/", linkText:"How to find it"}],
+  ]},
+  {id:"music", name:"Music CDs", icon:"M9 18V5l12-2v13M9 18a3 3 0 1 1-6 0a3 3 0 0 1 6 0M21 16a3 3 0 1 1-6 0a3 3 0 0 1 6 0", intro:"Ripped to FLAC with cyanrip, named from MusicBrainz.", items:[
+    ["music_lyrics", "Save lyrics next to tracks", "From LRCLIB, as .lrc (synced) or .txt files."],
+    ["cyanrip_path", "cyanrip", "Leave empty to use the copy in Shelfrip's tools folder.", {pick:"file", adv:1}],
+    ["cd_offsets", "CD drive read offsets", "For AccurateRip, for example D:6, E:667.", {adv:1}],
+  ]},
+  {id:"tools", name:"Programs", icon:"M14 7l3 3l4-4l-3-3zM3 21l9-9", intro:"Shelfrip finds these by itself; change them only if it can't.", items:[
+    ["makemkvcon_path", "MakeMKV (makemkvcon64.exe)", "Does the ripping.", {pick:"file"}],
+    ["mkvtoolnix_dir", "MKVToolNix folder", "Splits TV discs that hold several episodes in one video.", {pick:"folder"}],
+  ]},
+  {id:"alerts", name:"Notifications", icon:"M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10 21h4", intro:"", items:[
+    ["notifications", "Windows notifications", "When a rip finishes or a disc is filed."],
+    ["phone_notify_url", "Phone alerts", "An ntfy.sh topic address, for example https://ntfy.sh/your-topic. Install the ntfy app and subscribe to the same topic."],
+  ]},
+  {id:"app", name:"Shelfrip", icon:"M4 4h16v12H4zM8 20h8", intro:"", items:[
+    ["job_total_discs", "Your goal", "How many discs you plan to rip, for the ring on the Home tab. 0 = no goal.", {unit:"discs", short:1}],
+    ["app_window", "Open in its own window", "Instead of a browser tab."],
+    ["tray_icon", "Keep running by the clock when the window is closed", "Quit from the icon's menu."],
+    ["check_updates", "Tell me when a new version is out", ""],
+  ]},
+];
+let SETS = null, SETGROUP = "library", SHOWADV = false;
+const statusOf = n => (SETS.setup || []).find(x => x.name === n) || {};
+const SET_STATUS = {output_root:"Rip folder", plex_library_root:"Media library folder", makemkvcon_path:"MakeMKV", mkvtoolnix_dir:"MKVToolNix", tmdb_api_key:"TMDB key", cyanrip_path:"cyanrip (music CDs)"};
+function setField(row, meta){
+  const [key, label, help, o = {}] = meta, v = row.value, id = "s_" + key;
+  const st = SET_STATUS[key] ? statusOf(SET_STATUS[key]) : null;
+  const flag = st && st.name ? `<span class="chip ${st.ok ? "good" : st.required ? "warnc" : ""}">${st.ok ? "✓ found" : st.required ? "needed" : "not found"}</span>` : "";
+  const link = o.link ? `<a href="${esc(o.link)}" target="_blank" rel="noopener">${esc(o.linkText || "More")}</a>` : "";
+  const helpHtml = (help || link || (st && !st.ok && st.detail)) ? `<div class="help">${esc(help)}${help && link ? " " : ""}${link}${st && !st.ok && st.detail && row.kind !== "secret" ? `<div class="${st.required ? "err" : ""}">${esc(st.detail)}${st.link && !o.link ? ` · <a href="${esc(st.link)}" target="_blank" rel="noopener">Download</a>` : ""}</div>` : ""}</div>` : "";
+  if (row.kind === "bool") return `<div class="srow sw"><div class="lbl"><label for="${id}">${esc(label)}</label>${helpHtml}</div>
+      <label class="switch bare"><input type="checkbox" id="${id}" data-k="${key}" ${v ? "checked" : ""}><span class="tog"></span><span class="sr">${esc(label)}</span></label><span class="saved" data-saved="${key}"></span></div>`;
+  let ctl;
+  if (row.kind === "secret") ctl = v
+    ? `<span class="chip good">✓ saved</span><button data-change="${key}">Change</button><input type="password" id="${id}" data-k="${key}" class="hide" autocomplete="off" placeholder="paste the new one">`
+    : `<input type="password" id="${id}" data-k="${key}" autocomplete="off" placeholder="paste it here">`;
+  else if (row.kind === "select") ctl = `<select id="${id}" data-k="${key}">${(row.choices||[]).map(c => `<option value="${esc(c.value)}" ${c.value === v ? "selected" : ""}>${esc(c.label)}</option>`).join("")}</select>`;
+  else ctl = `<input id="${id}" data-k="${key}" type="${row.kind === "number" ? "number" : "text"}" ${row.kind === "number" ? 'min="0"' : ""} value="${esc(v)}" class="${o.unit || o.short ? "short" : ""}" ${key.endsWith("_root") || key.endsWith("_dir") || key.endsWith("_path") ? 'spellcheck="false"' : ""}>`
+    + (o.unit ? `<span class="unit">${esc(o.unit)}</span>` : "")
+    + (o.pick ? `<button data-pick="${key}" data-kind="${o.pick}">Browse…</button>` : "");
+  return `<div class="srow"><div class="lbl"><label for="${id}">${esc(label)}</label> ${flag}${helpHtml}</div><div class="ctl">${ctl}<span class="saved" data-saved="${key}"></span></div></div>`;
+}
+function renderSettings(){
+  const el = $("#settingsTab"), j = SETS;
+  const rows = Object.fromEntries(j.settings.map(r => [r.key, r]));
+  const server = (rows.media_server || {}).value;
+  const groups = SET_GROUPS.filter(g => !g.only || g.only === server);
+  const known = new Set(SET_GROUPS.flatMap(g => g.items.map(i => i[0])));
+  const extra = j.settings.filter(r => !known.has(r.key)).map(r => [r.key, r.label, ""]);
+  if (extra.length) groups.push({id:"other", name:"Other", icon:"M4 12h16", intro:"", items:extra});
+  if (!groups.some(g => g.id === SETGROUP)) SETGROUP = groups[0].id;
+  const need = (j.setup||[]).filter(x => x.required && !x.ok);
+  const g = groups.find(x => x.id === SETGROUP);
+  const items = g.items.filter(m => rows[m[0]]);
+  const basic = items.filter(m => !(m[3] || {}).adv), adv = items.filter(m => (m[3] || {}).adv);
+  const icon = d => `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"/></svg>`;
+  const groupNeeds = gg => gg.items.some(m => SET_STATUS[m[0]] && need.some(x => x.name === SET_STATUS[m[0]]));
+  el.innerHTML = `
+    ${need.length ? `<div class="warn" style="margin-bottom:16px"><b>Shelfrip needs ${need.length === 1 ? "one more thing" : need.length + " more things"} before it can rip:</b> ${need.map(x => esc(x.name)).join(", ")}.</div>` : ""}
+    <div class="setwrap">
+      <nav class="setnav" aria-label="Settings sections">${groups.map(x => `<button data-g="${x.id}" class="${x.id === SETGROUP ? "cur" : ""}" aria-current="${x.id === SETGROUP}">${icon(x.icon)}<span>${esc(x.name)}</span>${groupNeeds(x) ? `<i class="dot" title="Needs attention"></i>` : ""}</button>`).join("")}</nav>
+      <section class="setbody">
+        <h2>${esc(g.name)}</h2>${g.intro ? `<p class="intro">${esc(g.intro)}</p>` : ""}
+        <div class="sgroup">${basic.map(m => setField(rows[m[0]], m)).join("")}</div>
+        ${adv.length ? `<button class="advtoggle" id="advt" aria-expanded="${SHOWADV}">${SHOWADV ? "Hide" : "Show"} more options (${adv.length})</button>
+          <div class="sgroup ${SHOWADV ? "" : "hide"}">${adv.map(m => setField(rows[m[0]], m)).join("")}</div>` : ""}
+        <p class="foot2">Saved as you go, in ${esc(j.path)}. Keys are never shown again once saved.<br>
+          Shelfrip ${esc((j.version||{}).current || "")}. This product uses the TMDB API but is not endorsed or certified by <a href="https://www.themoviedb.org/" target="_blank" rel="noopener">TMDB</a>.
+          Ripping is done by MakeMKV, which you install and license yourself.</p>
+      </section>
+    </div>`;
+  el.querySelectorAll("[data-g]").forEach(b => b.onclick = () => { SETGROUP = b.dataset.g; renderSettings(); });
+  if ($("#advt", el)) $("#advt", el).onclick = () => { SHOWADV = !SHOWADV; renderSettings(); };
+  el.querySelectorAll("[data-change]").forEach(b => b.onclick = () => { const i = $("#s_" + b.dataset.change, el); i.classList.remove("hide"); i.focus(); b.remove(); });
+  el.querySelectorAll("[data-k]").forEach(i => i.onchange = () => saveOne(i));
+  el.querySelectorAll("[data-pick]").forEach(b => b.onclick = async () => {
+    const i = $("#s_" + b.dataset.pick, el);
+    b.disabled = true;
+    try {
+      const r = await api("/api/pick", {kind: b.dataset.kind, start: i.value, title: i.closest(".srow").querySelector("label").textContent});
+      if (r.available === false) { i.focus(); toast("Type the path", "There's no folder picker on this computer."); }
+      else if (r.path) { i.value = r.path; await saveOne(i); }
+    } finally { b.disabled = false; }
+  });
+}
+async function saveOne(i){
+  const k = i.dataset.k, mark = $(`[data-saved="${k}"]`);
+  let v = i.type === "checkbox" ? i.checked : i.value.trim();
+  if (i.type === "password" && !v) return;
+  try {
+    const r = await api("/api/settings", {values: {[k]: v}});
+    SETS = r;
+    if (i.type === "password" || k === "media_server" || SET_STATUS[k]) renderSettings();
+    const m2 = $(`[data-saved="${k}"]`);
+    if (m2){ m2.textContent = "✓ Saved"; m2.className = "saved on"; setTimeout(() => m2 && (m2.className = "saved"), 1800); }
+    if (["output_root","plex_library_root","media_server","format_folders"].includes(k)) load(false);
+    if (k === "job_total_discs") loadProgress(false);
+  } catch(e){ if (mark){ mark.textContent = e.message; mark.className = "saved on err"; } }
+}
 async function loadSettings(){
   const el = $("#settingsTab");
   const j = await api("/api/settings");
-  const needs = (j.setup||[]).some(x => !x.ok && x.required);
-  el.innerHTML = `${j.first_run || needs ? wizard(j) : `<div style="max-width:760px">${setupBox(j.setup||[], "Setup check")}</div>`}<div class="set" ${j.first_run ? 'style="display:none"' : ""}>
-    ${j.settings.map(s => s.kind === "bool"
-      ? `<label class="chk"><input type="checkbox" data-k="${s.key}" ${s.value ? "checked" : ""}> ${esc(s.label)}</label>`
-      : s.kind === "secret"
-      ? `<label>${esc(s.label)} <span class="${s.value ? "ok" : "err"}">${s.value ? "✓ set" : "not set"}</span>
-           <input type="password" data-k="${s.key}" autocomplete="off" placeholder="${s.value ? "leave empty to keep the current one" : "paste it here"}"></label>`
-      : s.kind === "select"
-      ? `<label>${esc(s.label)}<select data-k="${s.key}">${(s.choices||[]).map(c => `<option value="${esc(c.value)}" ${c.value === s.value ? "selected" : ""}>${esc(c.label)}</option>`).join("")}</select></label>`
-      : `<label>${esc(s.label)}<input type="${s.kind === "number" ? "number" : "text"}" data-k="${s.key}" value="${esc(s.value)}"></label>`).join("")}
-    <div class="row"><button class="primary" id="saveset">Save settings</button><span id="setmsg" style="color:var(--muted)"></span></div>
-    <div style="color:var(--muted);font-size:12px">Saved in ${esc(j.path)}. Keys are never shown here once saved.</div>
-    <div style="color:var(--muted);font-size:12px">Shelfrip ${esc((j.version||{}).current || "")}. This product uses the TMDB API but is not endorsed or certified by
-      <a href="https://www.themoviedb.org/" target="_blank" rel="noopener">TMDB</a>. Ripping is done by MakeMKV, which you install and license yourself.
-      Extras names also come from TheDiscDB${j.settings.some(s => s.key === "use_dvdcompare" && s.value) ? ", DVDCompare" : ""} and TVmaze; music from MusicBrainz and LRCLIB.</div>
-  </div>`;
-  wireWizard(el);
-  $("#saveset", el).onclick = async () => {
-    const values = {};
-    el.querySelectorAll("[data-k]").forEach(i => {
-      if (i.type === "checkbox") values[i.dataset.k] = i.checked;
-      else if (i.type === "password") { if (i.value.trim()) values[i.dataset.k] = i.value.trim(); }
-      else values[i.dataset.k] = i.value;
-    });
-    try { await api("/api/settings", {values}); await loadSettings(); $("#setmsg").textContent = "Saved."; await load(false); }
-    catch(e){ $("#setmsg").textContent = e.message; }
-  };
+  SETS = j;
+  if (j.first_run){  // first start: just the essentials, one step at a time
+    el.innerHTML = wizard(j) + `<div id="setfull"></div>`;
+    wireWizard(el);
+    return;
+  }
+  renderSettings();
 }
 (async () => {
   try { await api("/api/drives"); APP = true; } catch(e){ APP = false; }
