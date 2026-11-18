@@ -88,12 +88,31 @@ def _find_browser() -> str | None:
     return shutil.which("msedge") or shutil.which("chrome")
 
 
+def _window_box() -> list[str]:
+    """Size and place the window to fit the screen it opens on (inside the taskbar), centred.
+    Sizes are in the same scaled units Edge uses, so 125% or 150% display scaling is fine."""
+    w, h, x0, y0 = 1320, 900, 0, 0
+    try:
+        import ctypes
+
+        class RECT(ctypes.Structure):
+            _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long), ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+        r = RECT()
+        if ctypes.WinDLL("user32").SystemParametersInfoW(0x30, 0, ctypes.byref(r), 0):  # SPI_GETWORKAREA
+            aw, ah = r.right - r.left, r.bottom - r.top
+            w, h = min(w, int(aw * 0.92)), min(h, int(ah * 0.9))
+            x0, y0 = r.left + (aw - w) // 2, r.top + (ah - h) // 2
+    except Exception:
+        return ["--window-size=1280,760"]
+    return [f"--window-size={w},{h}", f"--window-position={x0},{y0}"]
+
+
 def open_window(url: str, use_window: bool = True) -> None:
     """Open Shelfrip in its own window (falls back to a browser tab)."""
     exe = _find_browser() if use_window else None
     if exe:
         try:
-            subprocess.Popen([exe, f"--app={url}", "--window-size=1320,900", "--no-first-run",
+            subprocess.Popen([exe, f"--app={url}", *_window_box(), "--no-first-run",
                               "--no-default-browser-check"],
                              creationflags=getattr(subprocess, "DETACHED_PROCESS", 0) |
                              getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
