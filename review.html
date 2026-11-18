@@ -1313,6 +1313,9 @@ async function saveOne(i){
   const k = i.dataset.k, mark = $(`[data-saved="${k}"]`);
   let v = i.type === "checkbox" ? i.checked : i.value.trim();
   if (i.type === "password" && !v) return;
+  if (i.type === "number" && (v === "" || isNaN(+v) || +v < 0)){  // not a number: put the saved value back
+    const row = SETS.settings.find(r => r.key === k); i.value = row ? row.value : ""; return;
+  }
   try {
     const r = await api("/api/settings", {values: {[k]: v}});
     SETS = r;
@@ -1354,6 +1357,7 @@ async function loadSettings(){
       j = await api("/api/quit", {force:true});
     }
     document.body.innerHTML = `<p class="empty">Shelfrip has stopped. You can close this window.</p>`;
+    setTimeout(() => { try { window.close(); } catch(e){} }, 1200);  // the app window can close itself
   };
 })();
 

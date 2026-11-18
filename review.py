@@ -258,9 +258,12 @@ def auto_file_tick(log=print) -> list[str]:
     return started
 
 
+RESERVED = {"_filed", "_contribute"}  # Shelfrip's own folders in the rip folder, never a disc
+
+
 def folder_path(name: str) -> Path:
     p = (RIP_ROOT / name).resolve()
-    if p.parent != RIP_ROOT.resolve():
+    if p.parent != RIP_ROOT.resolve() or p.name.lower() in RESERVED:
         raise ValueError("bad folder")
     return p
 
@@ -455,6 +458,14 @@ def same_volume(src: Path, dst_dir: Path) -> bool:
         return False
 
 
+def _forget_progress() -> None:
+    try:
+        import progress
+        progress.forget_cache()
+    except Exception:
+        pass
+
+
 def copy_with_progress(src: Path, dst: Path, job: dict) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     if same_volume(src, dst.parent):
@@ -530,6 +541,7 @@ def file_music_job(folder: Path, plan: dict) -> None:
             if ej:
                 job["note"] = "; ".join(x for x in (job.get("note"), f"Disc {ej[8:]} ejected") if x)
         job.update(state="done", current=f"Filed {len(filed)} tracks")
+        _forget_progress()
         job["plex"] = {"state": "starting", "summary": "Asking Plex to scan…"}
         threading.Thread(target=music.plex_scan, args=(CFG, music.album_dir(plan, CFG), job["plex"]),
                          daemon=True).start()
@@ -546,8 +558,8 @@ def file_job(folder: Path, plan: dict) -> None:
     job = JOBS[name]
     disc_info = read_disc_info(folder)
     moves = [it for it in plan["items"] if it.get("action") == "move"]
-    job["total_bytes"] = sum((folder / it["source"]).stat().st_size for it in moves)
     try:
+        job["total_bytes"] = sum((folder / it["source"]).stat().st_size for it in moves)
         for i, it in enumerate(moves, 1):
             if it.get("needs_split"):
                 # cut each episode out (no re-encoding) next to the rip, then move it into the library
@@ -601,7 +613,6 @@ def file_job(folder: Path, plan: dict) -> None:
             contrib_note = f"couldn't prepare the TheDiscDB package ({exc})"
         filed = [f for it in moves for f in (it["filed_to"] if isinstance(it["filed_to"], list) else [it["filed_to"]])]
         missing = [f for f in filed if not Path(f).exists()]
-        waiting = []
         if missing:
             job["note"] = "; ".join(x for x in (f"Filed, but {len(missing)} file(s) aren't showing in the library yet, so the rip folder was kept.", job.get("note")) if x)
         else:
@@ -627,6 +638,7 @@ def file_job(folder: Path, plan: dict) -> None:
             if ej:
                 job["note"] = "; ".join(x for x in (job.get("note"), f"Disc {ej[8:]} ejected") if x)
         job.update(state="done", current=f"Filed {len(filed)} files")
+        _forget_progress()
         library(refresh=True)
         # ask Plex to scan the new files and check it matched them to the right TMDB entry
         import plex
@@ -643,6 +655,16 @@ def file_job(folder: Path, plan: dict) -> None:
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):  # keep the console quiet
         pass
+
+    def parse_request(self) -> bool:
+        """Only answer requests addressed to this computer's own Shelfrip. Stops a web page from
+        reaching it through a look-alike address that points at 127.0.0.1 (DNS rebinding)."""
+        if not super().parse_request():
+            return False
+        if (self.headers.get("Host") or "").lower() not in (f"127.0.0.1:{PORT}", f"localhost:{PORT}"):
+            self.send_error(403, "Forbidden")
+            return False
+        return True
 
     def send(self, code: int, body, ctype="application/json"):
         data = body if isinstance(body, bytes) else json.dumps(body).encode("utf-8")
