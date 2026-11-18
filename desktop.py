@@ -107,6 +107,47 @@ def open_window(url: str, use_window: bool = True) -> None:
 
 # --------------------------------------------------------------------------- console
 
+LOG_PATH = paths.DATA_DIR / "shelfrip.log"
+
+
+def use_log_file() -> bool:
+    """Started without a console window (Shelfrip.exe, pythonw)? Send what would have been
+    printed there to shelfrip.log in the data folder instead. Returns True if it did."""
+    import sys
+    if sys.stdout is not None and sys.stderr is not None:
+        return False
+    try:
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        if LOG_PATH.exists() and LOG_PATH.stat().st_size > 5_000_000:
+            LOG_PATH.replace(LOG_PATH.with_suffix(".old.log"))
+        f = open(LOG_PATH, "a", encoding="utf-8", buffering=1, errors="replace")
+        sys.stdout = sys.stdout or f
+        sys.stderr = sys.stderr or f
+        return True
+    except OSError:
+        return False
+
+
+def message_box(title: str, text: str) -> None:
+    """A plain Windows message box (for errors when there's no console to print them to)."""
+    if os.name != "nt":
+        print(f"{title}: {text}")
+        return
+    try:
+        import ctypes
+        u32 = ctypes.WinDLL("user32")
+        u32.MessageBoxW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint]
+        u32.MessageBoxW(None, text, title, 0x10 | 0x40000)  # MB_ICONERROR | MB_TOPMOST
+    except Exception:
+        pass
+
+
+def open_file(path: Path) -> None:
+    try:
+        os.startfile(str(path))  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
 def _console():
     import ctypes
     k32 = ctypes.WinDLL("kernel32")
@@ -123,7 +164,9 @@ def owns_console() -> bool:
         if not hwnd:
             return False
         ids = (ctypes.c_uint32 * 4)()
-        return k32.GetConsoleProcessList(ids, 4) <= 1
+        import sys
+        # a one-file exe runs as two processes (unpacker + app) sharing the console
+        return k32.GetConsoleProcessList(ids, 4) <= (2 if getattr(sys, "frozen", False) else 1)
     except Exception:
         return False
 

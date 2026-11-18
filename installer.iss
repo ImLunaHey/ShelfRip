@@ -50,13 +50,13 @@ Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs 
 Type: filesandordirs; Name: "{app}\_internal"
 
 [Icons]
-Name: "{group}\Shelfrip"; Filename: "{app}\Shelfrip.exe"; WorkingDir: "{app}"; Flags: runminimized
+Name: "{group}\Shelfrip"; Filename: "{app}\Shelfrip.exe"; WorkingDir: "{app}"
 Name: "{group}\Uninstall Shelfrip"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\Shelfrip"; Filename: "{app}\Shelfrip.exe"; WorkingDir: "{app}"; Flags: runminimized; Tasks: desktopicon
-Name: "{userstartup}\Shelfrip"; Filename: "{app}\Shelfrip.exe"; Parameters: "--background"; WorkingDir: "{app}"; Flags: runminimized; Tasks: startup
+Name: "{autodesktop}\Shelfrip"; Filename: "{app}\Shelfrip.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{userstartup}\Shelfrip"; Filename: "{app}\Shelfrip.exe"; Parameters: "--background"; WorkingDir: "{app}"; Tasks: startup
 
 [Run]
-Filename: "{app}\Shelfrip.exe"; Description: "Open Shelfrip now"; Flags: nowait postinstall skipifsilent runminimized
+Filename: "{app}\Shelfrip.exe"; Description: "Open Shelfrip now"; Flags: nowait postinstall skipifsilent
 
 ; Your settings and disc database (%APPDATA%\Shelfrip) are kept when uninstalling, so a
 ; reinstall picks up where you left off. Delete that folder by hand to remove them too.

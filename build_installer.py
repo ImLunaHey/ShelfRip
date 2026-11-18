@@ -56,7 +56,7 @@ def main() -> int:
     dist, work = OUT / "dist", OUT / "work"
     for d in (dist, work):
         shutil.rmtree(d, ignore_errors=True)
-    cmd = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--onedir", "--console", "--name", NAME,
+    cmd = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--onedir", "--windowed", "--name", NAME,
            "--distpath", str(dist), "--workpath", str(work), "--specpath", str(work),
            "--paths", str(HERE), "--add-data", f"{HERE / 'review.html'}{os.pathsep}."]
     for m in MODULES:
