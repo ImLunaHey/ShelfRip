@@ -668,6 +668,9 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/discs":
                 return self.send(200, {"discs": list_plans(), "library": str(LIB_ROOT), "ripped": str(RIP_ROOT), **naming.page_info(CFG),
                                        "tmdb": bool(TMDB), "jobs": JOBS})
+            if u.path == "/api/poster":  # box art, so you can see the match is the right one
+                import progress
+                return self.send(200, progress.poster(TMDB, q.get("kind", ""), q.get("id", ""), q.get("season") or None))
             if u.path == "/api/search":
                 if not TMDB:
                     return self.send(400, {"error": "No TMDB key in config.json"})

@@ -21,6 +21,7 @@ Only the Python standard library is used.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import os
 import socket
 import sys
@@ -32,6 +33,7 @@ import webbrowser
 from http.server import ThreadingHTTPServer
 
 import desktop
+import progress  # noqa: F401  (bundled into the exe)
 import identify
 import naming
 import paths
@@ -180,10 +182,10 @@ def identify_disc(dev: str, label: str, cfg: dict) -> dict | None:
     return None
 
 
-def in_plex_already(dev: str, label: str, cfg: dict) -> str:
+def in_plex_already(dev: str, label: str, cfg: dict, ident: dict | None = None) -> str:
     """A sentence saying Plex already has this disc in the same or better quality, else ''."""
     kind = disc_kind(dev + "\\")
-    ident = identify_disc(dev, label, cfg)
+    ident = ident if ident is not None else identify_disc(dev, label, cfg)
     if not ident or not kind:
         return ""
     full = {**identify.DEFAULTS, **cfg}
@@ -227,6 +229,7 @@ class Ripper:
         self.rip_once = False
         self.force: set[str] = set()
         self.held: dict[str, str] = {}   # device -> label held back because Plex has it
+        self.match: dict[str, dict] = {}  # device -> what its disc was recognised as before ripping
         raw = _read_config()
         self.auto = bool(raw.get("auto_rip", False))
         rip_all.ON_DONE.append(self.after_rip)
@@ -273,6 +276,7 @@ class Ripper:
 
     def check_first(self, d: dict) -> bool:
         """Before ripping: hold the disc back if Plex already has it (same or better quality)."""
+        ident = None if d.get("audio") else self.recognise(d)
         if not self.cfg.get("check_plex_before_rip", True):
             return False
         if d.get("audio"):  # music CD: filed before (by its disc id)?
@@ -290,7 +294,7 @@ class Ripper:
                 notify("Already in Plex", f"{why} Swap the disc, or click Rip anyway.")
             return bool(why)
         try:
-            why = in_plex_already(d["device"], d["disc_label"], self.cfg)
+            why = in_plex_already(d["device"], d["disc_label"], self.cfg, ident=ident)
         except Exception as exc:
             rip_all.log(f"{d['device']} [{d['disc_label']}] couldn't check Plex first ({exc})")
             return False
@@ -302,6 +306,19 @@ class Ripper:
             notify("Already in Plex", f"{d['disc_label']}: {why} Swap the disc, or click Rip anyway.")
             return True
         return False
+
+    def recognise(self, d: dict) -> dict | None:
+        """What the disc in this drive is (before ripping), remembered so the page can show its box art."""
+        try:
+            ident = identify_disc(d["device"], d["disc_label"], self.cfg)
+        except Exception:
+            ident = None
+        if ident:
+            eps = ident.get("episodes") or []
+            self.match[d["device"]] = {"label": d["disc_label"], "kind": ident["kind"], "title": ident.get("title") or "",
+                                       "year": ident.get("year") or "", "tmdb_id": ident.get("tmdb_id") or "",
+                                       "season": eps[0][0] if eps else None, "how": ident.get("how") or ""}
+        return ident or {}  # {} = looked, not recognised (in_plex_already won't look again)
 
     def after_rip(self, disc: dict, out_dir) -> None:
         """Name the new rip straight away so it's waiting on the Review tab."""
@@ -332,9 +349,20 @@ class Ripper:
                            **{k: v for k, v in st.items() if k != "label"},
                            "rip_label": st.get("label", "")})
         try:
-            waiting = len(review.list_plans())
+            plans = review.list_plans()
         except Exception:
-            waiting = 0
+            plans = []
+        waiting = len(plans)
+        by_disc = {p.get("disc_label"): p for p in plans}
+        for d in drives:  # what's in each drive, for its box art
+            p = by_disc.get(d["label"]) if d["label"] else None
+            m = self.match.get(d["device"])
+            if p and p.get("kind") in ("movie", "tv", "music"):
+                d["match"] = {"kind": p["kind"], "title": p.get("album") if p["kind"] == "music" else p.get("title"),
+                              "year": p.get("year") or "", "tmdb_id": str(p.get("tmdb_id") or ""),
+                              "season": p.get("season"), "folder": p["folder"], "how": "named for review"}
+            elif m and m.get("label") == d["label"]:
+                d["match"] = m
         try:
             setup = setup_check()
         except Exception:
@@ -759,6 +787,12 @@ class Handler(review.Handler):
                 return self.send(200, REPORT)
             if u.path == "/api/version":
                 return self.send(200, UPDATE)
+            if u.path == "/api/progress":
+                import progress
+                cfg = {**rip_all.DEFAULT_CONFIG, **JOB_DEFAULTS, **_read_config()}
+                if not cfg.get("output_root"):
+                    return self.send(200, {"none": True})
+                return self.send(200, progress.compute(Path(cfg["output_root"]), int(cfg.get("job_total_discs") or 0)))
         except Exception as exc:
             return self.send(500, {"error": str(exc)})
         return super().do_GET()
