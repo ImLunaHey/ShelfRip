@@ -64,8 +64,19 @@ try {
   wrangler(["d1", "execute", DB, "--remote", "--file=schema.sql", "--yes"]);
 
   step("Deploying the Worker");
-  const out = wranglerOut(["deploy"]);
+  const tryDeploy = () => spawnSync("npx", ["--yes", "wrangler@4", "deploy"], {
+    encoding: "utf8", shell: process.platform === "win32", stdio: ["inherit", "pipe", "pipe"] });
+  let r = tryDeploy();
+  let out = (r.stdout || "") + (r.stderr || "");
+  if (r.status !== 0 && /workers\.dev subdomain/i.test(out)) {
+    // A new Cloudflare account has to pick its workers.dev name once: let wrangler ask for it.
+    console.log("Cloudflare needs a workers.dev name for your account (once). Answer y, then type a name.");
+    spawnSync("npx", ["--yes", "wrangler@4", "deploy"], { shell: process.platform === "win32", stdio: "inherit" });
+    r = tryDeploy();
+    out = (r.stdout || "") + (r.stderr || "");
+  }
   process.stdout.write(out);
+  if (r.status !== 0) throw new Error("wrangler deploy failed");
   const url = (out.match(/https:\/\/[a-z0-9.-]+\.workers\.dev/i) || [""])[0];
 
   step("Setting its secrets");
