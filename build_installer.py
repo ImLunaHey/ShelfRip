@@ -24,7 +24,7 @@ HERE = Path(__file__).resolve().parent
 OUT = HERE / "installer"
 NAME = "Shelfrip"
 MODULES = ["app", "review", "identify", "rip_all", "split", "music", "plex", "extras", "discdb",
-           "catalog", "crosscheck", "naming", "paths", "community"]
+           "catalog", "crosscheck", "naming", "paths", "community", "desktop"]
 SHIP = ["README.md", "LICENSE.txt", "THIRD-PARTY-NOTICES.txt"]
 
 
@@ -61,8 +61,12 @@ def main() -> int:
            "--paths", str(HERE), "--add-data", f"{HERE / 'review.html'}{os.pathsep}."]
     for m in MODULES:
         cmd += ["--hidden-import", m]
-    if (HERE / "icon.ico").exists():
-        cmd += ["--icon", str(HERE / "icon.ico")]
+    icon = HERE / "icon.ico"
+    if not icon.exists():
+        sys.path.insert(0, str(HERE))
+        import desktop  # draws the Shelfrip mark
+        desktop.write_icon(icon)
+    cmd += ["--icon", str(icon)]
     run(cmd + [str(HERE / "launcher.py")])
 
     app_dir = dist / NAME

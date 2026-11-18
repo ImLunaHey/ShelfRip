@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Shelfrip</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Crect x='3' y='4' width='5' height='18' rx='1.5' fill='%23F2B33D'/%3E%3Crect x='10' y='7' width='5' height='15' rx='1.5' fill='%236C9BFF'/%3E%3Crect x='17' y='5' width='5' height='17' rx='1.5' fill='%234CC38A'/%3E%3Crect x='2' y='23' width='24' height='2.5' rx='1' fill='%23C9D1DC'/%3E%3C/svg%3E">
 <style>
 :root{
   --bg:#f6f7f9; --card:#ffffff; --ink:#1b1f24; --muted:#5f6b78; --line:#dde2e8;
@@ -907,6 +908,7 @@ async function loadSettings(){
   $("#tabs").classList.add("on"); $("#quit").classList.remove("hide");
   document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
   let t = "drives"; try { t = localStorage.getItem("tab") || "drives"; } catch(e){}
+  if (["drives","review","library","settings"].includes(location.hash.slice(1))) t = location.hash.slice(1);  // e.g. the tray's "Review" item
   try { const v = await api("/api/version"); if (v.latest){ const a = $("#upd"); a.href = v.url; a.textContent = `Shelfrip ${v.latest} is out: get it`; a.classList.remove("hide"); } } catch(e){}
   try { const s = await api("/api/settings"); if (s.first_run || (s.setup||[]).some(x => !x.ok && x.required)) t = "settings"; } catch(e){}
   showTab(t);
@@ -917,7 +919,7 @@ async function loadSettings(){
       if (!confirm(`Still working on: ${j.busy.join(", ")}. Quitting stops it (a rip is cut off). Quit anyway?`)) return;
       j = await api("/api/quit", {force:true});
     }
-    document.body.innerHTML = `<p class="empty">Shelfrip has stopped. You can close this tab.</p>`;
+    document.body.innerHTML = `<p class="empty">Shelfrip has stopped. You can close this window.</p>`;
   };
 })();
 

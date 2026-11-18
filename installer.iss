@@ -33,6 +33,7 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayIcon={app}\Shelfrip.exe
+SetupIconFile=icon.ico
 UninstallDisplayName=Shelfrip
 ; Close a running Shelfrip before replacing its files.
 CloseApplications=yes

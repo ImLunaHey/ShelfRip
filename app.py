@@ -31,6 +31,7 @@ import urllib.request
 import webbrowser
 from http.server import ThreadingHTTPServer
 
+import desktop
 import identify
 import naming
 import paths
@@ -39,7 +40,7 @@ import rip_all
 
 JOB_DEFAULTS = {"auto_file": True, "auto_file_minutes": 15, "audio_language": "eng", "subtitle_language": "",
                 "forced_subtitles": True, "retry_failed_titles": True, "job_total_discs": 0,
-                "min_free_gb_rips": 60}
+                "min_free_gb_rips": 60, "app_window": True, "tray_icon": True}
 SECRETS = ("tmdb_api_key", "omdb_api_key", "plex_token")
 SETTINGS = [  # (key, label, kind)
     ("output_root", "Rip folder (where discs are ripped to before review)", "text"),
@@ -77,6 +78,8 @@ SETTINGS = [  # (key, label, kind)
     ("omdb_api_key", "OMDb key", "secret"),
     ("plex_token", "Plex token (Plex only, optional)", "secret"),
     ("check_updates", "Tell me when a new version of Shelfrip is out", "bool"),
+    ("app_window", "Open Shelfrip in its own window (not a browser tab)", "bool"),
+    ("tray_icon", "Keep Shelfrip running by the clock when its window is closed (Quit from the icon's menu)", "bool"),
 ]
 CHOICES = {"media_server": [{"value": k, "label": v} for k, v in naming.SERVERS.items()]}
 
@@ -90,7 +93,9 @@ def notify(title: str, text: str) -> None:
         return
 
     def run():
-        if os.name == "nt":
+        if TRAY and TRAY.notify(title, text):
+            pass
+        elif os.name == "nt":
             esc = lambda x: str(x).replace("'", "''").replace("&", "and").replace("<", "").replace(">", "")
             ps = (
                 "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null;"
@@ -350,6 +355,87 @@ class Ripper:
 
 
 RIPPER: Ripper | None = None
+TRAY: "desktop.Tray | None" = None
+
+
+def tray_status() -> str:
+    """One line for the tray icon: what the drives are doing and what's waiting."""
+    if not RIPPER:
+        return "Shelfrip"
+    parts = []
+    for d in RIPPER.drives:
+        st = rip_all.STATUS.get(d["device"], {})
+        if d["device"] in RIPPER.busy:
+            pct = st.get("pct")
+            parts.append(f"{d['device']} ripping" + (f" {pct}%" if pct else ""))
+    try:
+        n = len(review.list_plans())
+    except Exception:
+        n = 0
+    if n:
+        parts.append(f"{n} to review")
+    return " · ".join(parts) or ("Auto-rip on, waiting for a disc" if RIPPER.auto else "Idle")
+
+
+def quit_app(ask: bool = True) -> None:
+    running = sorted(RIPPER.busy) if RIPPER else []
+    running += [k for k, j in review.JOBS.items() if j.get("state") == "running"]
+    if running and ask and os.name == "nt":
+        import ctypes
+        u32 = ctypes.WinDLL("user32")
+        u32.MessageBoxW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint]
+        if u32.MessageBoxW(None, f"Still working on: {', '.join(running)}.\n\nQuitting stops it (a rip is cut off and "
+                           "starts again next time). Quit anyway?", "Quit Shelfrip", 0x4 | 0x30 | 0x40000) != 6:
+            return  # MB_YESNO | MB_ICONWARNING | MB_TOPMOST; 6 = Yes
+    if TRAY:
+        TRAY.remove()
+    os._exit(0)
+
+
+def start_tray(url: str, use_window: bool) -> None:
+    global TRAY
+    shown = {"console": False}
+
+    def toggle_auto():
+        RIPPER.auto = not RIPPER.auto
+        rip_all.log("Auto-rip on: insert discs any time" if RIPPER.auto else "Auto-rip off")
+        RIPPER.wake.set()
+
+    def toggle_console():
+        shown["console"] = not shown["console"]
+        desktop.show_console(shown["console"])
+
+    def menu():
+        try:
+            n = len(review.list_plans())
+        except Exception:
+            n = 0
+        items = [(f"Shelfrip: {tray_status()}", None), None,
+                 ("Open Shelfrip", lambda: desktop.open_window(url, use_window))]
+        if n:
+            items.append((f"Review {n} disc{'s' if n != 1 else ''}", lambda: desktop.open_window(url + "#review", use_window)))
+        items.append(("Pause auto-rip" if RIPPER and RIPPER.auto else "Turn auto-rip on", toggle_auto))
+        if console:
+            items.append(("Hide log window" if shown["console"] else "Show log window", toggle_console))
+        items += [None, ("Quit Shelfrip", quit_app)]
+        return items
+
+    console = desktop.owns_console()
+    tray = desktop.Tray("Shelfrip", lambda: desktop.open_window(url, use_window), menu)
+    if not tray.start():
+        return
+    TRAY = tray
+    if console:
+        desktop.show_console(False)  # the tray icon is the way back in now
+
+    def keep_tip_fresh():
+        while True:
+            time.sleep(10)
+            try:
+                tray.set_tip(f"Shelfrip: {tray_status()}")
+            except Exception:
+                pass
+    threading.Thread(target=keep_tip_fresh, daemon=True).start()
 _STATS: dict = {"t": 0.0, "filed": {}}
 
 
@@ -725,7 +811,7 @@ class Handler(review.Handler):
                 if running and not b.get("force"):
                     return self.send(200, {"busy": running})
                 self.send(200, {"ok": True})
-                threading.Timer(0.5, lambda: os._exit(0)).start()
+                threading.Timer(0.5, lambda: quit_app(ask=False)).start()
                 return
         except Exception as exc:
             return self.send(500, {"error": str(exc)})
@@ -789,9 +875,11 @@ def main() -> None:
     srv, port = open_server()
     review.PORT = port
     url = f"http://127.0.0.1:{port}/"
+    cfg = _read_config()
+    use_window = cfg.get("app_window", True)
     if srv is None:
-        print("Shelfrip is already running. Opening it in your browser.")
-        webbrowser.open(url)
+        print("Shelfrip is already running. Opening it.")
+        desktop.open_window(url, use_window)
         return
     if paths.MIGRATION_NOTE:
         print(paths.MIGRATION_NOTE)
@@ -804,8 +892,10 @@ def main() -> None:
     except Exception as exc:
         print(f"  couldn't name new rips: {exc}")
     print(f"Shelfrip: {url}  (keep this window open; use Quit on the page to stop)")
+    if cfg.get("tray_icon", True):
+        start_tray(url, use_window)
     if "--background" not in sys.argv:  # started with Windows: don't pop the page open
-        threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+        threading.Timer(0.8, lambda: desktop.open_window(url, use_window)).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
