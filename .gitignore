@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+installer/
+config.json
+*.tmp
+disc_catalog.db
+learned_labels.json
+.cache/
+portable.txt
+*.exe
+library_listing.txt
+research/

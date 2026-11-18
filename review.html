@@ -1,0 +1,924 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shelfrip</title>
+<style>
+:root{
+  --bg:#f6f7f9; --card:#ffffff; --ink:#1b1f24; --muted:#5f6b78; --line:#dde2e8;
+  --accent:#2f6fdb; --accent-ink:#fff; --warn-bg:#fff6e0; --warn:#8a5a00;
+  --skip:#9aa4ae; --ok:#1d7a46; --err:#b42318; --chip:#eef1f5; --input:#fff;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#121417; --card:#1b1f24; --ink:#e7eaee; --muted:#9aa4ae; --line:#2c323a;
+    --accent:#5b8ff0; --accent-ink:#0b0d10; --warn-bg:#3a2e12; --warn:#f2c46b;
+    --skip:#6b7580; --ok:#5fcf8f; --err:#ff8a7a; --chip:#252b33; --input:#14181c;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);
+  padding:12px 20px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+header h1{font-size:18px;margin:0 12px 0 0}
+header .sub{color:var(--muted)}
+main{max-width:1280px;margin:0 auto;padding:16px 20px 80px}
+button{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--ink);
+  border-radius:6px;padding:5px 10px;cursor:pointer}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+button:disabled{opacity:.5;cursor:default}
+input,select{font:inherit;color:var(--ink);background:var(--input);border:1px solid var(--line);
+  border-radius:5px;padding:4px 6px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;margin:0 0 18px;overflow:hidden}
+.card-head{padding:12px 16px;border-bottom:1px solid var(--line);display:grid;gap:8px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.title{font-size:16px;font-weight:650}
+.chip{background:var(--chip);border-radius:20px;padding:2px 9px;font-size:12px;color:var(--muted)}
+.warn{background:var(--warn-bg);color:var(--warn);border-radius:6px;padding:6px 10px;font-size:13px}
+.err{color:var(--err)} .ok{color:var(--ok)}
+label.f{display:flex;gap:6px;align-items:center;color:var(--muted);font-size:13px}
+label.f input{min-width:0}
+.libdir{flex:1 1 420px} .libdir input{width:100%}
+table{width:100%;border-collapse:collapse}
+th,td{padding:5px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{font-size:12px;color:var(--muted);font-weight:600;background:var(--chip)}
+tr.skip td{color:var(--skip)} tr.skip input,tr.skip select.cat{opacity:.45}
+td.dur{font-variant-numeric:tabular-nums;white-space:nowrap}
+td.src{font-size:12px;color:var(--muted);max-width:180px;overflow-wrap:anywhere}
+td.name input{width:100%}
+.dest{font-size:12px;color:var(--muted);overflow-wrap:anywhere;margin-top:3px}
+.note{font-size:12px;color:var(--warn)}
+.foot{padding:10px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.bar{height:6px;background:var(--chip);border-radius:3px;overflow:hidden;flex:1 1 200px}
+.bar>i{display:block;height:100%;background:var(--accent)}
+.search{display:none;gap:6px;flex-direction:column;padding:8px;background:var(--chip);border-radius:8px}
+.search.open{display:flex}
+.result{display:flex;gap:8px;align-items:baseline;padding:4px 0;border-top:1px solid var(--line)}
+.result small{color:var(--muted)}
+.empty{color:var(--muted);text-align:center;padding:60px 0}
+.tablewrap{overflow-x:auto}
+nav.tabs{display:none;gap:4px} nav.tabs.on{display:flex}
+nav.tabs button{border-radius:20px} nav.tabs button.cur{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.count{display:inline-block;min-width:18px;padding:0 5px;border-radius:9px;background:var(--chip);color:var(--ink);font-size:12px;margin-left:4px}
+nav.tabs button.cur .count{background:rgba(255,255,255,.25);color:inherit}
+.stats{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;display:grid;gap:8px;margin-bottom:14px}
+.auto{font-size:13px;padding:6px 10px;border-radius:8px;background:var(--line)}
+.drives{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;margin-bottom:18px}
+.drive{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;display:grid;gap:8px}
+.drive .dev{font-weight:650;font-size:16px}
+.drive .lab{font-size:15px;overflow-wrap:anywhere}
+.drive .st{color:var(--muted);font-size:13px}
+.drive .bar{flex:none}
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+.switch{display:flex;gap:8px;align-items:center;font-weight:600}
+pre.log{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:12px;
+  max-height:320px;overflow:auto;white-space:pre-wrap;margin:0;color:var(--muted)}
+.set{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;display:grid;gap:12px;max-width:760px}
+.set label{display:grid;gap:4px;font-size:13px;color:var(--muted)}
+.set label.chk{display:flex;gap:8px;align-items:center;color:var(--ink)}
+.set input[type=text],.set input[type=password],.set input[type=number],.set select{width:100%}
+.wiz{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;max-width:760px;margin-bottom:16px}
+.wiz h2{margin:0 0 4px;font-size:18px}
+.wiz ol{margin:12px 0;padding-left:22px;display:grid;gap:14px}
+.wiz li label{display:grid;gap:4px;font-size:13px;color:var(--muted)}
+.wiz li input[type=text],.wiz li input[type=password],.wiz li select{width:100%}
+.wiz li label.chk{display:flex;gap:8px;align-items:center;margin-top:6px}
+.wiz .how{font-size:12px;color:var(--muted)}
+.hide{display:none!important}
+.aud{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center;margin-top:4px;font-size:12px;color:var(--muted)}
+.aud .trk{border:1px solid var(--line);border-radius:12px;padding:1px 8px;cursor:pointer;background:var(--card);color:var(--muted);font-size:12px}
+.aud .trk.com{border-color:var(--accent);color:var(--ink)}
+.aud input{font-size:12px;padding:2px 5px;min-width:220px}
+tr.splitrow td{background:var(--chip);border-bottom:1px solid var(--line)}
+.split{display:grid;gap:6px;padding:4px 0}
+.split table td{border-bottom:none;padding:3px 6px}
+.split .sl{font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--muted);font-size:12px}
+.split .snm{width:100%}
+@media (max-width:700px){ td.src{display:none} th.src{display:none} }
+#upd{font-size:13px;margin-right:10px;font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <h1>Shelfrip</h1>
+  <nav class="tabs" id="tabs">
+    <button data-tab="drives">Drives</button>
+    <button data-tab="review">Review<span class="count" id="nwait">0</span></button>
+    <button data-tab="library">Library</button>
+    <button data-tab="settings">Settings</button>
+  </nav>
+  <span class="sub" id="sub"></span>
+  <span style="flex:1"></span>
+  <button id="scan" class="tab-review">Check for new rips</button>
+  <a id="upd" class="hide" target="_blank" rel="noopener"></a>
+  <button id="quit" class="hide">Quit</button>
+</header>
+<main id="drivesTab" class="hide"></main>
+<main id="list"><p class="empty">Loading…</p></main>
+<main id="libraryTab" class="hide"></main>
+<main id="settingsTab" class="hide"></main>
+
+<script>
+const CATS = ["Featurettes","Behind the Scenes","Deleted Scenes","Interviews","Scenes","Shorts","Trailers","Other"];
+let discs = [], LIB = "", LIB_RIPPED = "", SERVER = "plex", SERVER_NAME = "Plex";
+// name parts the same way naming.py does for the chosen media server
+const idTag = id => !id ? "" : SERVER === "plex" ? ` {tmdb-${id}}` : SERVER === "jellyfin" ? ` [tmdbid-${id}]` : SERVER === "emby" ? ` [tmdbid=${id}]` : "";
+const editionName = (base, ed) => SERVER === "plex" ? `${base} {edition-${ed}}` : `${base} - ${ed}`;
+const $ = (s, el=document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const safe = s => String(s||"").replace(/\s*:\s*/g," - ").replace(/[<>"/\\|?*]/g,"").replace(/\s+/g," ").trim().replace(/[ .]+$/,"");
+
+async function api(path, body){
+  const r = await fetch(path, body ? {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)} : {});
+  const j = await r.json(); if (!r.ok) throw new Error(j.error || r.statusText); return j;
+}
+
+const KIND = {"Featurettes":"Featurette","Behind the Scenes":"Behind the scenes","Deleted Scenes":"Deleted scene","Interviews":"Interview","Scenes":"Scene","Shorts":"Short","Trailers":"Trailer","Other":"Other"};
+const SUFFIX = {"Behind the Scenes":"behindthescenes","Deleted Scenes":"deleted","Featurettes":"featurette","Interviews":"interview","Scenes":"scene","Shorts":"short","Trailers":"trailer","Other":"other"};
+function destOf(p, it){
+  // TV extras can belong to the whole show, a season (default) or one episode (Plex's TV extras guide)
+  const cat = it.category || "Other";
+  const folder = SERVER === "kodi" ? "Extras" : cat;   // Kodi keeps all extras in one Extras folder
+  if (it.role === "extra" && p.kind === "tv" && it.attach === "show") return [LIB, p.library_dir, folder].join("\\") + "\\" + safe(it.name) + ".mkv";
+  if (it.role === "extra" && p.kind === "tv" && it.attach === "episode" && SERVER !== "kodi"){
+    if (!it.attach_to) return "pick the episode it belongs to";
+    const same = p.items.filter(o => o.role === "extra" && o.action === "move" && o.attach === "episode" && o.attach_to === it.attach_to && (o.category || "Other") === cat);
+    const k = same.findIndex(o => o === it || o.source === it.source);
+    return [LIB, it.dest_dir].join("\\") + "\\" + safe(`${it.attach_to}-${SUFFIX[cat] || "other"}${same.length > 1 ? k + 1 : ""}`) + ".mkv";
+  }
+  const parts = [LIB, it.dest_dir];
+  if (it.role === "extra") parts.push(folder);
+  return parts.join("\\") + "\\" + safe(it.name) + ".mkv";
+}
+function episodeStems(p){  // episodes on this disc, then ones already in the library's season folder
+  const out = [];
+  for (const it of p.items){
+    if (it.role !== "episode" || it.action !== "move") continue;
+    if (it.needs_split && it.split) it.split.names.forEach((n, k) => { if (!(it.split.skip||[]).includes(k)) out.push(safe(n)); });
+    else out.push(safe(it.name));
+  }
+  for (const f of p.season_files || []) out.push(f);
+  return [...new Set(out)];
+}
+function attachLine(p, it, j){
+  if (p.kind !== "tv" || it.role !== "extra" || it.action === "skip") return "";
+  const a = it.attach || "season";
+  const eps = episodeStems(p);
+  return `<div class="row" style="gap:6px;font-size:12px;margin-top:4px">Belongs to
+    <select class="att" data-j="${j}"><option value="season" ${a==="season"?"selected":""}>Season ${esc(p.season)}</option>
+      <option value="show" ${a==="show"?"selected":""}>Whole show</option><option value="episode" ${a==="episode"?"selected":""}>An episode…</option></select>
+    ${a === "episode" ? `<select class="atte" data-j="${j}" style="max-width:340px"><option value="">pick the episode</option>${eps.map(e =>
+      `<option value="${esc(e)}" ${e===it.attach_to?"selected":""}>${esc((e.match(/s\d+e\d+.*$/i)||[e])[0])}</option>`).join("")}</select>
+      as <select class="attk" data-j="${j}">${CATS.map(c => `<option value="${c}" ${c===(it.category||"Other")?"selected":""}>${KIND[c]}</option>`).join("")}</select>` : ""}</div>`;
+}
+
+// Keep each item's folder in step with the show/movie folder at the top of the card
+function reflow(p){
+  for (const it of p.items){
+    it.dest_dir = p.kind !== "tv" ? p.library_dir
+      : (it.role === "episode" && it.season === 0) ? `${p.library_dir}\\Specials` : `${p.library_dir}\\Season ${p.season}`;
+  }
+}
+
+// The "Type" menu: what each ripped title is. Extras pick their Plex category here too.
+function typeValue(it){
+  if (it.role === "extra") return "x:" + (it.category || "Other");
+  if (it.role === "episode") return it.season === 0 ? "special" : "episode";
+  return it.role;   // main, edition, play_all
+}
+function typeOptions(p, it){
+  const opts = p.kind === "tv"
+    ? [["episode","Episode"],["special","Special (Season 0)"]]
+    : [["main","Movie"],["edition","Other version"]];
+  if (it.role === "play_all") opts.push(["play_all","Play All"]);
+  const cur = typeValue(it);
+  return opts.map(([v,l]) => `<option value="${v}" ${v===cur?"selected":""}>${l}</option>`).join("")
+    + `<optgroup label="Extra">` + CATS.map(c => `<option value="x:${c}" ${("x:"+c)===cur?"selected":""}>${c}</option>`).join("") + `</optgroup>`;
+}
+const pad = n => String(n).padStart(2,"0");
+const mmss = s => { s = +s||0; const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = s%60; return h ? `${h}h${pad(m)}m` : `${m}m${pad(x)}s`; };
+function epTail(name){ return (String(name||"").split(/ - s\d+e\d+(?:-e\d+)?/i)[1] || "").replace(/^ - /,""); }
+// --- videos holding several episodes: where each one starts (mirrors split.py)
+const hms = s => { s = Math.max(0, +s||0); const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = Math.floor(s%60); return (h ? h + ":" + pad(m) : m) + ":" + pad(x); };
+function epRanges(sp, i){
+  const ch = sp.chapters, n = ch.length, st = sp.starts;
+  const op = sp.copy_opening ? (sp.opening||0) : 0, en = sp.copy_ending ? (sp.ending||0) : 0;
+  const t = j => j < n ? ch[j] : sp.total;
+  const a = (i === 0 && !op) ? 0 : st[i], b = i + 1 < st.length ? st[i+1] : n - en;
+  const r = [];
+  if (op && st[i] >= op) r.push([t(0), t(op)]);
+  r.push([t(a), t(b)]);
+  if (en) r.push([t(n - en), sp.total]);
+  return r.filter(([x,y]) => y - x >= 0.05);
+}
+const epLen = (sp, i) => epRanges(sp, i).reduce((s, [a,b]) => s + b - a, 0);
+function splitBad(sp){
+  if (!sp || !sp.starts || !sp.starts.length) return "No split.";
+  if (sp.starts.some((v, k) => k && v <= sp.starts[k-1])) return "Each episode must start after the one before it.";
+  return "";
+}
+function splitRow(p, it, j){
+  const sp = it.split, n = sp.chapters.length;
+  const chOpt = (sel, from) => sp.chapters.map((c, k) => k < from ? "" :
+      `<option value="${k}" ${k===sel?"selected":""}>chapter ${k+1} · ${hms(c)}</option>`).join("");
+  const cntOpt = (sel, label) => [0,1,2,3].filter(k => k < n).map(k =>
+      `<option value="${k}" ${k===sel?"selected":""}>${k ? `${label} ${k} chapter${k>1?"s":""}` : "none"}</option>`).join("");
+  const opLen = sp.opening ? sp.chapters[Math.min(sp.opening, n-1)] - sp.chapters[0] : 0;
+  const bad = splitBad(sp);
+  const rows = sp.starts.map((st, k) => {
+    const nm = sp.names[k] || "";
+    const off = (sp.skip||[]).includes(k);
+    return `<tr style="${off ? "opacity:.5" : ""}"><td class="sl"><label title="Cut this episode out and file it"><input type="checkbox" class="skp" data-j="${j}" data-k="${k}" ${off ? "" : "checked"}> Episode ${k+1}</label></td>
+      <td><select class="sst" data-j="${j}" data-k="${k}">${chOpt(st, 0)}</select></td>
+      <td class="sl">${mmss(Math.round(epLen(sp, k)))}</td>
+      <td style="width:100%"><input class="snm" data-j="${j}" data-k="${k}" value="${esc(nm)}">
+        <div class="dest">${it.action==="skip" || off ? "not filed" : esc(destOf(p, Object.assign({}, it, {name:nm})))}</div></td></tr>`;
+  }).join("");
+  return `<tr class="splitrow ${it.action === "skip" ? "skip" : ""}"><td></td><td colspan="5"><div class="split">
+    <div class="row">
+      <label class="f">Episodes in this video <input class="spn" data-j="${j}" type="number" min="2" max="${n}" value="${sp.starts.length}" style="width:56px"></label>
+      <label class="f">Opening on every episode <select class="spo" data-j="${j}">${cntOpt(sp.copy_opening ? sp.opening : 0, "first")}</select></label>
+      <label class="f">Ending on every episode <select class="spe" data-j="${j}">${cntOpt(sp.copy_ending ? sp.ending : 0, "last")}</select></label>
+      <span class="chip">${esc(sp.confidence || "")} confidence</span>
+    </div>
+    <table>${rows}</table>
+    ${bad ? `<div class="note">${esc(bad)}</div>` : ""}
+    <div class="note" style="color:var(--muted)">Use ▶ to watch the video and check where episodes begin. Nothing is re-encoded; cuts land on chapter marks.</div>
+  </div></td></tr>`;
+}
+// audio tracks: all are kept; click one to mark it as a commentary and give it a name
+function audioLine(it, j){
+  if (!it.audio || !it.audio.length || it.action === "skip") return "";
+  return `<div class="aud">Audio:` + it.audio.map((a, k) =>
+    `<button class="trk ${a.commentary ? "com" : ""}" data-j="${j}" data-k="${k}" title="Click to mark or unmark as a commentary">${esc(a.desc)}${a.commentary ? " · commentary" + (a.guessed ? "?" : "") : ""}</button>` +
+    (a.commentary ? `<input class="trkname" data-j="${j}" data-k="${k}" value="${esc(a.name)}" placeholder="Commentary name">` : "")).join("") + `</div>`;
+}
+const filesOf = it => it.action !== "move" ? 0 : (it.needs_split && it.split ? it.split.starts.length - (it.split.skip||[]).length : 1);
+
+function setType(p, it, v){
+  const prefix = safe(p.title + (p.year ? ` (${p.year})` : ""));
+  const tag = idTag(p.tmdb_id);
+  const was = it.role;
+  it.needs_split = false; delete it.split;
+  if (v.startsWith("x:")){
+    const keepName = was === "extra" || was === "play_all" ? it.name : "";
+    it.role = "extra"; it.category = v.slice(2);
+    it.name = keepName || epTail(it.name) || `Extra (${mmss(it.duration_seconds)})`;
+    delete it.episode; delete it.episodes;
+  } else if (v === "episode" || v === "special"){
+    const season = v === "special" ? 0 : p.season;
+    const used = p.items.filter(o => o !== it && o.role === "episode" && (o.season||0) === season)
+                        .flatMap(o => o.episodes || [o.episode]);
+    const n = Math.max(0, ...used) + 1;
+    const tail = was === "extra" ? it.name : epTail(it.name);
+    Object.assign(it, {role:"episode", season, episode:n, episodes:[n]});
+    delete it.category;
+    it.name = `${prefix} - s${pad(season)}e${pad(n)}` + (tail ? ` - ${safe(tail)}` : "");
+  } else if (v === "main"){
+    p.items.forEach(o => { if (o !== it && o.role === "main"){ o.role = "edition"; o.name = editionName(`${prefix}${tag}`, "Alternate"); } });
+    it.role = "main"; delete it.category; it.name = `${prefix}${tag}`;
+  } else if (v === "edition"){
+    it.role = "edition"; delete it.category; it.name = editionName(`${prefix}${tag}`, "Alternate");
+  } else {
+    it.role = v; delete it.category;
+  }
+  if (it.note && /episode|Play All|long video|several episodes/i.test(it.note)) it.note = "";
+  reflow(p);
+}
+
+function plexLine(px){
+  if (!px) return "";
+  const bad = (px.files||[]).filter(f => f.state !== "ok");
+  const cls = px.state === "error" || bad.some(f => f.state === "wrong") ? "err" : px.state === "done" && !bad.length ? "ok" : "";
+  return `<div style="flex-basis:100%" class="${cls}">${esc(px.summary || "")}${bad.length ? "<br>" + bad.map(f => `${esc(f.file)}: ${esc(f.why)}`).join("<br>") : ""}</div>`;
+}
+
+function redraw(i){
+  const cur = $("#c"+i);
+  if (!cur) return render();
+  cur.outerHTML = card(discs[i], i); wire(discs[i], i);
+}
+function render(){
+  const list = $("#list");
+  if (!discs.length){ list.innerHTML = `<p class="empty">Nothing waiting for review. Rip some discs, then click “Check for new rips”.</p>`; return; }
+  list.innerHTML = discs.map((p, i) => card(p, i)).join("");
+  discs.forEach((p, i) => wire(p, i));
+}
+
+function card(p, i){
+  const job = p.job;
+  if (job && job.state === "done") return `<section class="card" id="c${i}"><div class="foot">
+    <span class="ok">✓ ${esc(p.title)}${p.year ? ` (${esc(p.year)})` : ""}: ${job.current === "Discarded" ? "rip discarded." : `filed into ${SERVER_NAME}.`}</span>
+    <span style="color:var(--muted)">${job.note ? esc(job.note) : "Its rip folder was cleared to save space (skipped clips included)."}</span>
+    ${plexLine(job.plex)}</div></section>`;
+  if (p.kind === "music") return musicCard(p, i);
+  const kind = p.kind === "tv" ? "TV" : "Movie";
+  const rows = p.items.map((it, j) => {
+    const cat = `<select class="typ" data-j="${j}">${typeOptions(p, it)}</select>`;
+    return `<tr class="${it.action === "skip" ? "skip" : ""}">
+      <td><button class="play" data-j="${j}" title="Play">▶</button></td>
+      <td class="dur">${esc(it.duration)}</td>
+      <td><select class="act" data-j="${j}"><option value="move" ${it.action==="move"?"selected":""}>Keep</option><option value="skip" ${it.action==="skip"?"selected":""}>Skip</option></select></td>
+      <td>${cat}</td>
+      <td class="name"><input class="nm" data-j="${j}" value="${esc(it.name)}" ${byEpisode(p, it) ? 'style="display:none"' : ""}>
+        <div class="dest">${it.action==="skip" ? "not filed" : (it.needs_split && it.split) ? `cut into ${it.split.starts.length} episodes (below)` : esc(destOf(p, it))}</div>
+        ${attachLine(p, it, j)}
+        ${it.note ? `<div class="note">${esc(it.note)}</div>` : ""}
+        ${audioLine(it, j)}</td>
+      <td class="src">${esc(it.source)}</td></tr>` + (it.needs_split && it.split ? splitRow(p, it, j) : "");
+  }).join("");
+  const keep = p.items.reduce((s, it) => s + filesOf(it), 0);
+  const pct = job && job.total_bytes ? Math.round(100 * job.done_bytes / job.total_bytes) : 0;
+  return `<section class="card" id="c${i}">
+    <div class="card-head">
+      <div class="row">
+        <span class="title">${esc(p.title)}${p.year ? ` (${esc(p.year)})` : ""}</span>
+        <span class="chip">${kind}</span><span class="chip">${esc(p.format)}</span>
+        ${p.tmdb_id ? `<a class="chip" href="https://www.themoviedb.org/${p.kind==="tv"?"tv":"movie"}/${esc(p.tmdb_id)}" target="_blank" rel="noopener">tmdb-${esc(p.tmdb_id)}</a>` : `<span class="chip err">no TMDB match</span>`}
+        <span class="chip">disc: ${esc(p.disc_label)}</span>
+        <span style="flex:1"></span>
+        <button class="chg">Wrong match?</button>
+      </div>
+      ${p.match_source ? `<div class="sub" style="color:var(--muted);font-size:12px">Matched via ${esc(p.match_source)}</div>` : ""}
+      <div class="search">
+        <div class="row">
+          <select class="skind"><option value="movie" ${p.kind!=="tv"?"selected":""}>Movie</option><option value="tv" ${p.kind==="tv"?"selected":""}>TV show</option></select>
+          <input class="sq" placeholder="Search TMDB…" value="${esc(p.search_query || p.title)}" style="flex:1">
+          <button class="sgo">Search</button>
+        </div>
+        <div class="sres"></div>
+      </div>
+      ${autoLine(p)}
+      ${liveWarnings(p).map(w => `<div class="warn${PH.test(w) ? " phwarn" : ""}">${esc(w)}</div>`).join("")}
+      ${(p.editions||[]).length > 1 ? `<div class="row"><label class="f" style="flex:1">Release${p.edition_sure ? "" : ` <span class="err">(not sure which, please check)</span>`}
+        <select class="edition" style="max-width:100%">${p.editions.map(e => `<option value="${esc(e.id)}" ${e.id===p.edition?"selected":""}>${esc(e.name)}</option>`).join("")}</select></label>
+        ${p.dvdcompare_url ? `<a href="${esc(p.dvdcompare_url)}" target="_blank" rel="noopener" style="font-size:12px">DVDCompare page</a>` : ""}</div>` : ""}
+      <div class="row">
+        <label class="f libdir">Folder <input class="lib" value="${esc(p.library_dir)}"></label>
+        ${p.kind === "tv" ? `<label class="f">Season <input class="season" type="number" min="0" value="${p.season}" style="width:64px"></label>
+          <label class="f">First episode <input class="first" type="number" min="1" value="${(p.items.find(it => it.role === "episode" && it.season !== 0) || {}).episode || 1}" style="width:72px"></label>
+          <button class="renum" title="Number the episodes in order from the first episode, with TMDB's titles">Renumber</button>` : ""}
+      </div>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th></th><th>Length</th><th>Keep?</th><th>Type</th><th>Name in ${SERVER_NAME}</th><th class="src">Ripped file</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>
+    <div class="foot">
+      <button class="primary file" ${job && job.state==="running" ? "disabled" : ""}>File ${keep} into ${SERVER_NAME}</button>
+      <button class="save">Save without filing</button>
+      <span style="flex:1"></span>
+      <button class="discard" title="Delete this rip (for example when your library already has it)">Discard rip</button>
+      ${job ? `<span class="${job.state==="error"?"err":job.state==="done"?"ok":""}">${esc(job.current)}${job.note?" · "+esc(job.note):""}</span>
+               ${job.state==="running" ? `<div class="bar"><i style="width:${pct}%"></i></div><span>${pct}%</span>` : ""}` : ""}
+      <span class="msg"></span>
+    </div>
+  </section>`;
+}
+
+// ------------------------------------------------------------------ music CDs
+const fsName = t => String(t||"").replace(/\s*[\/\\]\s*/g, "-").replace(/\s*:\s*/g, " - ").replace(/[<>"|?*\x00-\x1f]/g, "").replace(/\s+/g, " ").replace(/^[ .]+|[ .]+$/g, "").slice(0, 120);
+const albumDir = p => `${p.dest_root}\\${fsName(p.compilation ? "Various Artists" : p.album_artist)}\\${fsName(p.album)}`;
+const trackFile = (p, it) => `${(+p.discs||1) > 1 ? (+p.disc||1) + pad(it.track) : pad(it.track)} - ${fsName(it.title)}.flac`;
+// "N extra(s) still have placeholder names" is counted again from the names as they are now
+const PH = /extra\(s\) still have placeholder names/;
+// an extra tied to one episode is named after that episode, so its own name isn't used
+const byEpisode = (p, it) => p.kind === "tv" && it.role === "extra" && it.attach === "episode";
+const isPlaceholder = it => it.role === "extra" && it.action === "move" && it.attach !== "episode" && /^Extra \d+ \(/.test(it.name || "");
+function phWarning(p){ const n = p.items.filter(isPlaceholder).length; return n ? `${n} extra(s) still have placeholder names.` : ""; }
+function liveWarnings(p){
+  const ws = (p.warnings||[]).filter(w => !PH.test(w));
+  const ph = phWarning(p);
+  return ph ? ws.concat([ph]) : ws;
+}
+function autoLine(p){
+  const a = p.auto;
+  if (!a || (p.job && p.job.state)) return "";
+  if (!a.blocked.length){
+    const t = new Date(a.at * 1000).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"});
+    return `<div class="auto">✓ Everything matched with confidence: files automatically ${a.at * 1000 <= Date.now() ? "in a moment" : "at " + t}. <button class="hold">I'll review it</button></div>`;
+  }
+  const own = a.blocked.filter(w => !(p.warnings||[]).includes(w));
+  return own.length ? `<div class="sub" style="color:var(--muted);font-size:12px">Waiting for your review: ${esc(own.join("; "))}</div>` : "";
+}
+function musicCard(p, i){
+  const job = p.job;
+  const keep = p.items.filter(it => it.action === "move").length;
+  const pct = job && job.total_bytes ? Math.round(100 * job.done_bytes / job.total_bytes) : 0;
+  const showArtist = p.compilation || p.items.some(it => it.artist && it.artist !== p.album_artist);
+  const rows = p.items.map((it, j) => `<tr class="${it.action === "skip" ? "skip" : ""}">
+      <td><button class="play" data-j="${j}" title="Play">▶</button></td>
+      <td class="dur">${pad(it.track)}</td><td class="dur">${esc(it.duration)}</td>
+      <td><select class="act" data-j="${j}"><option value="move" ${it.action==="move"?"selected":""}>Keep</option><option value="skip" ${it.action==="skip"?"selected":""}>Skip</option></select></td>
+      <td class="name"><input class="ttl" data-j="${j}" value="${esc(it.title)}">
+        <div class="dest">${it.action==="skip" ? "not filed" : esc(trackFile(p, it))}</div></td>
+      <td class="name" ${showArtist ? "" : 'style="display:none"'}><input class="art" data-j="${j}" value="${esc(it.artist||"")}" placeholder="${esc(p.album_artist)}"></td></tr>`).join("");
+  return `<section class="card" id="c${i}">
+    <div class="card-head">
+      <div class="row">
+        <span class="title">${esc(p.album)}${p.album_artist ? ` · ${esc(p.album_artist)}` : ""}${p.year ? ` (${esc(p.year)})` : ""}</span>
+        <span class="chip">Music CD</span><span class="chip">FLAC</span>
+        ${p.release ? `<a class="chip" href="https://musicbrainz.org/release/${esc(p.release)}" target="_blank" rel="noopener">MusicBrainz</a>` : `<span class="chip err">not on MusicBrainz</span>`}
+        <span class="chip">disc: ${esc(p.disc_label)}</span>
+      </div>
+      ${autoLine(p)}
+      ${(p.notes||[]).map(n => `<div class="sub" style="color:var(--muted);font-size:12px">${esc(n)}</div>`).join("")}
+      ${(p.warnings||[]).map(w => `<div class="warn">${esc(w)}</div>`).join("")}
+      ${(p.releases||[]).length > 1 ? `<div class="row"><label class="f" style="flex:1">Release${p.release_sure ? "" : ` <span class="err">(not sure which, please check)</span>`}
+        <select class="release" style="max-width:100%">${p.releases.map(r => `<option value="${esc(r.id)}" ${r.id===p.release?"selected":""}>${esc(r.label)}</option>`).join("")}</select></label></div>` : ""}
+      <div class="row">
+        <label class="f">Album artist <input class="aart" value="${esc(p.album_artist)}" ${p.compilation ? "disabled" : ""}></label>
+        <label class="f" style="flex:1">Album <input class="alb" value="${esc(p.album)}" style="width:100%"></label>
+        <label class="f">Year <input class="yr" value="${esc(p.year)}" style="width:64px"></label>
+        <label class="f">Disc <input class="dno" type="number" min="1" value="${+p.disc||1}" style="width:52px"> of <input class="dof" type="number" min="1" value="${+p.discs||1}" style="width:52px"></label>
+        <label class="f"><input type="checkbox" class="comp" ${p.compilation ? "checked" : ""}> Various Artists</label>
+      </div>
+      <div class="sub dest adir" style="font-size:12px">${esc(albumDir(p))}</div>
+      ${(p.accuraterip||[]).length ? `<details style="font-size:12px"><summary>AccurateRip</summary>${p.accuraterip.map(esc).join("<br>")}</details>` : ""}
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th></th><th>#</th><th>Length</th><th>Keep?</th><th>Title</th><th ${showArtist ? "" : 'style="display:none"'}>Track artist</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>
+    <div class="foot">
+      <button class="primary file" ${job && job.state==="running" ? "disabled" : ""}>File ${keep} tracks into ${SERVER_NAME}</button>
+      <button class="save">Save without filing</button>
+      <span style="flex:1"></span>
+      <button class="discard" title="Delete this rip">Discard rip</button>
+      ${job ? `<span class="${job.state==="error"?"err":job.state==="done"?"ok":""}">${esc(job.current)}${job.note?" · "+esc(job.note):""}</span>
+               ${job.state==="running" ? `<div class="bar"><i style="width:${pct}%"></i></div><span>${pct}%</span>` : ""}` : ""}
+      <span class="msg"></span>
+    </div>
+  </section>`;
+}
+function wireMusic(p, i, msg, rerender){
+  const el = $("#c"+i);
+  const refreshDest = () => { $(".adir", el).textContent = albumDir(p);
+    el.querySelectorAll(".ttl").forEach(n => { const it = p.items[n.dataset.j]; const d = n.parentElement.querySelector(".dest"); if (d && it.action !== "skip") d.textContent = trackFile(p, it); }); };
+  el.querySelectorAll(".play").forEach(b => b.onclick = () => api("/api/play", {folder:p.folder, source:p.items[b.dataset.j].source}).catch(e => msg.textContent = e.message));
+  el.querySelectorAll(".act").forEach(s => s.onchange = () => { p.items[s.dataset.j].action = s.value; rerender(); });
+  el.querySelectorAll(".ttl").forEach(n => n.oninput = () => { p.items[n.dataset.j].title = n.value; refreshDest(); });
+  el.querySelectorAll(".art").forEach(n => n.oninput = () => { p.items[n.dataset.j].artist = n.value; });
+  $(".aart", el).oninput = e => { const old = p.album_artist; p.album_artist = e.target.value;
+    p.items.forEach(it => { if (!it.artist || it.artist === old) it.artist = p.album_artist; }); refreshDest(); };
+  $(".alb", el).oninput = e => { p.album = p.title = e.target.value; refreshDest(); };
+  $(".yr", el).oninput = e => { p.year = e.target.value; };
+  $(".dno", el).oninput = e => { p.disc = +e.target.value || 1; refreshDest(); };
+  $(".dof", el).oninput = e => { p.discs = +e.target.value || 1; refreshDest(); };
+  $(".comp", el).onchange = e => { p.compilation = e.target.checked; rerender(); };
+  const rel = $(".release", el);
+  if (rel) rel.onchange = async () => {
+    msg.textContent = "Renaming from that release…";
+    try { const r = await api("/api/release", {folder:p.folder, plan:p, release:rel.value}); Object.assign(p, r.plan); rerender(); }
+    catch(e){ msg.textContent = e.message; }
+  };
+  $(".discard", el).onclick = async () => {
+    if (!confirm(`Delete the whole rip of ${p.album || p.disc_label} from ${LIB_RIPPED}? Nothing is copied into ${SERVER_NAME}.`)) return;
+    const j = await api("/api/discard", {folder:p.folder});
+    if (j.error){ msg.textContent = j.error; return; }
+    p.job = {state:"done", current:"Discarded", note:"Rip deleted"}; rerender();
+  };
+  $(".save", el).onclick = async () => { await api("/api/save", {folder:p.folder, plan:p}); msg.textContent = "Saved."; };
+  $(".file", el).onclick = async () => {
+    const keep = p.items.filter(it => it.action === "move").length;
+    if (!confirm(`Copy ${keep} track(s) into ${albumDir(p)}?`)) return;
+    const j = await api("/api/file", {folder:p.folder, plan:p});
+    if (j.problems){ const m2 = $(".msg", $("#c"+i)) || msg; m2.innerHTML = `<span class="err">${j.problems.map(esc).join("<br>")}</span>`; return; }
+    poll();
+  };
+}
+
+function wire(p, i){
+  const el = $("#c"+i), msg = $(".msg", el);
+  if (!msg) return; // filed
+  const rerender = () => { const cur = $("#c"+i); if (cur){ cur.outerHTML = card(p, i); wire(p, i); } };
+  const hold = () => { if (p.auto && !p.hold){ p.hold = true; p.auto.blocked = ["you chose to review it"]; api("/api/hold", {folder:p.folder}).catch(()=>{}); } };
+  el.addEventListener("input", hold); el.addEventListener("change", hold);
+  const hb = $(".hold", el); if (hb) hb.onclick = () => { hold(); rerender(); };
+  if (p.kind === "music") return wireMusic(p, i, msg, rerender);
+  el.querySelectorAll(".play").forEach(b => b.onclick = () => api("/api/play", {folder:p.folder, source:p.items[b.dataset.j].source}).catch(e => msg.textContent = e.message));
+  el.querySelectorAll(".act").forEach(s => s.onchange = () => { p.items[s.dataset.j].action = s.value; rerender(); });
+  el.querySelectorAll(".typ").forEach(s => s.onchange = () => { setType(p, p.items[s.dataset.j], s.value); rerender(); });
+  el.querySelectorAll(".att").forEach(s => s.onchange = () => { const it = p.items[s.dataset.j]; it.attach = s.value; if (s.value !== "episode") delete it.attach_to; rerender(); });
+  el.querySelectorAll(".atte").forEach(s => s.onchange = () => { p.items[s.dataset.j].attach_to = s.value; rerender(); });
+  el.querySelectorAll(".attk").forEach(s => s.onchange = () => { p.items[s.dataset.j].category = s.value; rerender(); });
+  el.querySelectorAll(".nm").forEach(n => n.oninput = () => {
+    const it = p.items[n.dataset.j];
+    if (it.role === "episode"){ const was = safe(it.name), now = safe(n.value);  // keep its extras attached
+      p.items.forEach(o => { if (o.attach === "episode" && o.attach_to === was) o.attach_to = now; }); }
+    it.name = n.value;
+    const ph = phWarning(p), box = $(".phwarn", el);
+    if (box && !ph) box.remove(); else if (box) box.textContent = ph;
+    const d = n.parentElement.querySelector(".dest"); if (d && it.action !== "skip") d.textContent = destOf(p, it);
+  });
+  // Typed a different sNNeNN into a name? Look the episode up on TMDB and use its title.
+  const lookupName = async (input, apply) => {
+    const m = input.value.match(/ - s(\d+)e(\d+)(?!\d|-e)/i);
+    if (!m) return;
+    const season = +m[1], ep = +m[2];
+    try {
+      const r = await api("/api/epnames", {folder:p.folder, plan:{title:p.title, year:p.year, tmdb_id:p.tmdb_id}, season, episodes:[ep]});
+      const full = r.names[ep];
+      if (full && / - s\d+e\d+ - /i.test(full)) apply(full, season, ep);
+      else msg.textContent = `TMDB has no s${pad(season)}e${pad(ep)} for this show.`;
+    } catch(e){ msg.textContent = e.message; }
+  };
+  el.querySelectorAll(".nm").forEach(n => n.onchange = () => {
+    const it = p.items[n.dataset.j];
+    if (it.role !== "episode" || (it.episodes||[]).length > 1) return;
+    lookupName(n, (full, season, ep) => {
+      Object.assign(it, {name: full, season, episode: ep, episodes: [ep]}); delete it.library_copy;
+      if (it.note && /TMDB|check the episode number/i.test(it.note)) it.note = "";
+      reflow(p); rerender();
+    });
+  });
+  el.querySelectorAll(".snm").forEach(n => n.onchange = () => {
+    const it = p.items[n.dataset.j], k = +n.dataset.k;
+    lookupName(n, (full, season, ep) => {
+      it.split.names[k] = full;
+      if (it.episodes && season === it.season) it.episodes[k] = ep;
+      delete it.library_copy; rerender();
+    });
+  });
+  el.querySelectorAll(".trk").forEach(b => b.onclick = () => {
+    const a = p.items[b.dataset.j].audio[+b.dataset.k];
+    a.commentary = !a.commentary; a.guessed = false;
+    if (a.commentary && !a.name) a.name = "Commentary";
+    rerender();
+  });
+  el.querySelectorAll(".trkname").forEach(n => n.oninput = () => { p.items[n.dataset.j].audio[+n.dataset.k].name = n.value; });
+  el.querySelectorAll(".skp").forEach(c => c.onchange = () => {
+    const sp = p.items[c.dataset.j].split, k = +c.dataset.k;
+    sp.skip = (sp.skip||[]).filter(x => x !== k).concat(c.checked ? [] : [k]).sort((a,b) => a-b); rerender();
+  });
+  el.querySelectorAll(".sst").forEach(s => s.onchange = () => { p.items[s.dataset.j].split.starts[+s.dataset.k] = +s.value; rerender(); });
+  el.querySelectorAll(".snm").forEach(n => n.oninput = () => {
+    const it = p.items[n.dataset.j]; it.split.names[+n.dataset.k] = n.value;
+    const d = n.parentElement.querySelector(".dest"); if (d && it.action !== "skip") d.textContent = destOf(p, Object.assign({}, it, {name:n.value}));
+  });
+  el.querySelectorAll(".spo").forEach(s => s.onchange = () => {
+    const sp = p.items[s.dataset.j].split, k = +s.value;
+    sp.opening = k; sp.copy_opening = k > 0;
+    if (k && sp.starts[0] < k) sp.starts[0] = k;   // the first episode's own part starts after the opening
+    if (!k && sp.starts[0] > 0 && sp.starts[0] <= 3) sp.starts[0] = 0;
+    rerender();
+  });
+  el.querySelectorAll(".spe").forEach(s => s.onchange = () => {
+    const sp = p.items[s.dataset.j].split, k = +s.value; sp.ending = k; sp.copy_ending = k > 0; rerender();
+  });
+  el.querySelectorAll(".spn").forEach(s => s.onchange = async () => {
+    const it = p.items[s.dataset.j];
+    try {
+      const r = await api("/api/resplit", {folder:p.folder, plan:{title:p.title, year:p.year, tmdb_id:p.tmdb_id}, item:it, count:+s.value});
+      if (r.error){ msg.textContent = r.error; return; }
+      it.split = r.split; it.split.skip = []; it.episodes = r.episodes; it.episode = r.episodes[0];
+      it.name = it.name.replace(/ - s(\d+)e\d+(?:-e\d+)?/i, (m, ss) => ` - s${ss}e${pad(r.episodes[0])}-e${pad(r.episodes[r.episodes.length-1])}`);
+      rerender();
+    } catch(e){ msg.textContent = e.message; }
+  });
+  $(".lib", el).onchange = e => { p.library_dir = e.target.value.replace(/[\\]+$/,""); reflow(p); rerender(); };
+  const season = $(".season", el);
+  if (season) season.onchange = () => { p.season = +season.value; reflow(p); rerender(); };
+  const renum = $(".renum", el);
+  if (renum) renum.onclick = async () => {
+    const eps = p.items.filter(it => it.role === "episode" && it.season !== 0 && it.action === "move");
+    if (!eps.length) return;
+    let n = +$(".first", el).value || eps[0].episode || 1;
+    const all = [];
+    for (const it of eps){
+      const cnt = (it.episodes||[1]).length;
+      it.season = p.season; it.episode = n; it.episodes = Array.from({length:cnt}, (_, k) => n + k);
+      all.push(...it.episodes); n += cnt;
+    }
+    let names = {};
+    try { names = (await api("/api/epnames", {folder:p.folder, plan:{title:p.title, year:p.year, tmdb_id:p.tmdb_id}, season:p.season, episodes:all})).names; }
+    catch(e){ msg.textContent = "Couldn't get TMDB titles: " + e.message; }
+    const prefix = safe(p.title + (p.year ? ` (${p.year})` : ""));
+    const nm = e => names[e] || `${prefix} - s${pad(p.season)}e${pad(e)}`;
+    for (const it of eps){
+      const e = it.episodes;
+      it.name = e.length > 1 ? `${prefix} - s${pad(p.season)}e${pad(e[0])}-e${pad(e[e.length-1])}` : nm(e[0]);
+      if (it.split) it.split.names = e.map(nm);
+      delete it.library_copy;
+      if (it.note && /TMDB has no names|continues in TMDB|numbered as/i.test(it.note)) it.note = "";
+    }
+    reflow(p); rerender();
+  };
+  const ed = $(".edition", el);
+  if (ed) ed.onchange = async () => {
+    msg.textContent = "Renaming extras from that release…";
+    try {
+      const r = await api("/api/edition", {folder:p.folder, plan:p, edition:ed.value});
+      if (r.error) throw new Error(r.error);
+      Object.assign(p, r.plan); rerender();
+    } catch(e){ msg.textContent = e.message; }
+  };
+  $(".chg", el).onclick = () => $(".search", el).classList.toggle("open");
+  $(".sgo", el).onclick = async () => {
+    const res = $(".sres", el); res.textContent = "Searching…";
+    try {
+      const kind = $(".skind", el).value;
+      const j = await api(`/api/search?kind=${kind}&q=${encodeURIComponent($(".sq", el).value)}`);
+      res.innerHTML = j.results.map(r => `<div class="result"><button data-id="${r.id}">Use</button>
+        <b>${esc(r.title)}</b> <small>${esc(r.year)} · tmdb-${r.id}</small> <small>${esc(r.overview)}</small></div>`).join("") || "No results.";
+      res.querySelectorAll("button").forEach(b => b.onclick = async () => {
+        res.textContent = "Re-naming…";
+        const j2 = await api("/api/rematch", {folder:p.folder, kind, tmdb_id:b.dataset.id, season: kind==="tv" ? (p.season||1) : null});
+        discs[i] = j2.plan; p = j2.plan; rerender();
+      });
+    } catch(e){ res.textContent = e.message; }
+  };
+  $(".discard", el).onclick = async () => {
+    if (!confirm(`Delete the whole rip of ${p.disc_label} from ${LIB_RIPPED}? Nothing is copied into ${SERVER_NAME}.`)) return;
+    const j = await api("/api/discard", {folder:p.folder});
+    if (j.error){ msg.textContent = j.error; return; }
+    p.job = {state:"done", current:"Discarded", note:"Rip deleted"}; rerender();
+  };
+  $(".save", el).onclick = async () => { await api("/api/save", {folder:p.folder, plan:p}); msg.textContent = "Saved."; };
+  $(".file", el).onclick = async () => {
+    const keep = p.items.reduce((s, it) => s + filesOf(it), 0);
+    if (!confirm(`Move ${keep} file(s) into ${LIB}?`)) return;
+    const j = await api("/api/file", {folder:p.folder, plan:p});
+    if (j.problems){ if (j.plan){ discs[i] = Object.assign(j.plan, {job: p.job}); p = discs[i]; rerender(); }
+      const m2 = $(".msg", $("#c"+i)) || msg;
+      m2.innerHTML = `<span class="err">${j.problems.map(esc).join("<br>")}</span>`; return; }
+    poll();
+  };
+}
+
+let polling = null;
+function poll(){
+  clearTimeout(polling);
+  polling = setTimeout(async () => { await load(true); if (discs.some(d => d.job && (d.job.state === "running" || (d.job.plex && /starting|scanning/.test(d.job.plex.state))))) poll(); }, 1500);
+}
+
+async function load(keepEdits){
+  const j = await api("/api/discs");
+  LIB = j.library; LIB_RIPPED = j.ripped; SERVER = j.server || "plex"; SERVER_NAME = j.server_name || "Plex";
+  $("#sub").textContent = `${j.discs.length} disc(s) waiting · library: ${LIB}` + (j.tmdb ? "" : " · no TMDB key");
+  if (keepEdits){ // only refresh job status, keep unsaved edits
+    // Redraw just the cards whose filing status changed, so typing or a dropdown open on
+    // another card isn't interrupted while a disc is filing.
+    const byFolder = Object.fromEntries(j.discs.map(d => [d.folder, d]));
+    discs.forEach((d, i) => {
+      const job = byFolder[d.folder] ? byFolder[d.folder].job : ((j.jobs||{})[d.folder] || {state:"done", current:"Filed"});
+      if (JSON.stringify(job || null) === JSON.stringify(d.job || null)) return;
+      d.job = job; redraw(i);
+    });
+    return;
+  }
+  discs = j.discs;
+  render();
+}
+
+// ------------------------------------------------------------------ app tabs (app.py)
+let APP = false, TAB = "review", lastWaiting = -1;
+function showTab(t){
+  TAB = t; try { localStorage.setItem("tab", t); } catch(e){}
+  document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("cur", b.dataset.tab === t));
+  $("#drivesTab").classList.toggle("hide", t !== "drives");
+  $("#list").classList.toggle("hide", t !== "review");
+  $("#settingsTab").classList.toggle("hide", t !== "settings");
+  $("#libraryTab").classList.toggle("hide", t !== "library");
+  if (t === "library") loadReport(false);
+  $("#scan").classList.toggle("hide", t !== "review");
+  $("#sub").classList.toggle("hide", t !== "review");
+  if (t === "settings") loadSettings();
+  if (t === "drives") pollDrives();
+}
+const gb = b => (b/1e9).toFixed(1) + " GB";
+const eta = s => s == null ? "" : s >= 3600 ? `${Math.floor(s/3600)}h ${pad(Math.floor(s%3600/60))}m left` : `${Math.max(1, Math.round(s/60))} min left`;
+const progText = a => a ? `${gb(a.done)} of ${gb(a.total)} · title ${Math.min(a.titles_done, a.titles)} of ${a.titles}` +
+  (a.mb_s ? ` · ${a.mb_s} MB/s` : "") + (a.eta_s != null ? ` · ${eta(a.eta_s)}` : "") : "";
+const pctOf = d => d.progress ? Math.max(d.progress.pct, d.ripping ? d.pct||0 : 0) : d.pct||0;
+const stateText = d => {
+  if (!d.loaded) return "Empty";
+  if (d.ripping) return d.state === "scanning" ? "Reading the disc…" : `Ripping ${pctOf(d)}%` + (d.progress ? ` · ${progText(d.progress)}` : d.message ? ` · ${d.message}` : "");
+  if (d.elsewhere) return d.progress ? `Ripping ${d.progress.pct}% (in another window) · ${progText(d.progress)}` : "Being ripped by another window";
+  if (d.state === "done" && d.rip_label === d.label) return "Done · " + (d.message||"");
+  if (["check","error","cancelled"].includes(d.state) && d.rip_label === d.label) return (d.state === "cancelled" ? "Cancelled" : "Problem: ") + (d.state === "cancelled" ? "" : d.message||"");
+  if (d.state === "in_plex" && d.rip_label === d.label) return d.message;
+  if (d.state === "low_space" && d.rip_label === d.label) return d.message;
+  if (d.already) return "Ripped · waiting for review (ejects once you file it)";
+  return "Waiting to rip";
+};
+function statsBox(st){
+  if (!st || st.error) return "";
+  const pct = st.total ? Math.min(100, Math.round(100 * st.discs / st.total)) : 0;
+  const sp = (st.space||[]).map(x => `<span class="${x.low ? "err" : ""}">${esc(x.name)}: ${x.free_gb == null ? "not found" : `${x.free_gb} GB free of ${x.total_gb}`}${x.low ? " (low)" : ""}</span>`).join(" · ");
+  const dmg = (st.damaged||[]).map(r => `<div class="row" style="gap:8px"><span class="err">⚠</span><span>${esc(r.label)}</span>
+      <span style="color:var(--muted)">${esc(r.when)} · ${r.read_errors ? r.read_errors + " read error(s)" : ""}${r.read_errors && r.titles_failed ? ", " : ""}${r.titles_failed ? r.titles_failed + " title(s) failed" : ""}${(r.files||[]).length ? " · " + esc(r.files.slice(0,3).join(", ")) : ""}</span>
+      <span style="flex:1"></span><button data-dmg="${esc(r.label)}" title="Remove from this list">Done</button></div>`).join("");
+  return `<div class="stats">
+    <div class="row"><b>${st.total ? `${st.discs} of ${st.total} discs filed` : `${st.discs} disc${st.discs === 1 ? "" : "s"} filed`}</b><span style="color:var(--muted)">${st.movies} movies · ${st.tv} TV · ${st.music} CDs · ${st.hours} hours · ${st.today} today · ${st.waiting} waiting for review · ${st.ripping} ripping</span></div>
+    ${st.total ? `<div class="bar"><i style="width:${pct}%"></i></div>` : ""}
+    <div style="font-size:13px">${sp}</div>
+    ${dmg ? `<details ${st.damaged.length ? "open" : ""}><summary>Discs with read errors (${st.damaged.length}): clean them and click Rip again, or replace them</summary>${dmg}</details>` : ""}
+  </div>`;
+}
+function renderDrives(j){
+  const el = $("#drivesTab");
+  const cards = j.drives.map(d => `<div class="drive">
+      <div class="row"><span class="dev">${esc(d.device)}</span><span style="flex:1"></span>
+        ${d.ripping ? `<button data-act="cancel" data-dev="${esc(d.device)}">Cancel rip</button>`
+          : d.loaded ? `${d.already ? `<button data-act="rip_again" data-dev="${esc(d.device)}">${d.state === "in_plex" && d.rip_label === d.label ? "Rip anyway" : "Rip again"}</button>` : ""}<button data-act="eject" data-dev="${esc(d.device)}">Eject</button>` : ""}</div>
+      <div class="lab">${d.loaded ? esc(d.label || "(no label)") : "&nbsp;"}</div>
+      ${d.ripping || d.progress ? `<div class="bar"><i style="width:${pctOf(d)}%"></i></div>` : ""}
+      <div class="st ${["check","error"].includes(d.state) && d.rip_label === d.label ? "err" : d.state === "done" && d.rip_label === d.label ? "ok" : ""}">${esc(stateText(d))}</div>
+    </div>`).join("") || `<p class="empty">No disc drives found yet…</p>`;
+  const missing = (j.setup||[]).filter(x => !x.ok && x.required);
+  el.innerHTML = `
+    ${missing.length ? setupBox(missing, "Needs setting up:") : j.error ? `<div class="warn" style="margin-bottom:14px">${esc(j.error)}</div>` : ""}
+    <div class="toolbar">
+      <label class="switch"><input type="checkbox" id="auto" ${j.auto ? "checked" : ""}> Auto-rip</label>
+      <span style="color:var(--muted)">${j.auto ? "Every disc you insert is ripped straight away, then named for review." : "Off: discs are only ripped when you click the button."}</span>
+      <span style="flex:1"></span>
+      <button class="primary" id="ripnow">Rip loaded discs now</button>
+    </div>
+    ${statsBox(j.stats)}
+    <div class="drives">${cards}</div>
+    <pre class="log">${esc((j.log||[]).slice().reverse().join("\n")) || "Nothing yet."}</pre>`;
+  $("#auto", el).onchange = e => ripAct(e.target.checked ? "auto_on" : "auto_off");
+  $("#ripnow", el).onclick = () => ripAct("rip_now");
+  el.querySelectorAll("[data-dmg]").forEach(b => b.onclick = () => api("/api/rip", {action:"dismiss_damaged", label:b.dataset.dmg}).then(pollDrives));
+  el.querySelectorAll("[data-act]").forEach(b => b.onclick = () => {
+    if (b.dataset.act === "cancel" && !confirm(`Cancel the rip in ${b.dataset.dev}? The part already ripped is left in the Ripped folder for you to delete.`)) return;
+    ripAct(b.dataset.act, b.dataset.dev);
+  });
+}
+function setupBox(items, head){
+  return `<div class="warn" style="margin-bottom:14px">${head ? `<b>${esc(head)}</b><br>` : ""}${items.map(x =>
+    `${x.ok ? "✓" : "✗"} <b>${esc(x.name)}</b>: ${esc(x.detail)}${x.link ? ` · <a href="${esc(x.link)}" target="_blank" rel="noopener">${x.name === "MakeMKV" || x.name === "MKVToolNix" ? "Download" : "How to get it"}</a>` : ""}`).join("<br>")}</div>`;
+}
+async function ripAct(action, device){
+  const j = await api("/api/rip", {action, device});
+  if (j.error) alert(j.error);
+  renderDrives(j);
+}
+let drivesTimer = null;
+async function pollDrives(){
+  clearTimeout(drivesTimer);
+  try {
+    const j = await api("/api/drives");
+    $("#nwait").textContent = j.waiting;
+    if (TAB === "drives") renderDrives(j);
+    const sig = j.waiting + "/" + (j.filing||0);
+    if (lastWaiting !== -1 && sig !== lastWaiting) await addNewDiscs();
+    lastWaiting = sig;
+  } catch(e){}
+  drivesTimer = setTimeout(pollDrives, TAB === "drives" ? 2500 : 8000);
+}
+// new rips appear on the Review tab without losing edits on the cards already open
+async function addNewDiscs(){
+  const j = await api("/api/discs");
+  const have = new Set(discs.map(d => d.folder));
+  const byFolder = Object.fromEntries(j.discs.map(d => [d.folder, d]));
+  discs.forEach((d, i) => {  // a disc being filed automatically: show its progress
+    const nd = byFolder[d.folder] || {job: (j.jobs||{})[d.folder] || (d.job ? d.job : {state:"done", current:"Filed"})};
+    if (!nd.job || JSON.stringify(nd.job) === JSON.stringify(d.job || null)) return;
+    d.job = nd.job; redraw(i);
+    if (nd.job.state === "running") poll();
+  });
+  const fresh = j.discs.filter(d => !have.has(d.folder));
+  if (!fresh.length) return;
+  discs = discs.concat(fresh);
+  $("#sub").textContent = `${discs.filter(d => !(d.job && d.job.state === "done")).length} disc(s) waiting · library: ${LIB}`;
+  const list = $("#list");
+  if (!list.querySelector(".card")) return render();
+  const start = discs.length - fresh.length;  // add the new cards below, leave the open ones alone
+  list.insertAdjacentHTML("beforeend", fresh.map((p, k) => card(p, start + k)).join(""));
+  fresh.forEach((p, k) => wire(p, start + k));
+}
+let reportTimer = null;
+async function loadReport(start){
+  clearTimeout(reportTimer);
+  const el = $("#libraryTab");
+  const r = start ? await api("/api/report", {}) : await api("/api/report");
+  const head = `<div class="toolbar"><b>Library report</b>
+      <span style="color:var(--muted)">${r.state === "done" ? `Built ${esc(r.built)} · ${r.counts.movies} movies, ${r.counts.shows} shows` : r.state === "running" ? esc(r.step || "Working…") : "Episode gaps, titles in several formats, and anything Plex hasn't matched right."}</span>
+      <span style="flex:1"></span><button class="primary" id="mkrep" ${r.state === "running" ? "disabled" : ""}>${r.state === "done" ? "Rebuild" : "Build report"}</button></div>`;
+  let body = "";
+  if (r.state === "error") body = `<div class="warn">${esc(r.error)}</div>`;
+  if (r.state === "done"){
+    const sec = (title, rows) => `<section class="card"><div class="card-head"><span class="title">${title}</span></div><div class="tablewrap"><table>${rows || `<tr><td style="color:var(--muted)">Nothing found.</td></tr>`}</table></div></section>`;
+    const rng = a => { const out = []; let i = 0; while (i < a.length){ let j = i; while (j+1 < a.length && a[j+1] === a[j]+1) j++; out.push(i === j ? `e${pad(a[i])}` : `e${pad(a[i])}–e${pad(a[j])}`); i = j+1; } return out.join(", "); };
+    const tv = r.tv.map(sh => sh.seasons.map(se => `<tr><td>${esc(sh.title)}${sh.year ? ` (${esc(sh.year)})` : ""}</td><td>${se.season === 0 ? "Specials" : "Season " + se.season}</td>
+        <td>${se.missing === null ? `<span class="err">whole season missing</span> (${se.total} episodes on TMDB)` : se.missing && se.missing.length ? `<span class="err">missing ${esc(rng(se.missing))}</span>` : ""}
+        ${se.multi.length ? `<div style="color:var(--muted)">in more than one format: ${esc(rng(se.multi))}</div>` : ""}</td>
+        <td style="color:var(--muted)">${se.have}${se.total ? " of " + se.total : ""} · ${esc(sh.formats.join(", "))}</td></tr>`).join("")).join("");
+    const dup = r.dup_movies.map(m => `<tr><td>${esc(m.title)}${m.year ? ` (${esc(m.year)})` : ""}</td><td style="color:var(--muted)">${esc(m.formats.join(", "))}</td></tr>`).join("");
+    const px = r.plex || {};
+    const pr = px.off ? `<tr><td style="color:var(--muted)">Add your Plex address and token in Settings to include this.</td></tr>` : px.error ? `<tr><td class="err">${esc(px.error)}</td></tr>` :
+      [...(px.movies||[]), ...(px.shows||[])].map(x => `<tr><td>${esc(x.title)}${x.year ? ` (${x.year})` : ""}</td><td style="color:var(--muted)">${esc(x.section)} · ${esc(x.folder)}</td><td class="err">${esc(x.problem)}</td></tr>`).join("");
+    body = sec("TV: missing episodes", tv) + sec("Movies in more than one format", dup) + sec("Plex: not matched, or matched to the wrong title", pr);
+  }
+  el.innerHTML = head + body;
+  $("#mkrep", el).onclick = () => loadReport(true);
+  if (r.state === "running") reportTimer = setTimeout(() => loadReport(false), 1500);
+}
+// First run: the few things the app can't work without, one step at a time.
+function wizard(j){
+  const val = k => (j.settings.find(s => s.key === k) || {}).value;
+  const chk = n => (j.setup||[]).find(x => x.name === n) || {};
+  const mark = n => chk(n).ok ? `<span class="ok">✓</span>` : `<span class="err">✗</span>`;
+  const servers = (j.settings.find(s => s.key === "media_server") || {}).choices || [];
+  return `<div class="wiz"><h2>${j.first_run ? "Welcome to Shelfrip" : "Finish setting up"}</h2>
+    <div class="how">Rips your DVDs, Blu-rays and 4K discs with MakeMKV, names everything (movies, episodes and extras), lets you check the names, then files it into your media library.</div>
+    <ol>
+      <li><label><span>Which media server do you use? Files are named the way it expects.</span>
+        <select data-w="media_server">${servers.map(c => `<option value="${esc(c.value)}" ${c.value === val("media_server") ? "selected" : ""}>${esc(c.label)}</option>`).join("")}</select></label></li>
+      <li><label><span>${mark("Media library folder")} Your media library folder: the one that holds (or will hold) Movies and TV Shows folders.</span>
+        <input type="text" data-w="plex_library_root" value="${esc(val("plex_library_root") || "")}" placeholder="for example D:\\Media or \\\\NAS\\Media"></label>
+        <label class="chk"><input type="checkbox" data-w="format_folders" ${val("format_folders") ? "checked" : ""}> Keep each format in its own folder (Movies\\Blu-Ray\\..., Movies\\DVD\\...)</label></li>
+      <li><label><span>${mark("Rip folder")} A rip folder with plenty of free space (about 50 GB per Blu-ray, 100 GB per 4K disc). Discs are ripped here, then moved into the library once you've checked the names.</span>
+        <input type="text" data-w="output_root" value="${esc(val("output_root") || "")}" placeholder="for example D:\\Ripped"></label></li>
+      <li>${mark("MakeMKV")} <b>MakeMKV</b> does the ripping. ${chk("MakeMKV").ok ? `Found: ${esc(chk("MakeMKV").detail)}` :
+        `Install it from <a href="${esc(chk("MakeMKV").link)}" target="_blank" rel="noopener">makemkv.com</a> (free while in beta, or buy a key), then come back here.`}</li>
+      <li><label><span>${mark("TMDB key")} A free TMDB API key, used to look up movie and episode names.</span>
+        <input type="password" data-w="tmdb_api_key" autocomplete="off" placeholder="${chk("TMDB key").ok ? "set: leave empty to keep it" : "paste your API key here"}"></label>
+        <div class="how">Sign up at <a href="https://www.themoviedb.org/signup" target="_blank" rel="noopener">themoviedb.org</a>, open
+          <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">Settings › API</a>, request a key (choose Personal use),
+          and copy the <b>API Key</b> (the short one).</div></li>
+      <li>${mark("MKVToolNix")} <b>MKVToolNix</b> (optional) splits TV discs that hold several episodes in one video. ${chk("MKVToolNix").ok ? "Found." :
+        `<a href="${esc(chk("MKVToolNix").link || "https://mkvtoolnix.download/downloads.html")}" target="_blank" rel="noopener">Download it</a> if you rip TV shows.`}</li>
+    </ol>
+    <div class="row"><button class="primary" id="wizsave">Save and check</button><span id="wizmsg" style="color:var(--muted)"></span>
+      ${j.first_run ? `<span style="flex:1"></span><button id="wizall">Show all settings</button>` : ""}</div>
+  </div>`;
+}
+function wireWizard(el){
+  const b = $("#wizsave", el);
+  if (!b) return;
+  if ($("#wizall", el)) $("#wizall", el).onclick = () => { $(".set", el).style.display = ""; $("#wizall", el).remove(); };
+  b.onclick = async () => {
+    const values = {};
+    el.querySelectorAll("[data-w]").forEach(i => {
+      if (i.type === "checkbox") values[i.dataset.w] = i.checked;
+      else if (i.type === "password") { if (i.value.trim()) values[i.dataset.w] = i.value.trim(); }
+      else values[i.dataset.w] = i.value;
+    });
+    try {
+      const r = await api("/api/settings", {values});
+      const left = (r.setup||[]).filter(x => !x.ok && x.required);
+      if (!left.length) await api("/api/settings", {values:{setup_done:true}});
+      await loadSettings();
+      $("#wizmsg") && ($("#wizmsg").textContent = left.length ? `Still needed: ${left.map(x => x.name).join(", ")}` : "");
+      if (!left.length){ await load(false); showTab("drives"); }
+    } catch(e){ $("#wizmsg").textContent = e.message; }
+  };
+}
+async function loadSettings(){
+  const el = $("#settingsTab");
+  const j = await api("/api/settings");
+  const needs = (j.setup||[]).some(x => !x.ok && x.required);
+  el.innerHTML = `${j.first_run || needs ? wizard(j) : `<div style="max-width:760px">${setupBox(j.setup||[], "Setup check")}</div>`}<div class="set" ${j.first_run ? 'style="display:none"' : ""}>
+    ${j.settings.map(s => s.kind === "bool"
+      ? `<label class="chk"><input type="checkbox" data-k="${s.key}" ${s.value ? "checked" : ""}> ${esc(s.label)}</label>`
+      : s.kind === "secret"
+      ? `<label>${esc(s.label)} <span class="${s.value ? "ok" : "err"}">${s.value ? "✓ set" : "not set"}</span>
+           <input type="password" data-k="${s.key}" autocomplete="off" placeholder="${s.value ? "leave empty to keep the current one" : "paste it here"}"></label>`
+      : s.kind === "select"
+      ? `<label>${esc(s.label)}<select data-k="${s.key}">${(s.choices||[]).map(c => `<option value="${esc(c.value)}" ${c.value === s.value ? "selected" : ""}>${esc(c.label)}</option>`).join("")}</select></label>`
+      : `<label>${esc(s.label)}<input type="${s.kind === "number" ? "number" : "text"}" data-k="${s.key}" value="${esc(s.value)}"></label>`).join("")}
+    <div class="row"><button class="primary" id="saveset">Save settings</button><span id="setmsg" style="color:var(--muted)"></span></div>
+    <div style="color:var(--muted);font-size:12px">Saved in ${esc(j.path)}. Keys are never shown here once saved.</div>
+    <div style="color:var(--muted);font-size:12px">Shelfrip ${esc((j.version||{}).current || "")}. This product uses the TMDB API but is not endorsed or certified by
+      <a href="https://www.themoviedb.org/" target="_blank" rel="noopener">TMDB</a>. Ripping is done by MakeMKV, which you install and license yourself.
+      Extras names also come from TheDiscDB${j.settings.some(s => s.key === "use_dvdcompare" && s.value) ? ", DVDCompare" : ""} and TVmaze; music from MusicBrainz and LRCLIB.</div>
+  </div>`;
+  wireWizard(el);
+  $("#saveset", el).onclick = async () => {
+    const values = {};
+    el.querySelectorAll("[data-k]").forEach(i => {
+      if (i.type === "checkbox") values[i.dataset.k] = i.checked;
+      else if (i.type === "password") { if (i.value.trim()) values[i.dataset.k] = i.value.trim(); }
+      else values[i.dataset.k] = i.value;
+    });
+    try { await api("/api/settings", {values}); await loadSettings(); $("#setmsg").textContent = "Saved."; await load(false); }
+    catch(e){ $("#setmsg").textContent = e.message; }
+  };
+}
+(async () => {
+  try { await api("/api/drives"); APP = true; } catch(e){ APP = false; }
+  if (!APP) return;
+  $("#tabs").classList.add("on"); $("#quit").classList.remove("hide");
+  document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
+  let t = "drives"; try { t = localStorage.getItem("tab") || "drives"; } catch(e){}
+  try { const v = await api("/api/version"); if (v.latest){ const a = $("#upd"); a.href = v.url; a.textContent = `Shelfrip ${v.latest} is out: get it`; a.classList.remove("hide"); } } catch(e){}
+  try { const s = await api("/api/settings"); if (s.first_run || (s.setup||[]).some(x => !x.ok && x.required)) t = "settings"; } catch(e){}
+  showTab(t);
+  pollDrives();
+  $("#quit").onclick = async () => {
+    let j = await api("/api/quit", {});
+    if (j.busy){
+      if (!confirm(`Still working on: ${j.busy.join(", ")}. Quitting stops it (a rip is cut off). Quit anyway?`)) return;
+      j = await api("/api/quit", {force:true});
+    }
+    document.body.innerHTML = `<p class="empty">Shelfrip has stopped. You can close this tab.</p>`;
+  };
+})();
+
+$("#scan").onclick = async () => { $("#scan").disabled = true; const j = await api("/api/scan", {}); $("#scan").disabled = false; await load(false); $("#sub").textContent += ` · ${j.planned} new`; };
+load(false).catch(e => $("#list").innerHTML = `<p class="empty err">${esc(e.message)}</p>`);
+</script>
+</body>
+</html>

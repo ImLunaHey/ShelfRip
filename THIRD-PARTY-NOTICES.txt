@@ -1,0 +1,28 @@
+Shelfrip: third-party software and services
+==============================================
+
+Included in this download
+-------------------------
+* Python (Python Software Foundation License): https://www.python.org/psf/license/
+  The Python runtime and standard library are built into Shelfrip.exe.
+* PyInstaller bootloader (GPL 2.0 with an exception that allows bundling in any
+  program): https://pyinstaller.org/en/stable/license.html
+
+Not included: you install these yourself
+----------------------------------------
+* MakeMKV (GuinpinSoft, shareware/beta licence): https://www.makemkv.com/
+  Does the ripping. Shelfrip only starts its command-line tool, makemkvcon.
+* MKVToolNix (GPL 2.0): https://mkvtoolnix.download/  Splits and edits MKV files.
+* cyanrip (LGPL 2.1): https://github.com/cyanreg/cyanrip  Rips music CDs.
+
+Online services used for names and details
+------------------------------------------
+* TMDB (The Movie Database). This product uses the TMDB API but is not endorsed
+  or certified by TMDB. https://www.themoviedb.org/  Needs your own free API key.
+* TheDiscDB: https://thediscdb.com/
+* TVmaze (CC BY-SA): https://www.tvmaze.com/
+* OMDb (optional, your own key): https://www.omdbapi.com/
+* DVDCompare (optional, off unless you turn it on): https://www.dvdcompare.net/
+* MusicBrainz (CC0 core data) and Cover Art Archive: https://musicbrainz.org/
+* LRCLIB lyrics: https://lrclib.net/
+* AccurateRip (through cyanrip): http://www.accuraterip.com/
