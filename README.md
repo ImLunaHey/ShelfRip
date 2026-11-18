@@ -59,9 +59,10 @@ are recognised whichever style they use, and you can keep each format in its own
 4. Optional: [MKVToolNix](https://mkvtoolnix.download/downloads.html) for splitting TV discs, and
    [cyanrip](https://github.com/cyanreg/cyanrip/releases) for music CDs.
 
-Shelfrip runs as a small local app and opens in your browser at `http://127.0.0.1:8765` (only
-reachable from your own PC; if another program already uses that port, it picks the next free one). Keep its window open while it works; the **Quit** button on the page
-stops it. Your settings live in `%APPDATA%\Shelfrip`.
+Shelfrip opens in its own window (it uses Microsoft Edge, which comes with Windows; without it, your
+browser). Closing the window keeps it running as an icon by the clock, so discs keep ripping: click
+the icon to open it again, or right-click it to pause auto-rip or quit. Behind the window is a small
+local web server at `http://127.0.0.1:8765`, only reachable from your own PC. Your settings live in `%APPDATA%\Shelfrip`.
 
 ## Run from source
 
