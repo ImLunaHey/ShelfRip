@@ -150,7 +150,13 @@ def _badges(c: dict, streak_best: int, plans: list[dict], per_day: dict) -> list
 
 def compute(rip_root: Path, goal_total: int = 0) -> dict:
     """Everything the page shows about your progress. Cached for 20 seconds."""
-    key = (str(rip_root), goal_total)
+    def stamp(p: Path) -> float:
+        try:
+            return p.stat().st_mtime
+        except OSError:
+            return 0.0
+    # a newly filed disc adds a folder to _Filed, which changes its time stamp
+    key = (str(rip_root), goal_total, stamp(rip_root / "_Filed"), stamp(SHARED_PATH))
     if _CACHE["data"] and _CACHE["key"] == key and time.time() - _CACHE["t"] < 20:
         return _CACHE["data"]
     plans = _filed_plans(rip_root)

@@ -107,8 +107,47 @@ def _window_box() -> list[str]:
     return [f"--window-size={w},{h}", f"--window-position={x0},{y0}"]
 
 
+def _focus_existing() -> bool:
+    """If a Shelfrip app window is already open, bring it to the front instead of opening another."""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        u32 = ctypes.WinDLL("user32")
+        found = []
+        PROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+        u32.GetWindowTextW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
+        u32.GetClassNameW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
+        u32.IsWindowVisible.argtypes = [ctypes.c_void_p]
+        u32.IsIconic.argtypes = [ctypes.c_void_p]
+        u32.ShowWindow.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        u32.SetForegroundWindow.argtypes = [ctypes.c_void_p]
+
+        def each(hwnd, _):
+            title, cls = ctypes.create_unicode_buffer(256), ctypes.create_unicode_buffer(64)
+            u32.GetWindowTextW(hwnd, title, 256)
+            u32.GetClassNameW(hwnd, cls, 64)
+            # the app window's title is the page's <title> alone; a browser tab would add " - Microsoft Edge"
+            if title.value == "Shelfrip" and cls.value.startswith("Chrome_WidgetWin") and u32.IsWindowVisible(hwnd):
+                found.append(hwnd)
+                return False
+            return True
+        u32.EnumWindows(PROC(each), None)
+        if not found:
+            return False
+        if u32.IsIconic(found[0]):
+            u32.ShowWindow(found[0], 9)  # SW_RESTORE
+        u32.SetForegroundWindow(found[0])
+        return True
+    except Exception:
+        return False
+
+
 def open_window(url: str, use_window: bool = True) -> None:
-    """Open Shelfrip in its own window (falls back to a browser tab)."""
+    """Open Shelfrip in its own window (falls back to a browser tab). If its window is already
+    open (say you clicked the tray icon again), that window comes to the front instead."""
+    if use_window and "#" not in url and _focus_existing():
+        return
     exe = _find_browser() if use_window else None
     if exe:
         try:

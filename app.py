@@ -29,7 +29,6 @@ import threading
 import time
 import urllib.parse
 import urllib.request
-import webbrowser
 from http.server import ThreadingHTTPServer
 
 import desktop
@@ -645,7 +644,7 @@ def build_report() -> None:
         tv_rows = []
         for n, e in enumerate(sorted(shows.values(), key=lambda x: x["title"].lower()), 1):
             REPORT["step"] = f"Checking episode counts on TMDB ({n} of {len(shows)})"
-            counts, firsts = {}, {}
+            counts = {}
             if review.TMDB and e["id"]:
                 try:
                     for se in review.TMDB.tv(int(e["id"])).get("seasons") or []:
