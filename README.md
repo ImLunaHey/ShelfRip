@@ -59,8 +59,8 @@ are recognised whichever style they use, and you can keep each format in its own
 4. Optional: [MKVToolNix](https://mkvtoolnix.download/downloads.html) for splitting TV discs, and
    [cyanrip](https://github.com/cyanreg/cyanrip/releases) for music CDs.
 
-Shelfrip runs as a small local app and opens in your browser at `http://localhost:8765` (only
-reachable from your own PC). Keep its window open while it works; the **Quit** button on the page
+Shelfrip runs as a small local app and opens in your browser at `http://127.0.0.1:8765` (only
+reachable from your own PC; if another program already uses that port, it picks the next free one). Keep its window open while it works; the **Quit** button on the page
 stops it. Your settings live in `%APPDATA%\Shelfrip`.
 
 ## Run from source
