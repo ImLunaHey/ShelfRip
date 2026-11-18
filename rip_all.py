@@ -264,6 +264,47 @@ def parse_disc_info(output: str) -> dict:
 
 # --------------------------------------------------------------------------- makemkv calls
 
+_JOB = None
+
+
+def end_with_us(proc: subprocess.Popen) -> None:
+    """Windows: make this MakeMKV process end when Shelfrip closes. Otherwise closing the window
+    leaves makemkvcon ripping in the background, holding the drive, with nothing watching it."""
+    global _JOB
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CreateJobObjectW.restype = ctypes.c_void_p
+        k32.SetInformationJobObject.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
+        k32.AssignProcessToJobObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        if _JOB is None:
+            class Basic(ctypes.Structure):
+                _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                            ("LimitFlags", ctypes.c_uint32), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                            ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", ctypes.c_uint32),
+                            ("Affinity", ctypes.c_size_t), ("PriorityClass", ctypes.c_uint32),
+                            ("SchedulingClass", ctypes.c_uint32)]
+
+            class Extended(ctypes.Structure):
+                _fields_ = [("Basic", Basic), ("Io", ctypes.c_uint64 * 6), ("ProcessMemoryLimit", ctypes.c_size_t),
+                            ("JobMemoryLimit", ctypes.c_size_t), ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                            ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+            job = k32.CreateJobObjectW(None, None)
+            info = Extended()
+            info.Basic.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            if not job or not k32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):
+                _JOB = 0
+                return
+            _JOB = job  # the handle stays open while we run; Windows closes it (and the job) when we exit
+        if _JOB:
+            k32.AssignProcessToJobObject(_JOB, ctypes.c_void_p(int(proc._handle)))  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+
 def run_makemkv(cfg: dict, args: list[str], logfile: Path | None = None,
                 on_progress=None, device: str = "") -> tuple[int, str]:
     cmd = [cfg["makemkvcon_path"], "-r", "--progress=-same"] + args
@@ -272,6 +313,7 @@ def run_makemkv(cfg: dict, args: list[str], logfile: Path | None = None,
         text=True, encoding="utf-8", errors="replace",
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
+    end_with_us(proc)
     if device:
         PROCS[device] = proc
     lines = []
@@ -729,12 +771,11 @@ def rip_loaded(cfg: dict, busy: set[str], finished: dict[str, str],
             continue
         if dev in busy or finished.get(dev) == d["disc_label"]:
             continue
-        if force is None or dev not in force:
-            if already_ripped(cfg, d["disc_label"]):  # still in the drive while you review it
-                finished[dev] = d["disc_label"]
-                continue
-            if skip and skip(d):  # e.g. Plex already has this disc
-                continue
+        forced = force is not None and dev in force
+        checks = None if forced else skip
+        if not forced and already_ripped(cfg, d["disc_label"]):  # still in the drive while you review it
+            finished[dev] = d["disc_label"]
+            continue
         short = low_space(cfg, d)
         if short:  # leave it in the drive; it's ripped once there's room again
             st = STATUS.setdefault(dev, {})
@@ -753,10 +794,17 @@ def rip_loaded(cfg: dict, busy: set[str], finished: dict[str, str],
         busy.add(dev)
         finished[dev] = d["disc_label"]
 
-        def worker(drive=d, lock=lock):
+        def worker(drive=d, lock=lock, checks=checks):
             stop = threading.Event()
             threading.Thread(target=heartbeat, args=(lock, stop), daemon=True).start()
             try:
+                # The check before ripping (e.g. "is it in Plex already?") reads the disc, which can
+                # be slow, so it runs here: one slow drive doesn't hold up the others.
+                if checks:
+                    STATUS[drive["device"]] = {"label": drive["disc_label"], "state": "scanning",
+                                               "message": "Checking the disc"}
+                    if checks(drive):
+                        return
                 rip_disc(cfg, drive)
             except Exception as exc:  # keep the other drives going
                 import traceback
