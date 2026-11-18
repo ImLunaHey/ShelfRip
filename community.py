@@ -184,6 +184,13 @@ def share(plan: dict, disc: dict, cfg: dict, log=print) -> None:
         try:
             _http(f"{base}/v1/submit", body)
             log(f"Shared {plan.get('title')} with the Shelfrip disc database.")
+            try:  # remembered for the Pioneer badge: nobody had added this disc before you
+                import progress
+                d = body["disc"]
+                progress.note_shared("h:" + d["content_hash"] if d["content_hash"] else "s:" + d["signature"],
+                                     first=SOURCE not in str(plan.get("match_source") or ""))
+            except Exception:
+                pass
         except Exception as exc:
             log(f"(couldn't share {plan.get('title')} with the Shelfrip disc database: {exc})")
     threading.Thread(target=run, daemon=True).start()

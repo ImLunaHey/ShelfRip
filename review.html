@@ -5,116 +5,192 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Shelfrip</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Crect x='3' y='4' width='5' height='18' rx='1.5' fill='%23F2B33D'/%3E%3Crect x='10' y='7' width='5' height='15' rx='1.5' fill='%236C9BFF'/%3E%3Crect x='17' y='5' width='5' height='17' rx='1.5' fill='%234CC38A'/%3E%3Crect x='2' y='23' width='24' height='2.5' rx='1' fill='%23C9D1DC'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
 :root{
-  --bg:#f6f7f9; --card:#ffffff; --ink:#1b1f24; --muted:#5f6b78; --line:#dde2e8;
-  --accent:#2f6fdb; --accent-ink:#fff; --warn-bg:#fff6e0; --warn:#8a5a00;
-  --skip:#9aa4ae; --ok:#1d7a46; --err:#b42318; --chip:#eef1f5; --input:#fff;
+  --bg:#0E1014; --bar:#12151B; --card:#161A21; --card2:#1E232C; --ink:#ECEFF4; --muted:#9AA3B2; --line:#262C36; --line2:#343B47;
+  --accent:#6C9BFF; --accent-ink:#0B1020; --xp:#F2B33D; --xp-ink:#1A1204; --warn-bg:#3A2E12; --warn:#F7C86A;
+  --skip:#6b7580; --ok:#4CC38A; --ok-bg:#1D3A2C; --ok-ink:#7EE0AE; --err:#FF8A7A; --chip:#1E232C; --input:#0E1014; --flame:#FF8A4C;
+  --head:"Space Grotesk","Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;
 }
-@media (prefers-color-scheme: dark){
+@media (prefers-color-scheme: light){
   :root{
-    --bg:#121417; --card:#1b1f24; --ink:#e7eaee; --muted:#9aa4ae; --line:#2c323a;
-    --accent:#5b8ff0; --accent-ink:#0b0d10; --warn-bg:#3a2e12; --warn:#f2c46b;
-    --skip:#6b7580; --ok:#5fcf8f; --err:#ff8a7a; --chip:#252b33; --input:#14181c;
+    --bg:#F4F5F8; --bar:#FFFFFF; --card:#FFFFFF; --card2:#EEF1F5; --ink:#161A21; --muted:#5A6472; --line:#DDE2E8; --line2:#C9D0D9;
+    --accent:#2F64D8; --accent-ink:#FFFFFF; --xp:#9A6400; --xp-ink:#FFFFFF; --warn-bg:#FFF4D6; --warn:#7A5200;
+    --skip:#9aa4ae; --ok:#1F8A55; --ok-bg:#E2F5EA; --ok-ink:#17643E; --err:#B42318; --chip:#EEF1F5; --input:#FFFFFF; --flame:#D2551B;
   }
 }
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
-header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);
-  padding:12px 20px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
-header h1{font-size:18px;margin:0 12px 0 0}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 Inter,"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif}
+a{color:var(--accent)}
+h1,h2,h3{font-family:var(--head);letter-spacing:-.01em}
+header{position:sticky;top:0;z-index:5;background:var(--bar);border-bottom:1px solid var(--line);
+  padding:10px 24px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:9px;font-family:var(--head);font-weight:700;font-size:19px;margin-right:6px}
 header .sub{color:var(--muted)}
-main{max-width:1280px;margin:0 auto;padding:16px 20px 80px}
-button{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--ink);
-  border-radius:6px;padding:5px 10px;cursor:pointer}
+main{max-width:1240px;margin:0 auto;padding:22px 24px 90px}
+button{font:inherit;border:1px solid var(--line2);background:var(--card2);color:var(--ink);
+  border-radius:10px;padding:7px 12px;cursor:pointer}
+button:hover{border-color:var(--muted)}
 button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+button.gold{background:var(--xp);color:var(--xp-ink);border-color:var(--xp);font-weight:700}
+button.good{background:var(--ok-bg);color:var(--ok-ink);border-color:var(--ok);font-weight:600}
 button:disabled{opacity:.5;cursor:default}
-input,select{font:inherit;color:var(--ink);background:var(--input);border:1px solid var(--line);
-  border-radius:5px;padding:4px 6px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px;margin:0 0 18px;overflow:hidden}
-.card-head{padding:12px 16px;border-bottom:1px solid var(--line);display:grid;gap:8px}
+input,select{font:inherit;color:var(--ink);background:var(--input);border:1px solid var(--line2);border-radius:8px;padding:5px 8px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:18px;margin:0 0 20px;overflow:hidden}
+.card-head{padding:18px 20px;border-bottom:1px solid var(--line);display:grid;gap:10px}
+.hero{display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap}
+.hero .info{flex:1 1 380px;display:grid;gap:10px;min-width:0}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.title{font-size:16px;font-weight:650}
-.chip{background:var(--chip);border-radius:20px;padding:2px 9px;font-size:12px;color:var(--muted)}
-.warn{background:var(--warn-bg);color:var(--warn);border-radius:6px;padding:6px 10px;font-size:13px}
+.title{font-family:var(--head);font-size:24px;font-weight:700;line-height:1.15}
+.chip{background:var(--chip);border-radius:999px;padding:3px 10px;font-size:12px;color:var(--muted);text-decoration:none}
+.chip.good{background:var(--ok-bg);color:var(--ok-ink);font-weight:600}
+.chip.warnc{background:var(--warn-bg);color:var(--warn);font-weight:600}
+.chip.xp{background:transparent;color:var(--xp);font-weight:700;font-family:var(--head);font-size:14px;padding:0}
+.warn{background:var(--warn-bg);color:var(--warn);border-radius:10px;padding:8px 12px;font-size:13px}
 .err{color:var(--err)} .ok{color:var(--ok)}
 label.f{display:flex;gap:6px;align-items:center;color:var(--muted);font-size:13px}
 label.f input{min-width:0}
 .libdir{flex:1 1 420px} .libdir input{width:100%}
 table{width:100%;border-collapse:collapse}
-th,td{padding:5px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
-th{font-size:12px;color:var(--muted);font-weight:600;background:var(--chip)}
-tr.skip td{color:var(--skip)} tr.skip input,tr.skip select.cat{opacity:.45}
-td.dur{font-variant-numeric:tabular-nums;white-space:nowrap}
-td.src{font-size:12px;color:var(--muted);max-width:180px;overflow-wrap:anywhere}
+th,td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{font-size:12px;color:var(--muted);font-weight:600;background:var(--card2)}
+tr.skip td{color:var(--skip)} tr.skip input,tr.skip select.typ{opacity:.45} tr.skip .nm{text-decoration:line-through}
+td.dur{font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--muted)}
+td.src{font-size:12px;color:var(--muted);max-width:160px;overflow-wrap:anywhere}
 td.name input{width:100%}
 .dest{font-size:12px;color:var(--muted);overflow-wrap:anywhere;margin-top:3px}
 .note{font-size:12px;color:var(--warn)}
-.foot{padding:10px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-.bar{height:6px;background:var(--chip);border-radius:3px;overflow:hidden;flex:1 1 200px}
-.bar>i{display:block;height:100%;background:var(--accent)}
-.search{display:none;gap:6px;flex-direction:column;padding:8px;background:var(--chip);border-radius:8px}
+.foot{padding:14px 20px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--card2);border-top:1px solid var(--line)}
+.bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden;flex:1 1 200px}
+.bar>i{display:block;height:100%;background:var(--accent);border-radius:4px;transition:width .4s}
+.bar.ok>i{background:var(--ok)} .bar.xp>i{background:var(--xp)}
+.search{display:none;gap:6px;flex-direction:column;padding:10px;background:var(--card2);border-radius:12px}
 .search.open{display:flex}
-.result{display:flex;gap:8px;align-items:baseline;padding:4px 0;border-top:1px solid var(--line)}
+.result{display:flex;gap:10px;align-items:center;padding:6px 0;border-top:1px solid var(--line)}
 .result small{color:var(--muted)}
+.result .poster{width:46px;height:68px;border-radius:6px;font-size:8px}
 .empty{color:var(--muted);text-align:center;padding:60px 0}
 .tablewrap{overflow-x:auto}
-nav.tabs{display:none;gap:4px} nav.tabs.on{display:flex}
-nav.tabs button{border-radius:20px} nav.tabs button.cur{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
-.count{display:inline-block;min-width:18px;padding:0 5px;border-radius:9px;background:var(--chip);color:var(--ink);font-size:12px;margin-left:4px}
-nav.tabs button.cur .count{background:rgba(255,255,255,.25);color:inherit}
-.stats{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;display:grid;gap:8px;margin-bottom:14px}
-.auto{font-size:13px;padding:6px 10px;border-radius:8px;background:var(--line)}
-.drives{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;margin-bottom:18px}
-.drive{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;display:grid;gap:8px}
-.drive .dev{font-weight:650;font-size:16px}
-.drive .lab{font-size:15px;overflow-wrap:anywhere}
+nav.tabs{display:none;gap:2px;flex-wrap:wrap} nav.tabs.on{display:flex}
+nav.tabs button{border-radius:999px;border-color:transparent;background:transparent;padding:8px 14px;font-weight:500}
+nav.tabs button.cur{background:var(--ink);color:var(--bg);font-weight:600}
+.count{display:inline-block;min-width:18px;padding:0 6px;border-radius:9px;background:var(--xp);color:var(--xp-ink);font-size:12px;font-weight:700;margin-left:6px}
+.count.zero{background:var(--chip);color:var(--muted)}
+.seg{display:inline-flex;background:var(--input);border:1px solid var(--line);border-radius:12px;padding:3px;gap:3px}
+.seg button{border:0;background:transparent;color:var(--muted);border-radius:9px;padding:6px 12px;font-weight:600;min-width:58px}
+.seg button.on.keep{background:var(--ok);color:#0B1A12} .seg button.on.skip{background:var(--line2);color:var(--ink)}
+/* poster */
+.poster{flex:none;width:84px;height:124px;border-radius:10px;background:var(--card2) center/cover no-repeat;border:1px solid var(--line2);
+  display:flex;align-items:flex-end;padding:7px;font-family:var(--head);font-weight:700;font-size:11px;color:#E8EDF5;overflow:hidden;position:relative}
+.poster.big{width:168px;height:248px;border-radius:14px;font-size:16px;padding:12px}
+.poster.has span{display:none}
+.poster .ring{position:absolute;right:-1px;bottom:-1px}
+/* HUD */
+.hud{display:flex;align-items:center;gap:12px}
+.streak{display:flex;align-items:center;gap:6px;background:var(--card2);border-radius:999px;padding:6px 12px;font-weight:600;font-size:13px}
+.streak.cold{color:var(--muted)}
+.lvl{display:flex;align-items:center;gap:10px;min-width:230px;cursor:pointer;border:0;background:transparent;padding:0;text-align:left}
+.lvl .n{width:38px;height:38px;border-radius:10px;background:var(--xp);color:var(--xp-ink);display:flex;align-items:center;justify-content:center;font-family:var(--head);font-weight:700;font-size:16px}
+.lvl .t{flex:1;display:grid;gap:4px} .lvl .t div:first-child{display:flex;justify-content:space-between;font-size:12px;gap:10px}
+.lvl .t .bar{height:7px;flex:none}
+/* home */
+.panels{display:flex;gap:20px;flex-wrap:wrap;margin-bottom:24px}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px}
+.goal{display:grid;gap:6px} .goal .row{justify-content:space-between}
+.goal.done .bar>i{background:var(--ok)}
+.toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+.toolbar h2,.sect h2{margin:0;font-size:20px}
+.switch{display:flex;gap:10px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:6px 14px 6px 6px;cursor:pointer;font-weight:600}
+.switch input{position:absolute;opacity:0;width:1px;height:1px}
+.switch .tog{width:40px;height:24px;border-radius:999px;background:var(--line2);position:relative;transition:background .2s}
+.switch .tog::after{content:"";position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:50%;background:var(--bg);transition:left .2s}
+.switch input:checked+.tog{background:var(--ok)} .switch input:checked+.tog::after{left:19px}
+.switch input:focus-visible+.tog{outline:2px solid var(--accent);outline-offset:2px}
+.drives{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;margin-bottom:26px}
+.drive{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:18px;display:grid;gap:12px;align-content:start}
+.drive.busy{border-color:#3A4A6B} .drive.ready{border-color:var(--xp)} .drive.idle{border-style:dashed}
+.drive .top{display:flex;gap:16px;align-items:center}
+.drive .dev{color:var(--muted);font-size:12px;font-weight:600;letter-spacing:.06em}
+.drive .lab{font-family:var(--head);font-weight:600;font-size:18px;overflow-wrap:anywhere;line-height:1.2}
 .drive .st{color:var(--muted);font-size:13px}
+.drive .st.live{color:var(--accent);font-weight:600} .drive .st.ready{color:var(--xp);font-weight:600}
 .drive .bar{flex:none}
-.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
-.switch{display:flex;gap:8px;align-items:center;font-weight:600}
-pre.log{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:12px;
+.queue{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;margin-bottom:26px}
+.qcard{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:14px;display:flex;gap:14px;align-items:center;cursor:pointer;text-align:left;color:inherit;font:inherit}
+.qcard .poster{width:60px;height:88px}
+.qcard:hover{border-color:var(--muted)}
+details.log summary{cursor:pointer;color:var(--muted);margin-bottom:8px}
+pre.log{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;font-size:12px;
   max-height:320px;overflow:auto;white-space:pre-wrap;margin:0;color:var(--muted)}
-.set{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;display:grid;gap:12px;max-width:760px}
+.disk{display:flex;gap:8px;flex-wrap:wrap}
+/* shelf */
+.shelf{display:flex;align-items:flex-end;gap:4px;padding:0 14px;min-height:188px;overflow-x:auto;border-bottom:10px solid #5A4632;border-radius:0 0 4px 4px}
+.spine{flex:none;width:30px;border-radius:4px 4px 2px 2px;display:flex;align-items:center;justify-content:center;padding:8px 0;
+  border-top:4px solid rgba(255,255,255,.18);color:#F4F6FA;cursor:default}
+.spine span{writing-mode:vertical-rl;transform:rotate(180deg);font-family:var(--head);font-weight:600;font-size:11px;white-space:nowrap;overflow:hidden;max-height:100%}
+.spine.new{animation:drop .7s cubic-bezier(.2,1.4,.4,1)}
+@keyframes drop{from{transform:translateY(-60px);opacity:0}to{transform:none;opacity:1}}
+.ranks{display:grid;gap:10px}
+.rank{display:flex;align-items:center;gap:12px}
+.rank .n{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-family:var(--head);font-weight:700;background:var(--card2);color:var(--muted)}
+.rank.got .n{background:var(--warn-bg);color:var(--xp)} .rank.cur .n{background:var(--xp);color:var(--xp-ink)}
+.badges{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.badge{background:var(--card2);border:1px solid var(--line);border-radius:14px;padding:14px;display:grid;gap:5px;justify-items:start}
+.badge.locked{opacity:.55} .badge .bar{width:100%;height:5px;flex:none}
+/* moments */
+.celebrate{background:var(--ok-bg);border:1px solid var(--ok);border-radius:18px;padding:20px 22px;display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin:0 0 20px}
+.celebrate .big{font-family:var(--head);font-size:24px;font-weight:700}
+#toasts{position:fixed;right:20px;bottom:20px;display:grid;gap:10px;z-index:20;max-width:360px}
+.toast{background:var(--card);border:1px solid var(--line2);border-radius:14px;padding:14px 16px;box-shadow:0 12px 32px rgba(0,0,0,.4);
+  display:flex;gap:12px;align-items:center;animation:pop .35s ease-out}
+.toast b{font-family:var(--head)}
+@keyframes pop{from{transform:translateY(16px);opacity:0}to{transform:none;opacity:1}}
+@media (prefers-reduced-motion: reduce){.spine.new,.toast{animation:none}.bar>i{transition:none}}
+.set{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:20px;display:grid;gap:14px;max-width:780px}
 .set label{display:grid;gap:4px;font-size:13px;color:var(--muted)}
 .set label.chk{display:flex;gap:8px;align-items:center;color:var(--ink)}
 .set input[type=text],.set input[type=password],.set input[type=number],.set select{width:100%}
-.wiz{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;max-width:760px;margin-bottom:16px}
-.wiz h2{margin:0 0 4px;font-size:18px}
+.wiz{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:20px;max-width:780px;margin-bottom:16px}
+.wiz h2{margin:0 0 4px;font-size:22px}
 .wiz ol{margin:12px 0;padding-left:22px;display:grid;gap:14px}
 .wiz li label{display:grid;gap:4px;font-size:13px;color:var(--muted)}
 .wiz li input[type=text],.wiz li input[type=password],.wiz li select{width:100%}
 .wiz li label.chk{display:flex;gap:8px;align-items:center;margin-top:6px}
 .wiz .how{font-size:12px;color:var(--muted)}
 .hide{display:none!important}
-.aud{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center;margin-top:4px;font-size:12px;color:var(--muted)}
-.aud .trk{border:1px solid var(--line);border-radius:12px;padding:1px 8px;cursor:pointer;background:var(--card);color:var(--muted);font-size:12px}
+.aud{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center;margin-top:6px;font-size:12px;color:var(--muted)}
+.aud .trk{border:1px solid var(--line2);border-radius:12px;padding:1px 8px;cursor:pointer;background:var(--card);color:var(--muted);font-size:12px}
 .aud .trk.com{border-color:var(--accent);color:var(--ink)}
 .aud input{font-size:12px;padding:2px 5px;min-width:220px}
-tr.splitrow td{background:var(--chip);border-bottom:1px solid var(--line)}
+tr.splitrow td{background:var(--card2);border-bottom:1px solid var(--line)}
 .split{display:grid;gap:6px;padding:4px 0}
 .split table td{border-bottom:none;padding:3px 6px}
 .split .sl{font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--muted);font-size:12px}
 .split .snm{width:100%}
-@media (max-width:700px){ td.src{display:none} th.src{display:none} }
-#upd{font-size:13px;margin-right:10px;font-weight:600}
+.play{border-radius:50%;width:34px;height:34px;padding:0;display:flex;align-items:center;justify-content:center}
+@media (max-width:700px){ td.src{display:none} th.src{display:none} .lvl{min-width:0} .lvl .t{display:none} .poster.big{width:110px;height:162px} }
+#upd{font-size:13px;font-weight:600}
 </style>
 </head>
 <body>
 <header>
-  <h1>Shelfrip</h1>
-  <nav class="tabs" id="tabs">
-    <button data-tab="drives">Drives</button>
-    <button data-tab="review">Review<span class="count" id="nwait">0</span></button>
-    <button data-tab="library">Library</button>
+  <span class="brand"><svg width="26" height="26" viewBox="0 0 28 28" aria-hidden="true"><rect x="3" y="4" width="5" height="18" rx="1.5" fill="#F2B33D"/><rect x="10" y="7" width="5" height="15" rx="1.5" fill="#6C9BFF"/><rect x="17" y="5" width="5" height="17" rx="1.5" fill="#4CC38A"/><rect x="2" y="23" width="24" height="2.5" rx="1" fill="#9AA3B2"/></svg>Shelfrip</span>
+  <nav class="tabs" id="tabs" aria-label="Main">
+    <button data-tab="drives">Home</button>
+    <button data-tab="review">Review<span class="count zero" id="nwait">0</span></button>
+    <button data-tab="library">My shelf</button>
     <button data-tab="settings">Settings</button>
   </nav>
   <span class="sub" id="sub"></span>
   <span style="flex:1"></span>
   <button id="scan" class="tab-review">Check for new rips</button>
   <a id="upd" class="hide" target="_blank" rel="noopener"></a>
+  <div class="hud hide" id="hud"></div>
   <button id="quit" class="hide">Quit</button>
 </header>
+<div id="toasts" aria-live="polite"></div>
 <main id="drivesTab" class="hide"></main>
 <main id="list"><p class="empty">Loading…</p></main>
 <main id="libraryTab" class="hide"></main>
@@ -133,6 +209,95 @@ const safe = s => String(s||"").replace(/\s*:\s*/g," - ").replace(/[<>"/\\|?*]/g
 async function api(path, body){
   const r = await fetch(path, body ? {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)} : {});
   const j = await r.json(); if (!r.ok) throw new Error(j.error || r.statusText); return j;
+}
+
+// ------------------------------------------------------------------ the game layer: box art, XP, toasts
+let PROG = null;
+const POSTERS = {};
+const hueOf = t => { let h = 0; for (const c of String(t||"")) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
+const tint = t => `hsl(${hueOf(t)} 32% 28%)`;
+// Box art: TMDB's poster (a season's own poster for TV), or the CD's cover from the Cover Art Archive.
+function poster(kind, id, season, title, cls = "", mbid = ""){
+  const data = kind === "music" ? (mbid ? `data-url="https://coverartarchive.org/release/${esc(mbid)}/front-250"` : "")
+    : id ? `data-pk="${esc(kind)}" data-pid="${esc(id)}" data-ps="${esc(season ?? "")}"` : "";
+  const k = kind === "music" ? mbid : `${kind}:${id}:${season ?? ""}`, url = SHOWN[k];
+  return `<div class="poster ${cls} ${url ? "has" : ""}" ${data} role="img" aria-label="Box art: ${esc(title)}" style="background-color:${tint(title)}${url ? `;background-image:url('${esc(url)}')` : ""}"><span>${esc(title)}</span></div>`;
+}
+const SHOWN = {};  // box art already loaded: drawn straight away when the page redraws
+function hydrate(root){
+  (root || document).querySelectorAll(".poster").forEach(async d => {
+    if (d.classList.contains("has") && !(d.closest(".hero") && !d.closest(".hero").querySelector(".blurb").textContent)) return;
+    let r = {};
+    if (d.dataset.url) r = {url: d.dataset.url};
+    else if (d.dataset.pid){
+      const k = `${d.dataset.pk}:${d.dataset.pid}:${d.dataset.ps}`;
+      POSTERS[k] = POSTERS[k] || api(`/api/poster?kind=${d.dataset.pk}&id=${d.dataset.pid}&season=${d.dataset.ps}`).catch(() => ({}));
+      r = await POSTERS[k];
+    }
+    if (r.url){
+      const img = new Image();
+      img.onload = () => { d.style.backgroundImage = `url("${r.url}")`; d.classList.add("has");
+        SHOWN[d.dataset.url ? d.dataset.url.split("/")[4] : `${d.dataset.pk}:${d.dataset.pid}:${d.dataset.ps}`] = r.url; };
+      img.src = r.url;
+    }
+    const blurb = d.closest(".hero") && d.closest(".hero").querySelector(".blurb");
+    if (blurb && r.overview && !blurb.textContent) blurb.textContent = r.overview;
+  });
+}
+// XP for filing this disc (the same rules as progress.py)
+function xpOf(p){
+  const kept = (p.items||[]).filter(it => it.action === "move");
+  let xp = 50;
+  if (p.kind === "music") return xp + 2 * kept.length;
+  for (const it of kept){
+    if (it.role === "extra") xp += 5 + (it.name && !/^(Extra \d+ \(|Unused clip)/i.test(it.name) ? 10 : 0);
+    else if (["main","edition","episode"].includes(it.role)) xp += 10;
+  }
+  if (/4k/i.test(p.format || "")) xp += 30;
+  return xp;
+}
+function toast(title, text, color){
+  const t = document.createElement("div");
+  t.className = "toast";
+  t.innerHTML = `<svg width="34" height="34" viewBox="0 0 40 40" aria-hidden="true"><path d="M20 3l14 8v18l-14 8-14-8V11z" fill="${color || "var(--xp)"}"/></svg><div><b>${esc(title)}</b><div style="color:var(--muted);font-size:13px">${esc(text)}</div></div>`;
+  $("#toasts").appendChild(t);
+  setTimeout(() => t.remove(), 7000);
+}
+const ring = (pct, size, stroke, color, inner) => { const r = (size - stroke) / 2, c = 2 * Math.PI * r;
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true"><circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="var(--line)" stroke-width="${stroke}"/>
+    <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="${color}" stroke-width="${stroke}" stroke-linecap="round" stroke-dasharray="${(c * Math.min(100, pct) / 100).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 ${size/2} ${size/2})"/>${inner || ""}</svg>`; };
+const FLAME = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--flame)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2c1 4 5 6 5 11a5 5 0 0 1-10 0c0-2 1-3 2-4 0 2 1 3 2 3 0-4-1-6 1-10z"/></svg>`;
+function renderHud(){
+  const g = PROG, el = $("#hud");
+  if (!g || g.none){ el.classList.add("hide"); return; }
+  const pct = Math.round(100 * (g.xp - g.level_xp) / Math.max(1, g.next_xp - g.level_xp));
+  el.innerHTML = `<span class="streak ${g.streak ? "" : "cold"}" title="Streak: days in a row with a disc filed${g.streak && !g.streak_today ? ". File one today to keep it going" : ""}. Best: ${g.best_streak}">${FLAME}${g.streak ? `${g.streak} day${g.streak === 1 ? "" : "s"}` : "0 days"}</span>
+    <button class="lvl" id="lvlbtn" title="Your shelf, rank and badges"><span class="n">${g.level}</span><span class="t"><div><b>${esc(g.rank)}</b><span style="color:var(--muted)">${g.xp.toLocaleString()} / ${g.next_xp.toLocaleString()} XP</span></div><div class="bar xp"><i style="width:${pct}%"></i></div></span></button>`;
+  el.classList.remove("hide");
+  $("#lvlbtn").onclick = () => showTab("library");
+}
+// Fetch progress; when it moved on, say so (level up, new badges).
+async function loadProgress(announce){
+  let g;
+  try { g = await api("/api/progress"); } catch(e){ return; }
+  const old = PROG;
+  PROG = g;
+  renderHud();
+  if (!announce || !old || old.none || g.none) return;
+  if (g.level > old.level) toast(`Level ${g.level}!`, g.rank !== old.rank ? `You're a ${g.rank} now.` : `${(g.next_xp - g.xp).toLocaleString()} XP to the next level.`);
+  const had = new Set(old.badges.filter(b => b.earned).map(b => b.id));
+  g.badges.filter(b => b.earned && !had.has(b.id)).forEach(b => toast(`Badge: ${b.name}`, b.how, "var(--ok)"));
+  g.goals.forEach((x, k) => { if (x.done && !old.goals[k].done) toast("Daily goal done", `${x.label}: +${x.bonus} XP`, "var(--accent)"); });
+  if (TAB === "library") renderShelf();
+}
+function confChip(p){
+  const w = liveWarnings(p).length;
+  if (p.auto && !p.auto.blocked.length) return `<span class="chip good">Sure match</span>`;
+  return w ? `<span class="chip warnc">${w} thing${w === 1 ? "" : "s"} to check</span>` : `<span class="chip">Check the names</span>`;
+}
+function epRange(p){
+  const e = p.items.filter(it => it.role === "episode" && it.action === "move" && it.season).flatMap(it => it.episodes || [it.episode]).filter(Boolean).sort((a,b) => a-b);
+  return e.length ? `Season ${p.season} · episode${e.length > 1 ? `s ${e[0]} to ${e[e.length-1]}` : ` ${e[0]}`}` : p.season ? `Season ${p.season}` : "";
 }
 
 const KIND = {"Featurettes":"Featurette","Behind the Scenes":"Behind the scenes","Deleted Scenes":"Deleted scene","Interviews":"Interview","Scenes":"Scene","Shorts":"Short","Trailers":"Trailer","Other":"Other"};
@@ -309,18 +474,25 @@ function render(){
 
 function card(p, i){
   const job = p.job;
+  if (job && job.state === "done" && job.current !== "Discarded") return `<section class="celebrate" id="c${i}">
+    <svg width="52" height="52" viewBox="0 0 56 56" aria-hidden="true"><circle cx="28" cy="28" r="26" fill="var(--ok)"/><path d="M17 29l7 7 15-16" fill="none" stroke="#0E1014" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <div style="flex:1 1 320px;display:grid;gap:4px">
+      <span class="big">${esc(p.kind === "music" ? p.album : p.title)} is on the shelf! <span style="color:var(--xp)">+${xpOf(p)} XP</span></span>
+      <span style="color:var(--muted)">Filed into ${SERVER_NAME}. ${job.note ? esc(job.note) : "Its rip folder was cleared to save space (skipped clips included)."}</span>
+      ${plexLine(job.plex)}
+    </div>
+    <button class="good" data-next>Next disc</button></section>`;
   if (job && job.state === "done") return `<section class="card" id="c${i}"><div class="foot">
-    <span class="ok">✓ ${esc(p.title)}${p.year ? ` (${esc(p.year)})` : ""}: ${job.current === "Discarded" ? "rip discarded." : `filed into ${SERVER_NAME}.`}</span>
-    <span style="color:var(--muted)">${job.note ? esc(job.note) : "Its rip folder was cleared to save space (skipped clips included)."}</span>
-    ${plexLine(job.plex)}</div></section>`;
+    <span>${esc(p.title)}${p.year ? ` (${esc(p.year)})` : ""}: rip discarded.</span>
+    <span style="color:var(--muted)">${job.note ? esc(job.note) : ""}</span></div></section>`;
   if (p.kind === "music") return musicCard(p, i);
   const kind = p.kind === "tv" ? "TV" : "Movie";
   const rows = p.items.map((it, j) => {
     const cat = `<select class="typ" data-j="${j}">${typeOptions(p, it)}</select>`;
     return `<tr class="${it.action === "skip" ? "skip" : ""}">
-      <td><button class="play" data-j="${j}" title="Play">▶</button></td>
+      <td><button class="play" data-j="${j}" title="Play" aria-label="Play">▶</button></td>
       <td class="dur">${esc(it.duration)}</td>
-      <td><select class="act" data-j="${j}"><option value="move" ${it.action==="move"?"selected":""}>Keep</option><option value="skip" ${it.action==="skip"?"selected":""}>Skip</option></select></td>
+      <td><div class="seg" role="group" aria-label="Keep or skip"><button class="actb keep ${it.action==="move"?"on":""}" data-j="${j}" data-v="move" aria-pressed="${it.action==="move"}">Keep</button><button class="actb skip ${it.action==="skip"?"on":""}" data-j="${j}" data-v="skip" aria-pressed="${it.action==="skip"}">Skip</button></div></td>
       <td>${cat}</td>
       <td class="name"><input class="nm" data-j="${j}" value="${esc(it.name)}" ${byEpisode(p, it) ? 'style="display:none"' : ""}>
         <div class="dest">${it.action==="skip" ? "not filed" : (it.needs_split && it.split) ? `cut into ${it.split.starts.length} episodes (below)` : esc(destOf(p, it))}</div>
@@ -333,15 +505,18 @@ function card(p, i){
   const pct = job && job.total_bytes ? Math.round(100 * job.done_bytes / job.total_bytes) : 0;
   return `<section class="card" id="c${i}">
     <div class="card-head">
-      <div class="row">
-        <span class="title">${esc(p.title)}${p.year ? ` (${esc(p.year)})` : ""}</span>
-        <span class="chip">${kind}</span><span class="chip">${esc(p.format)}</span>
-        ${p.tmdb_id ? `<a class="chip" href="https://www.themoviedb.org/${p.kind==="tv"?"tv":"movie"}/${esc(p.tmdb_id)}" target="_blank" rel="noopener">tmdb-${esc(p.tmdb_id)}</a>` : `<span class="chip err">no TMDB match</span>`}
-        <span class="chip">disc: ${esc(p.disc_label)}</span>
-        <span style="flex:1"></span>
-        <button class="chg">Wrong match?</button>
+      <div class="hero">
+        ${poster(p.kind, p.tmdb_id, p.kind === "tv" ? p.season : null, p.title, "big")}
+        <div class="info">
+          <div class="row">${confChip(p)}<span class="chip">${kind}</span><span class="chip">${esc(p.format)}</span>
+            ${p.tmdb_id ? `<a class="chip" href="https://www.themoviedb.org/${p.kind==="tv"?"tv":"movie"}/${esc(p.tmdb_id)}" target="_blank" rel="noopener">TMDB ${esc(p.tmdb_id)}</a>` : `<span class="chip warnc">no TMDB match</span>`}
+            <span class="chip">disc: ${esc(p.disc_label)}</span></div>
+          <div class="title">${esc(p.title)}${p.year ? ` (${esc(p.year)})` : ""}${p.kind === "tv" && epRange(p) ? `<div style="color:var(--muted);font-size:18px;font-weight:500;margin-top:2px">${esc(epRange(p))}</div>` : ""}</div>
+          <div class="blurb" style="color:var(--muted);max-width:640px;font-size:13px"></div>
+          ${p.match_source ? `<div style="color:var(--muted);font-size:12px">Matched via ${esc(p.match_source)}</div>` : ""}
+          <div class="row"><span>Does the cover match the disc in your hand?</span><button class="chg">No, pick the right one</button></div>
+        </div>
       </div>
-      ${p.match_source ? `<div class="sub" style="color:var(--muted);font-size:12px">Matched via ${esc(p.match_source)}</div>` : ""}
       <div class="search">
         <div class="row">
           <select class="skind"><option value="movie" ${p.kind!=="tv"?"selected":""}>Movie</option><option value="tv" ${p.kind==="tv"?"selected":""}>TV show</option></select>
@@ -363,10 +538,11 @@ function card(p, i){
       </div>
     </div>
     <div class="tablewrap"><table>
-      <thead><tr><th></th><th>Length</th><th>Keep?</th><th>Type</th><th>Name in ${SERVER_NAME}</th><th class="src">Ripped file</th></tr></thead>
+      <thead><tr><th></th><th>Length</th><th></th><th>Type</th><th>Name in ${SERVER_NAME}</th><th class="src">Ripped file</th></tr></thead>
       <tbody>${rows}</tbody></table></div>
     <div class="foot">
-      <button class="primary file" ${job && job.state==="running" ? "disabled" : ""}>File ${keep} into ${SERVER_NAME}</button>
+      <button class="gold file" ${job && job.state==="running" ? "disabled" : ""}>File ${keep} into ${SERVER_NAME}</button>
+      <span class="chip xp">+${xpOf(p)} XP</span>
       <button class="save">Save without filing</button>
       <span style="flex:1"></span>
       <button class="discard" title="Delete this rip (for example when your library already has it)">Discard rip</button>
@@ -408,15 +584,16 @@ function musicCard(p, i){
   const pct = job && job.total_bytes ? Math.round(100 * job.done_bytes / job.total_bytes) : 0;
   const showArtist = p.compilation || p.items.some(it => it.artist && it.artist !== p.album_artist);
   const rows = p.items.map((it, j) => `<tr class="${it.action === "skip" ? "skip" : ""}">
-      <td><button class="play" data-j="${j}" title="Play">▶</button></td>
+      <td><button class="play" data-j="${j}" title="Play" aria-label="Play">▶</button></td>
       <td class="dur">${pad(it.track)}</td><td class="dur">${esc(it.duration)}</td>
-      <td><select class="act" data-j="${j}"><option value="move" ${it.action==="move"?"selected":""}>Keep</option><option value="skip" ${it.action==="skip"?"selected":""}>Skip</option></select></td>
+      <td><div class="seg" role="group" aria-label="Keep or skip"><button class="actb keep ${it.action==="move"?"on":""}" data-j="${j}" data-v="move" aria-pressed="${it.action==="move"}">Keep</button><button class="actb skip ${it.action==="skip"?"on":""}" data-j="${j}" data-v="skip" aria-pressed="${it.action==="skip"}">Skip</button></div></td>
       <td class="name"><input class="ttl" data-j="${j}" value="${esc(it.title)}">
         <div class="dest">${it.action==="skip" ? "not filed" : esc(trackFile(p, it))}</div></td>
       <td class="name" ${showArtist ? "" : 'style="display:none"'}><input class="art" data-j="${j}" value="${esc(it.artist||"")}" placeholder="${esc(p.album_artist)}"></td></tr>`).join("");
   return `<section class="card" id="c${i}">
     <div class="card-head">
       <div class="row">
+        ${poster("music", "", null, p.album, "", p.release)}
         <span class="title">${esc(p.album)}${p.album_artist ? ` · ${esc(p.album_artist)}` : ""}${p.year ? ` (${esc(p.year)})` : ""}</span>
         <span class="chip">Music CD</span><span class="chip">FLAC</span>
         ${p.release ? `<a class="chip" href="https://musicbrainz.org/release/${esc(p.release)}" target="_blank" rel="noopener">MusicBrainz</a>` : `<span class="chip err">not on MusicBrainz</span>`}
@@ -438,10 +615,11 @@ function musicCard(p, i){
       ${(p.accuraterip||[]).length ? `<details style="font-size:12px"><summary>AccurateRip</summary>${p.accuraterip.map(esc).join("<br>")}</details>` : ""}
     </div>
     <div class="tablewrap"><table>
-      <thead><tr><th></th><th>#</th><th>Length</th><th>Keep?</th><th>Title</th><th ${showArtist ? "" : 'style="display:none"'}>Track artist</th></tr></thead>
+      <thead><tr><th></th><th>#</th><th>Length</th><th></th><th>Title</th><th ${showArtist ? "" : 'style="display:none"'}>Track artist</th></tr></thead>
       <tbody>${rows}</tbody></table></div>
     <div class="foot">
-      <button class="primary file" ${job && job.state==="running" ? "disabled" : ""}>File ${keep} tracks into ${SERVER_NAME}</button>
+      <button class="gold file" ${job && job.state==="running" ? "disabled" : ""}>File ${keep} tracks into ${SERVER_NAME}</button>
+      <span class="chip xp">+${xpOf(p)} XP</span>
       <button class="save">Save without filing</button>
       <span style="flex:1"></span>
       <button class="discard" title="Delete this rip">Discard rip</button>
@@ -456,7 +634,7 @@ function wireMusic(p, i, msg, rerender){
   const refreshDest = () => { $(".adir", el).textContent = albumDir(p);
     el.querySelectorAll(".ttl").forEach(n => { const it = p.items[n.dataset.j]; const d = n.parentElement.querySelector(".dest"); if (d && it.action !== "skip") d.textContent = trackFile(p, it); }); };
   el.querySelectorAll(".play").forEach(b => b.onclick = () => api("/api/play", {folder:p.folder, source:p.items[b.dataset.j].source}).catch(e => msg.textContent = e.message));
-  el.querySelectorAll(".act").forEach(s => s.onchange = () => { p.items[s.dataset.j].action = s.value; rerender(); });
+  el.querySelectorAll(".actb").forEach(b => b.onclick = () => { el.dispatchEvent(new Event("change")); p.items[b.dataset.j].action = b.dataset.v; rerender(); });
   el.querySelectorAll(".ttl").forEach(n => n.oninput = () => { p.items[n.dataset.j].title = n.value; refreshDest(); });
   el.querySelectorAll(".art").forEach(n => n.oninput = () => { p.items[n.dataset.j].artist = n.value; });
   $(".aart", el).oninput = e => { const old = p.album_artist; p.album_artist = e.target.value;
@@ -489,7 +667,11 @@ function wireMusic(p, i, msg, rerender){
 }
 
 function wire(p, i){
-  const el = $("#c"+i), msg = $(".msg", el);
+  const el = $("#c"+i), msg = el && $(".msg", el);
+  if (el) hydrate(el);
+  const nx = el && $("[data-next]", el);
+  if (nx) nx.onclick = () => { const next = discs.find(d => !(d.job && d.job.state === "done")); if (next){ const c = $("#c" + discs.indexOf(next)); c && c.scrollIntoView({behavior:"smooth"}); } else showTab("drives"); };
+  if (p._justFiled){ p._justFiled = false; loadProgress(true); }
   if (!msg) return; // filed
   const rerender = () => { const cur = $("#c"+i); if (cur){ cur.outerHTML = card(p, i); wire(p, i); } };
   const hold = () => { if (p.auto && !p.hold){ p.hold = true; p.auto.blocked = ["you chose to review it"]; api("/api/hold", {folder:p.folder}).catch(()=>{}); } };
@@ -497,7 +679,7 @@ function wire(p, i){
   const hb = $(".hold", el); if (hb) hb.onclick = () => { hold(); rerender(); };
   if (p.kind === "music") return wireMusic(p, i, msg, rerender);
   el.querySelectorAll(".play").forEach(b => b.onclick = () => api("/api/play", {folder:p.folder, source:p.items[b.dataset.j].source}).catch(e => msg.textContent = e.message));
-  el.querySelectorAll(".act").forEach(s => s.onchange = () => { p.items[s.dataset.j].action = s.value; rerender(); });
+  el.querySelectorAll(".actb").forEach(b => b.onclick = () => { el.dispatchEvent(new Event("change")); p.items[b.dataset.j].action = b.dataset.v; rerender(); });
   el.querySelectorAll(".typ").forEach(s => s.onchange = () => { setType(p, p.items[s.dataset.j], s.value); rerender(); });
   el.querySelectorAll(".att").forEach(s => s.onchange = () => { const it = p.items[s.dataset.j]; it.attach = s.value; if (s.value !== "episode") delete it.attach_to; rerender(); });
   el.querySelectorAll(".atte").forEach(s => s.onchange = () => { p.items[s.dataset.j].attach_to = s.value; rerender(); });
@@ -655,7 +837,7 @@ function poll(){
 async function load(keepEdits){
   const j = await api("/api/discs");
   LIB = j.library; LIB_RIPPED = j.ripped; SERVER = j.server || "plex"; SERVER_NAME = j.server_name || "Plex";
-  $("#sub").textContent = `${j.discs.length} disc(s) waiting · library: ${LIB}` + (j.tmdb ? "" : " · no TMDB key");
+  $("#sub").textContent = `${j.discs.length} disc${j.discs.length === 1 ? "" : "s"} waiting` + (j.tmdb ? "" : " · no TMDB key"); $("#sub").title = `Library: ${LIB}`;
   if (keepEdits){ // only refresh job status, keep unsaved edits
     // Redraw just the cards whose filing status changed, so typing or a dropdown open on
     // another card isn't interrupted while a disc is filing.
@@ -663,6 +845,7 @@ async function load(keepEdits){
     discs.forEach((d, i) => {
       const job = byFolder[d.folder] ? byFolder[d.folder].job : ((j.jobs||{})[d.folder] || {state:"done", current:"Filed"});
       if (JSON.stringify(job || null) === JSON.stringify(d.job || null)) return;
+      if (job && job.state === "done" && job.current !== "Discarded" && !(d.job && d.job.state === "done")) d._justFiled = true;
       d.job = job; redraw(i);
     });
     return;
@@ -680,7 +863,7 @@ function showTab(t){
   $("#list").classList.toggle("hide", t !== "review");
   $("#settingsTab").classList.toggle("hide", t !== "settings");
   $("#libraryTab").classList.toggle("hide", t !== "library");
-  if (t === "library") loadReport(false);
+  if (t === "library"){ renderShelf(); loadReport(false); loadProgress(false).then(() => TAB === "library" && renderShelf()); }
   $("#scan").classList.toggle("hide", t !== "review");
   $("#sub").classList.toggle("hide", t !== "review");
   if (t === "settings") loadSettings();
@@ -702,42 +885,107 @@ const stateText = d => {
   if (d.already) return "Ripped · waiting for review (ejects once you file it)";
   return "Waiting to rip";
 };
-function statsBox(st){
+function homePanels(st){
   if (!st || st.error) return "";
-  const pct = st.total ? Math.min(100, Math.round(100 * st.discs / st.total)) : 0;
-  const sp = (st.space||[]).map(x => `<span class="${x.low ? "err" : ""}">${esc(x.name)}: ${x.free_gb == null ? "not found" : `${x.free_gb} GB free of ${x.total_gb}`}${x.low ? " (low)" : ""}</span>`).join(" · ");
-  const dmg = (st.damaged||[]).map(r => `<div class="row" style="gap:8px"><span class="err">⚠</span><span>${esc(r.label)}</span>
+  const g = PROG && !PROG.none ? PROG : null;
+  const total = st.total || 0, pct = total ? Math.min(100, 100 * st.discs / total) : 0;
+  const disk = (st.space||[]).map(x => `<span class="chip ${x.low ? "warnc" : ""}">${esc(x.name)}: ${x.free_gb == null ? "not found" : `${x.free_gb.toLocaleString()} GB free`}${x.low ? " (low)" : ""}</span>`).join("");
+  const toNext = g ? g.next_xp - g.xp : 0;
+  const head = st.discs ? (total ? `Your shelf is ${Math.round(pct)}% full` : `${st.discs} disc${st.discs === 1 ? "" : "s"} on your shelf`) : "Your shelf is empty, for now";
+  const line = st.discs ? `${st.movies} movies, ${st.tv} TV discs${st.music ? `, ${st.music} CDs` : ""} and ${st.hours} hours filed.` : "Put a disc in a drive: it's ripped, named and waiting for you here.";
+  const goals = g ? g.goals.map(x => `<div class="goal ${x.done ? "done" : ""}"><div class="row"><span>${x.done ? "✓ " : ""}${esc(x.label)}</span>
+      <span style="color:var(--muted)">${x.key === "minutes" ? `${Math.floor(x.have/60)}h${pad(x.have%60)} / 2h` : `${x.have} / ${x.need}`} · +${x.bonus} XP</span></div>
+      <div class="bar ok"><i style="width:${Math.round(100 * x.have / x.need)}%"></i></div></div>`).join("") : "";
+  return `<section class="panels">
+    <div class="panel" style="flex:2 1 520px;display:flex;gap:24px;align-items:center;flex-wrap:wrap">
+      ${ring(total ? pct : 100 * (g ? (g.xp - g.level_xp) / Math.max(1, g.next_xp - g.level_xp) : 0), 132, 12, total ? "var(--xp)" : "var(--accent)",
+        `<text x="66" y="66" text-anchor="middle" fill="var(--ink)" font-family="Space Grotesk, sans-serif" font-size="30" font-weight="700">${st.discs}</text>
+         <text x="66" y="86" text-anchor="middle" fill="var(--muted)" font-size="12">${total ? `of ${total} discs` : "discs"}</text>`)}
+      <div style="flex:1 1 260px;display:grid;gap:10px">
+        <h1 style="margin:0;font-size:28px;line-height:1.15">${esc(head)}</h1>
+        <p style="margin:0;color:var(--muted)">${esc(line)}${g && g.next_rank ? ` ${toNext.toLocaleString()} XP to level ${g.level + 1}.` : ""}</p>
+        <div class="disk">${disk}${st.today ? `<span class="chip good">${st.today} filed today</span>` : ""}</div>
+      </div>
+    </div>
+    ${goals ? `<div class="panel" style="flex:1 1 300px;display:grid;gap:14px;align-content:start">
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0;font-size:18px">Today's goals</h2><span style="color:var(--muted);font-size:12px">new ones at midnight</span></div>${goals}</div>` : ""}
+  </section>`;
+}
+function damagedBox(st){
+  const dmg = (st && st.damaged || []).map(r => `<div class="row" style="gap:8px"><span class="err">⚠</span><span>${esc(r.label)}</span>
       <span style="color:var(--muted)">${esc(r.when)} · ${r.read_errors ? r.read_errors + " read error(s)" : ""}${r.read_errors && r.titles_failed ? ", " : ""}${r.titles_failed ? r.titles_failed + " title(s) failed" : ""}${(r.files||[]).length ? " · " + esc(r.files.slice(0,3).join(", ")) : ""}</span>
       <span style="flex:1"></span><button data-dmg="${esc(r.label)}" title="Remove from this list">Done</button></div>`).join("");
-  return `<div class="stats">
-    <div class="row"><b>${st.total ? `${st.discs} of ${st.total} discs filed` : `${st.discs} disc${st.discs === 1 ? "" : "s"} filed`}</b><span style="color:var(--muted)">${st.movies} movies · ${st.tv} TV · ${st.music} CDs · ${st.hours} hours · ${st.today} today · ${st.waiting} waiting for review · ${st.ripping} ripping</span></div>
-    ${st.total ? `<div class="bar"><i style="width:${pct}%"></i></div>` : ""}
-    <div style="font-size:13px">${sp}</div>
-    ${dmg ? `<details ${st.damaged.length ? "open" : ""}><summary>Discs with read errors (${st.damaged.length}): clean them and click Rip again, or replace them</summary>${dmg}</details>` : ""}
-  </div>`;
+  return dmg ? `<details class="panel" style="margin-bottom:24px" open><summary>Discs with read errors (${st.damaged.length}): clean them and click Rip again, or replace them</summary>${dmg}</details>` : "";
+}
+function driveCard(d){
+  const m = d.match, live = d.ripping || d.elsewhere, ready = d.already && !live;
+  const name = m ? `${m.title}${m.kind === "tv" && m.season ? ` · Season ${m.season}` : m.year ? ` (${m.year})` : ""}` : d.loaded ? (d.label || "(no label)") : "Empty";
+  const art = !d.loaded ? `<svg width="72" height="72" viewBox="0 0 72 72" aria-hidden="true"><circle cx="36" cy="36" r="30" fill="none" stroke="var(--line2)" stroke-width="2" stroke-dasharray="4 6"/><circle cx="36" cy="36" r="8" fill="none" stroke="var(--line2)" stroke-width="2"/></svg>`
+    : m ? poster(m.kind, m.tmdb_id, m.kind === "tv" ? m.season : null, m.title).replace('</div>', live ? `<span class="ring">${ring(pctOf(d), 40, 5, "var(--accent)")}</span></div>` : '</div>')
+    : `<svg width="72" height="72" viewBox="0 0 72 72" aria-hidden="true"><circle cx="36" cy="36" r="30" fill="var(--card2)"/>${live ? `<circle cx="36" cy="36" r="30" fill="none" stroke="var(--accent)" stroke-width="6" stroke-linecap="round" stroke-dasharray="${(188.5 * pctOf(d) / 100).toFixed(1)} 188.5" transform="rotate(-90 36 36)"/>` : ""}<circle cx="36" cy="36" r="8" fill="var(--bg)" stroke="var(--line2)" stroke-width="2"/></svg>`;
+  const bad = ["check","error"].includes(d.state) && d.rip_label === d.label;
+  const cls = !d.loaded ? "idle" : live ? "busy" : ready ? "ready" : "";
+  const st = !d.loaded ? "Feed me a disc" : stateText(d);
+  return `<article class="drive ${cls}">
+    <div class="top">${art}
+      <div style="display:grid;gap:3px;min-width:0">
+        <span class="dev">DRIVE ${esc(d.device)}</span>
+        <span class="lab">${esc(name)}</span>
+        ${m && d.loaded ? `<span style="color:var(--muted);font-size:12px">disc: ${esc(d.label)}${m.how ? ` · recognised from ${esc(m.how)}` : ""}</span>` : ""}
+        <span class="st ${bad ? "err" : live ? "live" : ready ? "ready" : d.state === "done" && d.rip_label === d.label ? "ok" : ""}">${esc(st)}</span>
+      </div>
+    </div>
+    ${live || d.progress ? `<div class="bar"><i style="width:${pctOf(d)}%"></i></div>` : ""}
+    ${d.loaded ? `<div class="row">
+      ${ready && m && m.folder ? `<button class="gold" data-review="${esc(m.folder)}">Review now</button>` : ""}
+      ${m && !ready ? `<button data-notthis="1" title="The box art isn't what's in the drive? Fix it on the Review tab once it's ripped.">Not this one?</button>` : ""}
+      ${d.ripping ? `<button data-act="cancel" data-dev="${esc(d.device)}">Cancel rip</button>`
+        : `${d.already ? `<button data-act="rip_again" data-dev="${esc(d.device)}">${d.state === "in_plex" && d.rip_label === d.label ? "Rip anyway" : "Rip again"}</button>` : ""}<button data-act="eject" data-dev="${esc(d.device)}">Eject</button>`}
+    </div>` : ""}
+  </article>`;
+}
+function queueCards(){
+  const open = discs.filter(p => !(p.job && p.job.state === "done"));
+  if (!open.length) return "";
+  return `<div class="toolbar"><h2>Ready to review</h2><span style="color:var(--muted)">${open.length} disc${open.length === 1 ? "" : "s"}</span></div>
+  <div class="queue">${open.map(p => {
+    const i = discs.indexOf(p), keep = (p.items||[]).filter(it => it.action === "move");
+    const what = p.kind === "music" ? `${keep.length} tracks · CD` : p.kind === "tv"
+      ? `${keep.filter(it => it.role === "episode").length} episodes · ${keep.filter(it => it.role === "extra").length} extras · ${esc(p.format)}`
+      : `Movie · ${keep.filter(it => it.role === "extra").length} extras · ${esc(p.format)}`;
+    const t = p.kind === "music" ? p.album : p.title;
+    const auto = p.auto && !p.auto.blocked.length && !(p.job && p.job.state);
+    return `<button class="qcard" data-open="${i}">
+      ${p.kind === "music" ? poster("music", "", null, t, "", p.release) : poster(p.kind, p.tmdb_id, p.kind === "tv" ? p.season : null, t)}
+      <span style="flex:1;display:grid;gap:4px;min-width:0">
+        <b style="font-size:15px">${esc(t)}${p.kind === "tv" && p.season ? ` · Season ${p.season}` : p.year ? ` (${esc(p.year)})` : ""}</b>
+        <span style="color:var(--muted)">${what}</span>
+        <span class="row">${confChip(p)}${auto ? `<span class="chip">files itself ${p.auto.at * 1000 <= Date.now() ? "in a moment" : "at " + new Date(p.auto.at * 1000).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})}</span>` : ""}</span>
+      </span>
+      <span class="chip xp">+${xpOf(p)} XP</span></button>`; }).join("")}</div>`;
 }
 function renderDrives(j){
   const el = $("#drivesTab");
-  const cards = j.drives.map(d => `<div class="drive">
-      <div class="row"><span class="dev">${esc(d.device)}</span><span style="flex:1"></span>
-        ${d.ripping ? `<button data-act="cancel" data-dev="${esc(d.device)}">Cancel rip</button>`
-          : d.loaded ? `${d.already ? `<button data-act="rip_again" data-dev="${esc(d.device)}">${d.state === "in_plex" && d.rip_label === d.label ? "Rip anyway" : "Rip again"}</button>` : ""}<button data-act="eject" data-dev="${esc(d.device)}">Eject</button>` : ""}</div>
-      <div class="lab">${d.loaded ? esc(d.label || "(no label)") : "&nbsp;"}</div>
-      ${d.ripping || d.progress ? `<div class="bar"><i style="width:${pctOf(d)}%"></i></div>` : ""}
-      <div class="st ${["check","error"].includes(d.state) && d.rip_label === d.label ? "err" : d.state === "done" && d.rip_label === d.label ? "ok" : ""}">${esc(stateText(d))}</div>
-    </div>`).join("") || `<p class="empty">No disc drives found yet…</p>`;
+  const open = document.activeElement && el.contains(document.activeElement) ? document.activeElement.id : "";
+  const cards = j.drives.map(driveCard).join("") || `<p class="empty">No disc drives found yet…</p>`;
   const missing = (j.setup||[]).filter(x => !x.ok && x.required);
+  const logOpen = $("details.log", el) && $("details.log", el).open;
   el.innerHTML = `
     ${missing.length ? setupBox(missing, "Needs setting up:") : j.error ? `<div class="warn" style="margin-bottom:14px">${esc(j.error)}</div>` : ""}
+    ${homePanels(j.stats)}
+    ${damagedBox(j.stats)}
     <div class="toolbar">
-      <label class="switch"><input type="checkbox" id="auto" ${j.auto ? "checked" : ""}> Auto-rip</label>
-      <span style="color:var(--muted)">${j.auto ? "Every disc you insert is ripped straight away, then named for review." : "Off: discs are only ripped when you click the button."}</span>
+      <h2>Drives</h2>
+      <label class="switch"><input type="checkbox" id="auto" ${j.auto ? "checked" : ""}><span class="tog"></span> Auto-rip
+        <span style="color:var(--muted);font-weight:400">${j.auto ? "starts the moment a disc goes in" : "off: click Rip to start"}</span></label>
       <span style="flex:1"></span>
       <button class="primary" id="ripnow">Rip loaded discs now</button>
     </div>
-    ${statsBox(j.stats)}
     <div class="drives">${cards}</div>
-    <pre class="log">${esc((j.log||[]).slice().reverse().join("\n")) || "Nothing yet."}</pre>`;
+    ${queueCards()}
+    <details class="log" ${logOpen ? "open" : ""}><summary>Activity log</summary><pre class="log">${esc((j.log||[]).slice().reverse().join("\n")) || "Nothing yet."}</pre></details>`;
+  hydrate(el);
+  if (open && $("#" + open, el)) $("#" + open, el).focus();
   $("#auto", el).onchange = e => ripAct(e.target.checked ? "auto_on" : "auto_off");
   $("#ripnow", el).onclick = () => ripAct("rip_now");
   el.querySelectorAll("[data-dmg]").forEach(b => b.onclick = () => api("/api/rip", {action:"dismiss_damaged", label:b.dataset.dmg}).then(pollDrives));
@@ -745,6 +993,10 @@ function renderDrives(j){
     if (b.dataset.act === "cancel" && !confirm(`Cancel the rip in ${b.dataset.dev}? The part already ripped is left in the Ripped folder for you to delete.`)) return;
     ripAct(b.dataset.act, b.dataset.dev);
   });
+  const openCard = i => { showTab("review"); setTimeout(() => { const c = $("#c" + i); c && c.scrollIntoView({behavior:"smooth", block:"start"}); }, 50); };
+  el.querySelectorAll("[data-open]").forEach(b => b.onclick = () => openCard(+b.dataset.open));
+  el.querySelectorAll("[data-review]").forEach(b => b.onclick = () => openCard(discs.findIndex(p => p.folder === b.dataset.review)));
+  el.querySelectorAll("[data-notthis]").forEach(b => b.onclick = () => toast("Got it", "Once it's ripped, open it on the Review tab and click \"No, pick the right one\". Shelfrip learns from the fix."));
 }
 function setupBox(items, head){
   return `<div class="warn" style="margin-bottom:14px">${head ? `<b>${esc(head)}</b><br>` : ""}${items.map(x =>
@@ -760,7 +1012,7 @@ async function pollDrives(){
   clearTimeout(drivesTimer);
   try {
     const j = await api("/api/drives");
-    $("#nwait").textContent = j.waiting;
+    $("#nwait").textContent = j.waiting; $("#nwait").classList.toggle("zero", !j.waiting);
     if (TAB === "drives") renderDrives(j);
     const sig = j.waiting + "/" + (j.filing||0);
     if (lastWaiting !== -1 && sig !== lastWaiting) await addNewDiscs();
@@ -776,13 +1028,14 @@ async function addNewDiscs(){
   discs.forEach((d, i) => {  // a disc being filed automatically: show its progress
     const nd = byFolder[d.folder] || {job: (j.jobs||{})[d.folder] || (d.job ? d.job : {state:"done", current:"Filed"})};
     if (!nd.job || JSON.stringify(nd.job) === JSON.stringify(d.job || null)) return;
+    if (nd.job.state === "done" && nd.job.current !== "Discarded" && !(d.job && d.job.state === "done")) d._justFiled = true;
     d.job = nd.job; redraw(i);
     if (nd.job.state === "running") poll();
   });
   const fresh = j.discs.filter(d => !have.has(d.folder));
   if (!fresh.length) return;
   discs = discs.concat(fresh);
-  $("#sub").textContent = `${discs.filter(d => !(d.job && d.job.state === "done")).length} disc(s) waiting · library: ${LIB}`;
+  { const n = discs.filter(d => !(d.job && d.job.state === "done")).length; $("#sub").textContent = `${n} disc${n === 1 ? "" : "s"} waiting`; }
   const list = $("#list");
   if (!list.querySelector(".card")) return render();
   const start = discs.length - fresh.length;  // add the new cards below, leave the open ones alone
@@ -790,11 +1043,49 @@ async function addNewDiscs(){
   fresh.forEach((p, k) => wire(p, start + k));
 }
 let reportTimer = null;
+const BADGE_COLORS = ["#F2B33D","#6C9BFF","#4CC38A","#B48CFF","#FF8A4C","#5FD3E0"];
+function renderShelf(){
+  const tab = $("#libraryTab");
+  if (!$("#shelfBox", tab)) tab.innerHTML = `<div id="shelfBox"></div><div id="reportBox" style="margin-top:28px"></div>`;
+  const el = $("#shelfBox", tab), g = PROG;
+  if (!g || g.none){ el.innerHTML = `<p class="empty">Your shelf fills up as you file discs.</p>`; return; }
+  const c = g.counts, seen = el.dataset.n ? +el.dataset.n : c.discs;
+  const spines = g.spines.map((sp, k) => { const h = [150, 168, 136, 184][hueOf(sp.title) % 4];
+    return `<div class="spine ${k >= seen ? "new" : ""}" title="${esc(sp.title)}${sp.sub ? " · " + esc(sp.sub) : ""} · ${esc(sp.format)} · +${sp.xp} XP" style="height:${h}px;background:${tint(sp.title)};width:${sp.kind === "tv" ? 26 : 32}px"><span>${esc(sp.title)}${sp.kind === "tv" && sp.season ? " S" + sp.season : ""}</span></div>`; }).join("");
+  const ranks = g.ranks.map(r => `<div class="rank ${g.level >= r.level ? (g.rank === r.name ? "cur" : "got") : ""}"><span class="n">${r.level}</span>
+      <div style="display:grid"><b style="${g.level >= r.level ? "" : "color:var(--muted)"}">${esc(r.name)}</b>
+      <span style="color:var(--muted);font-size:12px">${g.rank === r.name ? `you're here · ${g.xp.toLocaleString()} XP` : g.level >= r.level ? "reached" : `at ${r.xp.toLocaleString()} XP`}</span></div></div>`).join("");
+  const earned = g.badges.filter(b => b.earned).length;
+  const badges = g.badges.slice().sort((a, b) => b.earned - a.earned).map((b, k) => `<div class="badge ${b.earned ? "" : "locked"}">
+      <svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true"><path d="M20 3l14 8v18l-14 8-14-8V11z" fill="${b.earned ? BADGE_COLORS[hueOf(b.id) % BADGE_COLORS.length] : "var(--card)"}" stroke="${b.earned ? "none" : "var(--line2)"}" stroke-width="2"/></svg>
+      <b>${esc(b.name)}</b><span style="color:var(--muted);font-size:12px">${esc(b.how)}</span>
+      ${b.earned ? "" : `<div class="bar"><i style="width:${Math.round(100 * b.have / b.need)}%"></i></div><span style="color:var(--muted);font-size:11px">${b.have} / ${b.need}</span>`}</div>`).join("");
+  el.innerHTML = `
+    <section class="panel" style="margin-bottom:20px;display:grid;gap:14px">
+      <div class="row" style="align-items:baseline;gap:12px"><h1 style="margin:0;font-size:26px">${c.discs} disc${c.discs === 1 ? "" : "s"} on the shelf</h1>
+        <span style="color:var(--muted)">${g.total ? `${g.total - c.discs} to go to your goal of ${g.total} · ` : ""}newest on the right</span></div>
+      <div class="shelf">${spines}<div class="spine" style="height:150px;width:34px;background:transparent;border:2px dashed var(--line2);color:var(--muted)" title="Your next disc"><span>+</span></div></div>
+      <div class="row">${[`${c.movies} movies`, `${c.tv} TV discs`, c.music ? `${c.music} CDs` : "", `${c.episodes} episodes`, `${c.extras} extras`, `${c.hours} hours`, `best streak ${g.best_streak} day${g.best_streak === 1 ? "" : "s"}`].filter(Boolean).map(x => `<span class="chip">${x}</span>`).join("")}</div>
+    </section>
+    <section class="panels">
+      <div class="panel" style="flex:1 1 300px;display:grid;gap:12px;align-content:start"><h2 style="margin:0;font-size:18px">Collector rank</h2><div class="ranks">${ranks}</div></div>
+      <div class="panel" style="flex:2 1 520px;display:grid;gap:14px;align-content:start">
+        <div class="row" style="align-items:baseline"><h2 style="margin:0;font-size:18px">Badges</h2><span style="color:var(--muted)">${earned} of ${g.badges.length} earned</span></div>
+        <div class="badges">${badges}</div></div>
+    </section>
+    <section class="panel" style="display:flex;gap:20px;align-items:center;flex-wrap:wrap">
+      <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><circle cx="17" cy="9" r="2.5"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M15 15c3 0 6 2 6 5"/></svg>
+      <div style="flex:1 1 360px;display:grid;gap:4px"><h2 style="margin:0;font-size:18px">${c.shared ? `You've shared ${c.shared} disc${c.shared === 1 ? "" : "s"} with other collectors` : "Help other collectors"}</h2>
+        <span style="color:var(--muted)">${c.shared ? `Anyone who rips the same disc now gets it named for them.${c.pioneer ? ` ${c.pioneer} of yours were the first ever added.` : ""}` : "Turn on sharing in Settings, and every disc you file makes the next person's rip of it more reliable."}</span></div>
+    </section>`;
+  el.dataset.n = c.discs;
+}
 async function loadReport(start){
   clearTimeout(reportTimer);
-  const el = $("#libraryTab");
+  if (!$("#reportBox")) renderShelf();
+  const el = $("#reportBox");
   const r = start ? await api("/api/report", {}) : await api("/api/report");
-  const head = `<div class="toolbar"><b>Library report</b>
+  const head = `<div class="toolbar"><h2>Library report</h2>
       <span style="color:var(--muted)">${r.state === "done" ? `Built ${esc(r.built)} · ${r.counts.movies} movies, ${r.counts.shows} shows` : r.state === "running" ? esc(r.step || "Working…") : "Episode gaps, titles in several formats, and anything Plex hasn't matched right."}</span>
       <span style="flex:1"></span><button class="primary" id="mkrep" ${r.state === "running" ? "disabled" : ""}>${r.state === "done" ? "Rebuild" : "Build report"}</button></div>`;
   let body = "";
@@ -911,8 +1202,10 @@ async function loadSettings(){
   if (["drives","review","library","settings"].includes(location.hash.slice(1))) t = location.hash.slice(1);  // e.g. the tray's "Review" item
   try { const v = await api("/api/version"); if (v.latest){ const a = $("#upd"); a.href = v.url; a.textContent = `Shelfrip ${v.latest} is out: get it`; a.classList.remove("hide"); } } catch(e){}
   try { const s = await api("/api/settings"); if (s.first_run || (s.setup||[]).some(x => !x.ok && x.required)) t = "settings"; } catch(e){}
+  await loadProgress(false);
   showTab(t);
   pollDrives();
+  setInterval(() => loadProgress(true), 60000);
   $("#quit").onclick = async () => {
     let j = await api("/api/quit", {});
     if (j.busy){
