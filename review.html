@@ -838,6 +838,10 @@ function wizard(j){
         <div class="how">Sign up at <a href="https://www.themoviedb.org/signup" target="_blank" rel="noopener">themoviedb.org</a>, open
           <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">Settings › API</a>, request a key (choose Personal use),
           and copy the <b>API Key</b> (the short one).</div></li>
+      <li><label class="chk"><input type="checkbox" data-w="share_discs" ${val("share_discs") !== false ? "checked" : ""}>
+        <span><b>Help build the Shelfrip disc database.</b> When you file a disc, share what each title turned out to be, so the next person
+        with the same disc gets it named right straight away. Only the disc's fingerprint, title lengths and sizes, and the names you chose are sent:
+        nothing about you or your files. You can turn it off any time in Settings.</span></label></li>
       <li>${mark("MKVToolNix")} <b>MKVToolNix</b> (optional) splits TV discs that hold several episodes in one video. ${chk("MKVToolNix").ok ? "Found." :
         `<a href="${esc(chk("MKVToolNix").link || "https://mkvtoolnix.download/downloads.html")}" target="_blank" rel="noopener">Download it</a> if you rip TV shows.`}</li>
     </ol>

@@ -46,6 +46,8 @@ SETTINGS = [  # (key, label, kind)
     ("media_server", "Media server (decides how files are named)", "select"),
     ("format_folders", "Separate folders per format (Movies\\Blu-Ray\\..., Movies\\DVD\\...)", "bool"),
     ("use_dvdcompare", "Also look up extras names on DVDCompare (reads its web pages)", "bool"),
+    ("use_community", "Look discs up in the shared Shelfrip disc database", "bool"),
+    ("share_discs", "Share what I file with the Shelfrip disc database (anonymous: disc fingerprint, title lengths and names only)", "bool"),
     ("makemkvcon_path", "MakeMKV (makemkvcon64.exe)", "text"),
     ("mkvtoolnix_dir", "MKVToolNix folder", "text"),
     ("plex_url", "Plex address (Plex only, optional: lets the app check what Plex matched)", "text"),

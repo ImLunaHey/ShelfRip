@@ -84,10 +84,22 @@ portable zip).
 - [DVDCompare](https://www.dvdcompare.net/): extras lists by release. Off by default; turn it on in Settings.
 - [MusicBrainz](https://musicbrainz.org/), Cover Art Archive and [LRCLIB](https://lrclib.net/) for music.
 
+## The shared disc database
+
+Every disc you file makes the next person's rip of the same disc more reliable. When sharing is on
+(you're asked during setup, and it's in Settings), Shelfrip sends what each title on the disc turned
+out to be: the movie, which episode, the extra's name and category, or that you skipped it. When
+anyone rips that disc later, Shelfrip asks the database first and uses the answer most people agreed
+on. An answer only one person has given yet is still used, but the review page says so and the disc
+waits for you instead of being filed automatically.
+
+Only the disc's fingerprint, its label, title lengths and sizes, and the names chosen are sent:
+nothing about you, your files or your library. Your install is identified by a random id, stored only
+as a salted hash. The whole database can be downloaded (CC0) from `/v1/export`. The server code and
+how answers are decided are in [server/](server/).
+
 ## Roadmap
 
-- A shared, opt-in database of extras names: when you fix a name on the review page, everyone ripping
-  the same disc gets it right automatically next time.
 - A hosted web interface for the review page.
 
 ## Legal

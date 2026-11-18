@@ -1,0 +1,9 @@
+name = "shelfrip-db"
+main = "worker.js"
+compatibility_date = "2025-06-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "shelfrip"
+# Filled in by "npx wrangler d1 create shelfrip" (see README.md in this folder).
+database_id = "REPLACE_WITH_DATABASE_ID"

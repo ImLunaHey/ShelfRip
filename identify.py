@@ -49,6 +49,9 @@ DEFAULTS = {
     "format_folders": False,
     # DVDCompare has no API; looking extras up there means reading its web pages. Off unless you turn it on.
     "use_dvdcompare": False,
+    # The shared Shelfrip disc database (community.py): look discs up there, and share what you file.
+    "use_community": True,
+    "share_discs": True,
     "tmdb_api_key": "",
     # Optional second opinion on movies (free key: https://www.omdbapi.com/apikey.aspx)
     "omdb_api_key": "",
@@ -953,6 +956,12 @@ def plan_folder(folder: Path, rip_root: Path, tmdb: TMDB | None, lib: dict, cfg:
             known = catalog.lookup(disc, titles)
         except Exception as exc:
             print(f"    (disc catalog lookup failed: {exc})")
+        if not known:
+            try:
+                import community
+                known = community.lookup(disc, titles, cfg)
+            except Exception as exc:
+                print(f"    (Shelfrip disc database lookup failed: {exc})")
         if not known and cfg.get("use_thediscdb", True):
             known = discdb.lookup(disc, titles)
         if known and known["tmdb_id"]:
@@ -991,6 +1000,9 @@ def plan_folder(folder: Path, rip_root: Path, tmdb: TMDB | None, lib: dict, cfg:
         plan["match_source"] = known_source + (f"; {plan['match_source']}" if plan.get("match_source") else "")
     if known:
         apply_discdb(plan, known, tmdb)
+        if known.get("community") and not known.get("confirmed"):
+            plan["warnings"].append("Only one person has shared this disc with the Shelfrip disc database so far: "
+                            "check the names before filing.")
     if plan["kind"] == "tv":
         attach_splits(plan, folder, tmdb, cfg)
     try:
@@ -1158,7 +1170,7 @@ def apply_discdb(plan: dict, known: dict, tmdb: TMDB | None) -> None:
     import extras
     pairs = known["pairs"]
     local = bool(known.get("local"))
-    src = "your catalog" if local else "TheDiscDB"
+    src = "your catalog" if local else known.get("src_name") or "TheDiscDB"
     plan["discdb_matched"] = True
     typ = lambda it: (pairs.get(it["source"], {}).get("itemType") or "").lower().replace(" ", "")
 
@@ -1194,9 +1206,14 @@ def apply_discdb(plan: dict, known: dict, tmdb: TMDB | None) -> None:
             note = f"numbered by {src}"
             if ep_names[s] and e not in ep_names[s]:
                 note += f"; TMDB has no s{s:02d}e{e:02d}, so check the number" + (f" ({src} calls it \"{desc}\")" if desc else "")
-            it.update(role="episode", season=s, episode=e, episodes=[e], needs_split=False,
+            last = int(r["episode_last"]) if str(r.get("episode_last") or "").isdigit() else e
+            eps = list(range(e, max(e, last) + 1))
+            if len(eps) > 1:  # one title holding two episodes, e.g. a double-length pilot
+                ep_title = fs_safe(ep_names[s].get(e, {}).get("name", "")) if ep_names[s] else ep_title
+            it.update(role="episode", season=s, episode=e, episodes=eps, needs_split=False,
                       dest_dir=plan["library_dir"] + ("\\Specials" if s == 0 else f"\\Season {s}"),
-                      name=f"{prefix} - s{s:02d}e{e:02d}" + (f" - {ep_title}" if ep_title else ""),
+                      name=f"{prefix} - s{s:02d}e{e:02d}" + (f"-e{eps[-1]:02d}" if len(eps) > 1 else "")
+                           + (f" - {ep_title}" if ep_title else ""),
                       action="move", note=note, db_numbered=True)
             it.pop("category", None)
         elif it["role"] in ("extra", "play_all") and desc and t not in ("", "mainmovie", "episode"):
@@ -1204,8 +1221,9 @@ def apply_discdb(plan: dict, known: dict, tmdb: TMDB | None) -> None:
             it.update(role="extra", name=desc,
                       category=r.get("category") or extras.THEDISCDB_TYPES.get(t) or extras.guess_category(desc),
                       action="skip" if dup else "move", note=f"named by {src}")
-        elif local and r.get("kept") is False and it["role"] in ("extra", "play_all", "edition"):
-            it.update(action="skip", note="you skipped this title last time (your catalog)")
+        elif (local or known.get("community")) and r.get("kept") is False and it["role"] in ("extra", "play_all", "edition"):
+            it.update(action="skip", note="you skipped this title last time (your catalog)" if local
+                      else f"skipped by people who filed this disc ({src})")
     numbered = [i for i in plan["items"] if i.get("db_numbered")]
     seen_eps: set = set()
     for i in numbered:
