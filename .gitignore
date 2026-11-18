@@ -10,3 +10,7 @@ portable.txt
 *.exe
 library_listing.txt
 research/
+.secrets.json
+.dev.vars
+.wrangler/
+node_modules/

@@ -585,9 +585,16 @@ def file_job(folder: Path, plan: dict) -> None:
         try:  # your own disc database (catalog.py), recorded exactly as filed
             import catalog
             info = folder / "disc_info.json"
-            catalog.record(plan, json.loads(info.read_text(encoding="utf-8")) if info.exists() else {})
+            disc_info = json.loads(info.read_text(encoding="utf-8")) if info.exists() else {}
+            catalog.record(plan, disc_info)
         except Exception as exc:
+            disc_info = {}
             print(f"couldn't add {name} to the disc catalog: {exc}")
+        try:  # the shared Shelfrip disc database (only if sharing is on; runs in the background)
+            import community
+            community.share(plan, disc_info, CFG)
+        except Exception as exc:
+            print(f"couldn't share {name} with the Shelfrip disc database: {exc}")
         try:
             contrib_note = prepare_contribution(folder, plan)
         except Exception as exc:
