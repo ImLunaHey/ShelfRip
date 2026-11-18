@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import sys
 import threading
 import time
@@ -569,7 +570,7 @@ def build_report() -> None:
 
 # --------------------------------------------------------------------------- updates
 
-UPDATE: dict = {"current": paths.APP_VERSION}
+UPDATE: dict = {"app": paths.APP_NAME, "current": paths.APP_VERSION}
 
 
 def _ver(v: str) -> tuple:
@@ -730,13 +731,65 @@ class Handler(review.Handler):
             return self.send(500, {"error": str(exc)})
 
 
+class Server(ThreadingHTTPServer):
+    # Python lets a server share a port that's already in use (SO_REUSEADDR). On Windows that means
+    # Shelfrip could start on a port another program is using, and the browser would get that
+    # program's answer instead (an "Unsupported method ('GET')" page). Take the port for ourselves.
+    allow_reuse_address = os.name != "nt"
+
+    def server_bind(self):
+        if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
+def _is_shelfrip(port: int) -> bool:
+    """Is Shelfrip itself already answering on this port?"""
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/version", timeout=2) as r:
+            info = json.loads(r.read().decode("utf-8"))
+        return info.get("app") == paths.APP_NAME or ("current" in info and "app" not in info)
+    except Exception:
+        return False
+
+
+def _port_taken(port: int) -> bool:
+    """Is anything listening on this port, on 127.0.0.1 or ::1 ("localhost" can mean either)?"""
+    for fam, host in ((socket.AF_INET, "127.0.0.1"), (getattr(socket, "AF_INET6", None), "::1")):
+        if fam is None:
+            continue
+        try:
+            with socket.socket(fam, socket.SOCK_STREAM) as s:
+                s.settimeout(0.5)
+                if s.connect_ex((host, port)) == 0:
+                    return True
+        except OSError:
+            pass
+    return False
+
+
+def open_server() -> tuple[Server | None, int]:
+    """Start the web server on 8765, or the next free port if another program has it.
+    Returns (None, port) when Shelfrip is already running on that port."""
+    for port in range(review.PORT, review.PORT + 20):
+        if _is_shelfrip(port):
+            return None, port
+        if _port_taken(port):
+            print(f"Port {port} is used by another program; trying {port + 1}.")
+            continue
+        try:
+            return Server(("127.0.0.1", port), Handler), port
+        except OSError:
+            continue
+    raise SystemExit(f"Couldn't find a free port between {review.PORT} and {review.PORT + 19}.")
+
+
 def main() -> None:
     global RIPPER
-    url = f"http://localhost:{review.PORT}/"
-    try:
-        srv = ThreadingHTTPServer(("127.0.0.1", review.PORT), Handler)
-    except OSError:
-        # already running (or the old review window is open): just show it
+    srv, port = open_server()
+    review.PORT = port
+    url = f"http://127.0.0.1:{port}/"
+    if srv is None:
         print("Shelfrip is already running. Opening it in your browser.")
         webbrowser.open(url)
         return
