@@ -188,6 +188,7 @@ def compute(rip_root: Path, goal_total: int = 0) -> dict:
         spines.append({"title": title or p.get("disc_label") or "Disc", "sub": sub, "kind": p.get("kind"),
                        "mbid": (p.get("release") or "") if p.get("kind") == "music" else "",
                        "episodes": [eps[0], eps[-1]] if eps else [], "extras": d["extras"], "label": p.get("disc_label") or "",
+                       "folder": p.get("_folder") or "",
                        "format": p.get("format") or "", "tmdb_id": str(p.get("tmdb_id") or ""),
                        "season": p.get("season"), "filed_at": p["filed_at"], "xp": d["xp"],
                        "minutes": round(d["minutes"])})

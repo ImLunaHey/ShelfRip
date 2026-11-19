@@ -298,6 +298,84 @@ def resume_tick(log=print) -> list[str]:
     return started
 
 
+def refile_movie(name: str, tmdb_id: str, log=print) -> dict:
+    """Move a filed movie to the right TMDB match: renames its library folder and main file(s),
+    then updates its record, your disc database, the learned label and (if sharing is on) the
+    shared disc database, so the corrected answer replaces the wrong one. Returns {ok} or {error}."""
+    rec = (FILED_DIR / name).resolve()
+    if rec.parent != FILED_DIR.resolve() or not (rec / "plan.json").exists():
+        return {"error": "Couldn't find that disc's record."}
+    plan = json.loads((rec / "plan.json").read_text(encoding="utf-8"))
+    if plan.get("kind") != "movie":
+        return {"error": "Only movies can be re-matched after filing, for now."}
+    if not TMDB:
+        return {"error": "Add your TMDB key in Settings first."}
+    if not tmdb_id.isdigit():
+        return {"error": "Pick a movie from the search results."}
+    away = library_reachable()
+    if away:
+        return {"error": away}
+    m = TMDB.movie(int(tmdb_id))
+    title, year = m.get("title") or "", identify.year_of(m.get("release_date")) or ""
+    old_rel = str(plan.get("library_dir") or "")
+    old_base = old_rel.replace("/", "\\").rstrip("\\").split("\\")[-1]
+    tag = naming.id_tag(CFG, tmdb_id)
+    new_base = identify.fs_safe(f"{title} ({year})" if year else title) + (f" {tag}" if tag else "")
+    if not old_base or not title:
+        return {"error": "This disc's record doesn't say where it was filed."}
+    if new_base == old_base:
+        return {"error": "It's already filed as that movie."}
+    new_rel = old_rel[: len(old_rel) - len(old_base)] + new_base
+
+    def where(rel):
+        return LIB_ROOT.joinpath(*[identify.fs_safe(x) for x in rel.replace("/", "\\").split("\\") if x.strip()])
+    old_dir, new_dir = where(old_rel), where(new_rel)
+    if new_dir.exists():
+        return {"error": f"{new_dir} already exists. Is that movie already in your library?"}
+    if not old_dir.is_dir():
+        return {"error": f"Couldn't find {old_dir} in your library. Was it moved or renamed?"}
+    os.rename(old_dir, new_dir)
+    for f in list(new_dir.iterdir()):
+        if f.is_file() and old_base in f.name:
+            f.rename(new_dir / f.name.replace(old_base, new_base))
+
+    def fix(v):
+        if isinstance(v, list):
+            return [fix(x) for x in v]
+        return v.replace(old_base, new_base) if isinstance(v, str) else v
+    was = {k: plan.get(k) for k in ("title", "year", "tmdb_id", "library_dir")}
+    for it in plan.get("items", []):
+        for k in ("dest_dir", "name", "filed_to"):
+            if k in it:
+                it[k] = fix(it[k])
+    plan.update(title=title, year=year, tmdb_id=tmdb_id, library_dir=new_rel,
+                refiled={"from": was, "at": time.strftime("%Y-%m-%dT%H:%M:%S")})
+    plan["warnings"] = [w for w in plan.get("warnings", []) if "wrong movie" not in w and "Runtime doesn't match" not in w]
+    save_plan(rec, plan)
+    info = rec / "disc_info.json"
+    disc = json.loads(info.read_text(encoding="utf-8")) if info.exists() else {}
+    for step in ("catalog", "label", "share", "plex"):
+        try:
+            if step == "catalog":
+                import catalog
+                catalog.record(plan, disc)
+            elif step == "label":
+                import discdb
+                discdb.remember(plan.get("disc_label") or name.split("__")[0], plan)
+            elif step == "share":
+                import community
+                community.share(plan, disc, CFG, log=log)
+            else:
+                import plex
+                threading.Thread(target=plex.scan_and_check, args=(CFG, plan, {}), daemon=True).start()
+        except Exception as exc:
+            log(f"re-matching {name}: couldn't update the {step} ({exc})")
+    _forget_progress()
+    library(refresh=True)
+    log(f"Re-matched {was['title']} ({was['year']}) as {title} ({year})")
+    return {"ok": True, "title": title, "year": year, "folder": str(new_dir)}
+
+
 def auto_file_tick(log=print) -> list[str]:
     """File every disc that's confident and has waited long enough. Returns their names."""
     if not CFG.get("auto_file", True):
@@ -408,6 +486,11 @@ def check_plan(folder: Path, plan: dict) -> list[str]:
     away = library_reachable()
     if away:
         return [away]
+    if plan.get("filing"):  # finishing an interrupted filing
+        for it in plan["items"]:
+            if (it.get("action") == "move" and not it.get("needs_split") and not item_done(it)
+                    and not (folder / it["source"]).exists() and dest_for(it, plan).exists()):
+                it["filed_to"] = str(dest_for(it, plan))  # moved just before Shelfrip closed, before it could note it
     # Has the library gained a copy since this disc was named? Skip those, same as the namer does.
     try:
         mine = identify.quality_rank(plan.get("format") or "", CFG)
@@ -438,9 +521,6 @@ def check_plan(folder: Path, plan: dict) -> list[str]:
     except OSError:
         pass
     for it in plan["items"]:
-        if (plan.get("filing") and it.get("action") == "move" and not it.get("needs_split") and not item_done(it)
-                and not (folder / it["source"]).exists() and dest_for(it, plan).exists()):
-            it["filed_to"] = str(dest_for(it, plan))  # moved just before Shelfrip closed, before it could note it
         if it.get("action") != "move" or item_done(it):  # done = copied by a filing that was interrupted
             continue
         if it.get("needs_split"):
@@ -837,6 +917,8 @@ class Handler(BaseHTTPRequestHandler):
             b = self.body()
             if u.path == "/api/scan":
                 return self.send(200, {"planned": plan_new_folders()})
+            if u.path == "/api/refile":  # a filed movie turned out to be the wrong match
+                return self.send(200, refile_movie(str(b.get("folder") or ""), str(b.get("tmdb_id") or "")))
             folder = folder_path(b["folder"])
             if u.path == "/api/play":
                 src = folder / Path(b["source"]).name

@@ -14,3 +14,7 @@ research/
 .dev.vars
 .wrangler/
 node_modules/
+tests/fixtures/
+Old settings (not used)/
+*.before-refile.*
+backups/
