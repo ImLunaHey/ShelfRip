@@ -107,34 +107,121 @@ def _window_box() -> list[str]:
     return [f"--window-size={w},{h}", f"--window-position={x0},{y0}"]
 
 
+APP_ID = "Shelfrip.App"  # the taskbar identity of Shelfrip's window (and of the installer's shortcuts)
+
+
+def _shelfrip_windows() -> list:
+    """Handles of the open Shelfrip app windows (Edge/Chrome windows titled just "Shelfrip";
+    a browser tab would add " - Microsoft Edge")."""
+    import ctypes
+    u32 = ctypes.WinDLL("user32")
+    found = []
+    PROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    u32.EnumWindows.argtypes = [PROC, ctypes.c_void_p]
+    u32.GetWindowTextW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
+    u32.GetClassNameW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
+    u32.IsWindowVisible.argtypes = [ctypes.c_void_p]
+
+    def each(hwnd, _):
+        title, cls = ctypes.create_unicode_buffer(256), ctypes.create_unicode_buffer(64)
+        u32.GetWindowTextW(hwnd, title, 256)
+        u32.GetClassNameW(hwnd, cls, 64)
+        if title.value == "Shelfrip" and cls.value.startswith("Chrome_WidgetWin") and u32.IsWindowVisible(hwnd):
+            found.append(hwnd)
+        return True
+    u32.EnumWindows(PROC(each), None)
+    return found
+
+
+def relaunch_command() -> str:
+    """What a pinned taskbar button runs: Shelfrip.exe, or pythonw app.py when run from the scripts."""
+    import sys
+    if getattr(sys, "frozen", False):
+        return f'"{sys.executable}"'
+    exe = Path(sys.executable)
+    pyw = exe.with_name("pythonw.exe")
+    return f'"{pyw if pyw.exists() else exe}" "{Path(__file__).resolve().with_name("app.py")}"'
+
+
+def brand_window(hwnd) -> bool:
+    """Give an app window Shelfrip's own taskbar identity, so it shows as Shelfrip (not Edge),
+    with Shelfrip's icon, and pinning it pins Shelfrip. Uses the window's property store."""
+    try:
+        import ctypes
+        import sys
+
+        class GUID(ctypes.Structure):
+            _fields_ = [("a", ctypes.c_uint32), ("b", ctypes.c_uint16), ("c", ctypes.c_uint16), ("d", ctypes.c_ubyte * 8)]
+
+        class PROPERTYKEY(ctypes.Structure):
+            _fields_ = [("fmtid", GUID), ("pid", ctypes.c_uint32)]
+
+        class PROPVARIANT(ctypes.Structure):
+            _fields_ = [("vt", ctypes.c_uint16), ("r1", ctypes.c_uint16), ("r2", ctypes.c_uint16),
+                        ("r3", ctypes.c_uint16), ("val", ctypes.c_void_p), ("pad", ctypes.c_void_p)]
+
+        def guid(a, b, c, d):
+            return GUID(a, b, c, (ctypes.c_ubyte * 8)(*d))
+        fmt = guid(0x9F4C2855, 0x9F79, 0x4B39, (0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3))  # PKEY_AppUserModel_*
+        iid = guid(0x886D8EEB, 0x8CF2, 0x4446, (0x8D, 0x02, 0xCD, 0xBA, 0x1D, 0xBD, 0xCF, 0x99))  # IID_IPropertyStore
+        ole = ctypes.WinDLL("ole32")
+        ole.CoInitialize(None)
+        s32 = ctypes.WinDLL("shell32")
+        s32.SHGetPropertyStoreForWindow.argtypes = [ctypes.c_void_p, ctypes.POINTER(GUID), ctypes.POINTER(ctypes.c_void_p)]
+        store = ctypes.c_void_p()
+        if s32.SHGetPropertyStoreForWindow(hwnd, ctypes.byref(iid), ctypes.byref(store)) != 0 or not store:
+            return False
+        vtbl = ctypes.cast(ctypes.cast(store, ctypes.POINTER(ctypes.c_void_p))[0], ctypes.POINTER(ctypes.c_void_p))
+        HR = ctypes.c_long
+        SetValue = ctypes.WINFUNCTYPE(HR, ctypes.c_void_p, ctypes.POINTER(PROPERTYKEY), ctypes.POINTER(PROPVARIANT))(vtbl[6])
+        Commit = ctypes.WINFUNCTYPE(HR, ctypes.c_void_p)(vtbl[7])
+        Release = ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(vtbl[2])
+        icon = f"{sys.executable},0" if getattr(sys, "frozen", False) else \
+            str(ICON_PATH if ICON_PATH.exists() else write_icon())
+        keep = []
+        try:
+            # the relaunch details go in first; the id last (Windows reads them when the id is set)
+            for pid, text in ((2, relaunch_command()), (3, icon), (4, "Shelfrip"), (5, APP_ID)):
+                buf = ctypes.create_unicode_buffer(text)
+                keep.append(buf)
+                pv = PROPVARIANT(vt=31, val=ctypes.cast(buf, ctypes.c_void_p))  # VT_LPWSTR
+                SetValue(store, ctypes.byref(PROPERTYKEY(fmt, pid)), ctypes.byref(pv))
+            return Commit(store) == 0
+        finally:
+            Release(store)
+    except Exception:
+        return False
+
+
+def _brand_when_open(before: set, timeout: float = 20.0) -> None:
+    """Wait for the new app window to appear (it takes a moment to load) and brand it."""
+    import time
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            new = [h for h in _shelfrip_windows() if h not in before]
+        except Exception:
+            return
+        if new:
+            for h in new:
+                brand_window(h)
+            return
+        time.sleep(0.5)
+
+
 def _focus_existing() -> bool:
     """If a Shelfrip app window is already open, bring it to the front instead of opening another."""
     if os.name != "nt":
         return False
     try:
         import ctypes
+        found = _shelfrip_windows()
+        if not found:
+            return False
         u32 = ctypes.WinDLL("user32")
-        found = []
-        PROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
-        u32.GetWindowTextW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
-        u32.GetClassNameW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
-        u32.IsWindowVisible.argtypes = [ctypes.c_void_p]
         u32.IsIconic.argtypes = [ctypes.c_void_p]
         u32.ShowWindow.argtypes = [ctypes.c_void_p, ctypes.c_int]
         u32.SetForegroundWindow.argtypes = [ctypes.c_void_p]
-
-        def each(hwnd, _):
-            title, cls = ctypes.create_unicode_buffer(256), ctypes.create_unicode_buffer(64)
-            u32.GetWindowTextW(hwnd, title, 256)
-            u32.GetClassNameW(hwnd, cls, 64)
-            # the app window's title is the page's <title> alone; a browser tab would add " - Microsoft Edge"
-            if title.value == "Shelfrip" and cls.value.startswith("Chrome_WidgetWin") and u32.IsWindowVisible(hwnd):
-                found.append(hwnd)
-                return False
-            return True
-        u32.EnumWindows(PROC(each), None)
-        if not found:
-            return False
         if u32.IsIconic(found[0]):
             u32.ShowWindow(found[0], 9)  # SW_RESTORE
         u32.SetForegroundWindow(found[0])
@@ -151,12 +238,17 @@ def open_window(url: str, use_window: bool = True) -> None:
     exe = _find_browser() if use_window else None
     if exe:
         try:
+            before = set(_shelfrip_windows())
+        except Exception:
+            before = set()
+        try:
             subprocess.Popen([exe, f"--app={url}", *_window_box(), "--no-first-run",
                               "--no-default-browser-check"],
                              creationflags=getattr(subprocess, "DETACHED_PROCESS", 0) |
                              getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              close_fds=True)
+            threading.Thread(target=_brand_when_open, args=(before,), daemon=True).start()
             return
         except OSError:
             pass
