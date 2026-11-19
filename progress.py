@@ -144,6 +144,7 @@ def _badges(c: dict, streak_best: int, plans: list[dict], per_day: dict) -> list
         ("streak3", "On a Roll", "A 3-day streak", streak_best, 3),
         ("streak7", "Week Warrior", "A 7-day streak", streak_best, 7),
         ("pioneer", "Pioneer", "Be the first to add a disc to the shared database", c["pioneer"], 1),
+        ("complete", "Completionist", "Own every episode of a season", _complete_seasons(), 1),
     ]
     return [{"id": k, "name": n, "how": h, "have": min(v, t), "need": t, "earned": v >= t} for k, n, h, v, t in B]
 
@@ -174,14 +175,19 @@ def compute(rip_root: Path, goal_total: int = 0) -> dict:
         for k in ("extras", "named", "episodes", "minutes", "tracks"):
             c[k] += d[k]
         day = str(p["filed_at"])[:10]
-        dd = days.setdefault(day, {"discs": 0, "extras": 0, "minutes": 0.0})
+        dd = days.setdefault(day, {"discs": 0, "extras": 0, "minutes": 0.0, "xp": 0})
         dd["discs"] += 1
+        dd["xp"] += d["xp"]
         dd["extras"] += d["extras"]
         dd["minutes"] += d["minutes"]
         title = p.get("album") if p.get("kind") == "music" else p.get("title")
         sub = (f"Season {p['season']}" if p.get("kind") == "tv" and p.get("season") else
                (p.get("album_artist") or "") if p.get("kind") == "music" else str(p.get("year") or ""))
+        eps = sorted({int(e) for it in p.get("items", []) if it.get("action") == "move" and it.get("role") == "episode"
+                      for e in (it.get("episodes") or [it.get("episode")]) if e})
         spines.append({"title": title or p.get("disc_label") or "Disc", "sub": sub, "kind": p.get("kind"),
+                       "mbid": (p.get("release") or "") if p.get("kind") == "music" else "",
+                       "episodes": [eps[0], eps[-1]] if eps else [], "extras": d["extras"], "label": p.get("disc_label") or "",
                        "format": p.get("format") or "", "tmdb_id": str(p.get("tmdb_id") or ""),
                        "season": p.get("season"), "filed_at": p["filed_at"], "xp": d["xp"],
                        "minutes": round(d["minutes"])})
@@ -190,6 +196,7 @@ def compute(rip_root: Path, goal_total: int = 0) -> dict:
         for g, _, target, bonus in GOALS:
             if dd[g] >= target:
                 xp += bonus
+                dd["xp"] += bonus
     # streak: days in a row with at least one disc filed, ending today (or yesterday: still alive)
     today = dt.date.today()
     have = {dt.date.fromisoformat(d) for d in days if re.fullmatch(r"\d{4}-\d\d-\d\d", d)}
@@ -201,7 +208,17 @@ def compute(rip_root: Path, goal_total: int = 0) -> dict:
     for d in sorted(have):
         cur = cur + 1 if prev and (d - prev).days == 1 else 1
         best, prev = max(best, cur), d
-    t = days.get(today.isoformat(), {"discs": 0, "extras": 0, "minutes": 0.0})
+    t = days.get(today.isoformat(), {"discs": 0, "extras": 0, "minutes": 0.0, "xp": 0})
+
+    def week(start: dt.date) -> dict:
+        span = [(start + dt.timedelta(days=i)).isoformat() for i in range(7)]
+        w = [days[x] for x in span if x in days]
+        return {"start": start.isoformat(), "discs": sum(x["discs"] for x in w), "xp": sum(x["xp"] for x in w),
+                "hours": round(sum(x["minutes"] for x in w) / 60, 1), "extras": sum(x["extras"] for x in w),
+                "days": sum(1 for x in w if x["discs"]),
+                "titles": [s["title"] for s in spines if str(s["filed_at"])[:10] in span][-8:]}
+    monday = today - dt.timedelta(days=today.weekday())
+    recap = {"this": week(monday), "last": week(monday - dt.timedelta(days=7))}
     goals = [{"key": g, "label": label, "have": round(min(t[g], target)), "need": target, "bonus": bonus,
               "done": t[g] >= target} for g, label, target, bonus in GOALS]
     level, lo, hi = level_for(xp)
@@ -214,7 +231,7 @@ def compute(rip_root: Path, goal_total: int = 0) -> dict:
         "streak": streak, "streak_today": today in have, "best_streak": best,
         "goals": goals, "counts": {**c, "hours": round(c["minutes"] / 60, 1)},
         "total": goal_total, "badges": badges, "ranks": ranks, "spines": spines[-120:],
-        "today": t["discs"],
+        "today": t["discs"], "week": recap,
     }
     _CACHE.update(t=time.time(), key=key, data=data)
     return data
@@ -268,3 +285,76 @@ def poster(tmdb, kind: str, tmdb_id: str, season=None) -> dict:
     except OSError:
         pass
     return out
+
+
+# --------------------------------------------------------------------------- seasons
+
+SEASON_CACHE = paths.CACHE_DIR / "seasons.json"
+_SEASONS: dict = {}
+
+
+def _season_cache() -> dict:
+    if not _SEASONS:
+        try:
+            _SEASONS.update(json.loads(SEASON_CACHE.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+    return _SEASONS
+
+
+def _complete_seasons() -> int:
+    return int(_season_cache().get("_complete") or 0)
+
+
+def seasons(tmdb, rip_root: Path, lib_root: Path) -> dict:
+    """Each TV season you've filed discs of: how many of its episodes you have (in your library,
+    however they got there) out of how many TMDB lists. Newest first."""
+    import identify
+    import review
+    cache = _season_cache()
+    try:
+        lib = review.library()
+    except Exception:
+        lib = {"movies": [], "shows": []}
+    seen: dict[tuple, dict] = {}
+    for p in reversed(_filed_plans(rip_root)):
+        if p.get("kind") != "tv" or not p.get("tmdb_id"):
+            continue
+        for it in p.get("items", []):
+            if it.get("action") != "move" or it.get("role") != "episode" or not it.get("season"):
+                continue
+            key = (str(p["tmdb_id"]), int(it["season"]))
+            row = seen.setdefault(key, {"show": p.get("title") or "", "tmdb_id": key[0], "season": key[1],
+                                        "filed": set(), "last": p["filed_at"]})
+            row["filed"].update(int(e) for e in (it.get("episodes") or [it.get("episode")]) if e)
+    out = []
+    for (tid, sn), row in seen.items():
+        ck = f"{tid}:{sn}"
+        hit = cache.get(ck)
+        if (not hit or time.time() - hit.get("t", 0) > 7 * 86400) and tmdb:
+            try:
+                eps = tmdb.season(int(tid), sn).get("episodes") or []
+                today = dt.date.today().isoformat()
+                aired = [e for e in eps if not e.get("air_date") or e["air_date"] <= today]
+                hit = {"total": len(aired), "t": time.time()}
+                cache[ck] = hit
+            except Exception:
+                pass
+        total = (hit or {}).get("total") or 0
+        have = set(row["filed"])
+        try:
+            have |= identify.episodes_in_library(lib, tid, identify.norm(row["show"]), sn)
+        except Exception:
+            pass
+        n = len({e for e in have if not total or e <= total}) if total else len(have)
+        out.append({"show": row["show"], "tmdb_id": tid, "season": sn, "have": n, "total": total,
+                    "done": bool(total) and n >= total, "last": row["last"]})
+    out.sort(key=lambda r: (r["done"], r["last"]), reverse=True)
+    out.sort(key=lambda r: r["done"])  # still to finish first, then complete ones
+    cache["_complete"] = sum(1 for r in out if r["done"])
+    try:
+        SEASON_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        SEASON_CACHE.write_text(json.dumps(cache), encoding="utf-8")
+    except OSError:
+        pass
+    return {"seasons": out}

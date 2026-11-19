@@ -57,6 +57,8 @@ Name: "{userstartup}\Shelfrip"; Filename: "{app}\Shelfrip.exe"; Parameters: "--b
 
 [Run]
 Filename: "{app}\Shelfrip.exe"; Description: "Open Shelfrip now"; Flags: nowait postinstall skipifsilent
+; after an update from inside Shelfrip (a silent install), start it again
+Filename: "{app}\Shelfrip.exe"; Flags: nowait skipifnotsilent
 
 ; Your settings and disc database (%APPDATA%\Shelfrip) are kept when uninstalling, so a
 ; reinstall picks up where you left off. Delete that folder by hand to remove them too.
