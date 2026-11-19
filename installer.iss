@@ -50,9 +50,9 @@ Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs 
 Type: filesandordirs; Name: "{app}\_internal"
 
 [Icons]
-Name: "{group}\Shelfrip"; Filename: "{app}\Shelfrip.exe"; WorkingDir: "{app}"
+Name: "{group}\Shelfrip"; Filename: "{app}\Shelfrip.exe"; WorkingDir: "{app}"; AppUserModelID: "Shelfrip.App"
 Name: "{group}\Uninstall Shelfrip"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\Shelfrip"; Filename: "{app}\Shelfrip.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autodesktop}\Shelfrip"; Filename: "{app}\Shelfrip.exe"; WorkingDir: "{app}"; AppUserModelID: "Shelfrip.App"; Tasks: desktopicon
 Name: "{userstartup}\Shelfrip"; Filename: "{app}\Shelfrip.exe"; Parameters: "--background"; WorkingDir: "{app}"; Tasks: startup
 
 [Run]
