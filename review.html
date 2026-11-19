@@ -147,7 +147,7 @@ pre.log{background:var(--card);border:1px solid var(--line);border-radius:14px;p
   display:flex;gap:12px;align-items:center;animation:pop .35s ease-out}
 .toast b{font-family:var(--head)}
 @keyframes pop{from{transform:translateY(16px);opacity:0}to{transform:none;opacity:1}}
-@media (prefers-reduced-motion: reduce){.spine.new,.toast{animation:none}.bar>i{transition:none}}
+@media (prefers-reduced-motion: reduce){.spine.new,.case.new,.case.new::after,.toast{animation:none}.case{transition:none}.bar>i{transition:none}}
 .set{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:20px;display:grid;gap:14px;max-width:780px}
 .set label{display:grid;gap:4px;font-size:13px;color:var(--muted)}
 .set label.chk{display:flex;gap:8px;align-items:center;color:var(--ink)}
@@ -196,6 +196,66 @@ tr.splitrow td{background:var(--card2);border-bottom:1px solid var(--line)}
 .foot2{color:var(--muted);font-size:12px;margin:24px 0 0;border-top:1px solid var(--line);padding-top:14px}
 @media (max-width:760px){.setnav{position:static;flex-basis:100%;grid-auto-flow:column;overflow-x:auto}.setnav button span{white-space:nowrap}}
 
+
+/* ---- collection shelf ---- */
+.collbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.seg{display:inline-flex;background:var(--card2);border:1px solid var(--line2);border-radius:999px;padding:3px;gap:2px;flex-wrap:wrap}
+.seg button{border:0;background:transparent;border-radius:999px;padding:5px 12px;color:var(--muted)}
+.seg button.on{background:var(--ink);color:var(--bg);font-weight:600}
+.seg button .n{opacity:.7;font-size:12px;margin-left:4px}
+.coll{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:0 24px;padding:6px 4px 0}
+.item{position:relative;display:grid;align-content:start;padding-top:22px}
+.item::after{content:"";position:absolute;left:-12px;right:-12px;top:calc(22px + var(--h,198px));height:14px;
+  background:linear-gradient(#8A6A47,#6E5236 55%,#4B3826);box-shadow:0 8px 14px rgba(0,0,0,.35);z-index:0}
+.coll .item:first-child::after{border-radius:3px 0 0 3px}
+.case{position:relative;z-index:1;display:block;width:100%;height:var(--h,198px);padding:0;border:0;border-radius:6px 6px 3px 3px;overflow:hidden;
+  background:#111;cursor:pointer;transform-origin:50% 100%;transition:transform .18s ease,box-shadow .18s ease;
+  box-shadow:0 1px 0 rgba(255,255,255,.08) inset,0 10px 18px rgba(0,0,0,.45)}
+.case:hover,.case:focus-visible{transform:translateY(-8px) rotate(-1.2deg);box-shadow:0 18px 30px rgba(0,0,0,.55);outline:none}
+.case:focus-visible{box-shadow:0 0 0 3px var(--accent),0 18px 30px rgba(0,0,0,.55)}
+.case .poster{position:absolute;inset:0;width:100%;height:100%;border:0;border-radius:0;font-size:13px}
+.case .band{position:absolute;left:0;right:0;top:0;height:20px;z-index:2;display:flex;align-items:center;justify-content:center;
+  font:700 10px/1 var(--head);letter-spacing:.14em;color:#fff}
+.case.bd .band{background:linear-gradient(#2B78E4,#1857B8)}
+.case.uhd .band{background:linear-gradient(#1A1A1A,#000);color:#F2C94C}
+.case.dvd .band{background:linear-gradient(#2A2A2A,#141414);color:#E8E8E8}
+.case .poster{top:20px;height:calc(100% - 20px)}
+.case::before{content:"";position:absolute;inset:0 auto 0 0;width:7px;z-index:3;background:linear-gradient(90deg,rgba(255,255,255,.22),rgba(0,0,0,.25))}
+.case::after{content:"";position:absolute;inset:0;z-index:3;pointer-events:none;
+  background:linear-gradient(115deg,rgba(255,255,255,.16) 0,rgba(255,255,255,0) 32%,rgba(255,255,255,0) 70%,rgba(255,255,255,.07) 100%)}
+.case.cd{--h:132px;border-radius:3px;background:#1b1d22}
+.case.cd .poster{top:0;left:9px;width:calc(100% - 9px);height:100%}
+.case.cd::before{width:9px;background:linear-gradient(90deg,#3a3f48,#14161a)}
+.item.cdi{--h:132px}
+.case.set{box-shadow:5px -5px 0 -1px #2a2f39,10px -10px 0 -2px #20242c,0 10px 18px rgba(0,0,0,.45)}
+.case .stack{position:absolute;right:6px;top:26px;z-index:4;background:rgba(0,0,0,.72);color:#fff;border-radius:999px;font-size:11px;font-weight:600;padding:2px 8px}
+.case.new{animation:drop .7s cubic-bezier(.2,1.4,.4,1)}
+.case.new::after{animation:shine 1.6s .4s ease-out}
+@keyframes shine{from{background-position:-200px 0}to{background-position:300px 0}}
+.cap{padding:20px 2px 26px;display:grid;gap:1px;min-height:62px}
+.cap b{font-size:13px;line-height:1.25;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.cap span{color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.collempty{padding:40px 10px;color:var(--muted);text-align:center}
+dialog.disc{border:1px solid var(--line2);background:var(--card);color:var(--ink);border-radius:18px;padding:0;max-width:640px;width:calc(100% - 32px)}
+dialog.disc::backdrop{background:rgba(0,0,0,.6)}
+dialog.disc .in{display:flex;gap:22px;padding:22px;flex-wrap:wrap}
+dialog.disc .facts{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:13px}
+dialog.disc .facts dt{color:var(--muted)}
+dialog.disc .facts dd{margin:0}
+.seasons{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.season{display:flex;gap:12px;align-items:center;background:var(--card2);border:1px solid var(--line);border-radius:14px;padding:10px 12px}
+.season .poster{width:46px;height:68px;border-radius:6px;font-size:8px;padding:4px}
+.season.done{border-color:var(--xp)}
+.season .bar{height:6px}
+/* ---- home extras ---- */
+.recap .num{font:700 26px/1.1 var(--head)}
+.recap .lab{color:var(--muted);font-size:12px}
+.recap .delta{font-size:12px;font-weight:600}
+.tidy summary{cursor:pointer;font-weight:600}
+.tidy .ti{display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-top:1px solid var(--line)}
+.tidy .ti:first-of-type{border-top:0}
+.stuck{margin-top:4px}
+@media (max-width:640px){.coll{grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:0 16px}.item{--h:160px}.item::after{left:-8px;right:-8px}}
 </style>
 </head>
 <body>
@@ -246,6 +306,20 @@ function poster(kind, id, season, title, cls = "", mbid = ""){
     : id ? `data-pk="${esc(kind)}" data-pid="${esc(id)}" data-ps="${esc(season ?? "")}"` : "";
   const k = kind === "music" ? mbid : `${kind}:${id}:${season ?? ""}`, url = SHOWN[k];
   return `<div class="poster ${cls} ${url ? "has" : ""}" ${data} role="img" aria-label="Box art: ${esc(title)}" style="background-color:${tint(title)}${url ? `;background-image:url('${esc(url)}')` : ""}"><span>${esc(title)}</span></div>`;
+}
+let SOUND = true, AC = null;
+function chime(kind){  // made on the spot with Web Audio: no sound files to ship
+  if (!SOUND) return;
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    const notes = {file:[659.25, 987.77], level:[523.25, 659.25, 783.99, 1046.5], badge:[1318.5, 1568, 2093]}[kind] || [880];
+    notes.forEach((f, i) => {
+      const o = AC.createOscillator(), g = AC.createGain(), t = AC.currentTime + i * 0.11;
+      o.type = "triangle"; o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.16, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+      o.connect(g).connect(AC.destination); o.start(t); o.stop(t + 0.55);
+    });
+  } catch(e){}
 }
 const SHOWN = {};  // box art already loaded: drawn straight away when the page redraws
 function hydrate(root){
@@ -308,6 +382,8 @@ async function loadProgress(announce){
   PROG = g;
   renderHud();
   if (!announce || !old || old.none || g.none) return;
+  if (g.level > old.level) chime("level");
+  else if (g.badges.some(b => b.earned && !old.badges.find(o => o.id === b.id && o.earned))) chime("badge");
   if (g.level > old.level) toast(`Level ${g.level}!`, g.rank !== old.rank ? `You're a ${g.rank} now.` : `${(g.next_xp - g.xp).toLocaleString()} XP to the next level.`);
   const had = new Set(old.badges.filter(b => b.earned).map(b => b.id));
   g.badges.filter(b => b.earned && !had.has(b.id)).forEach(b => toast(`Badge: ${b.name}`, b.how, "var(--ok)"));
@@ -695,7 +771,7 @@ function wire(p, i){
   if (el) hydrate(el);
   const nx = el && $("[data-next]", el);
   if (nx) nx.onclick = () => { const next = discs.find(d => !(d.job && d.job.state === "done")); if (next){ const c = $("#c" + discs.indexOf(next)); c && c.scrollIntoView({behavior:"smooth"}); } else showTab("drives"); };
-  if (p._justFiled){ p._justFiled = false; loadProgress(true); }
+  if (p._justFiled){ p._justFiled = false; chime("file"); loadProgress(true); }
   if (!msg) return; // filed
   const rerender = () => { const cur = $("#c"+i); if (cur){ cur.outerHTML = card(p, i); wire(p, i); } };
   const hold = () => { if (p.auto && !p.hold){ p.hold = true; p.auto.blocked = ["you chose to review it"]; api("/api/hold", {folder:p.folder}).catch(()=>{}); } };
@@ -887,11 +963,11 @@ function showTab(t){
   $("#list").classList.toggle("hide", t !== "review");
   $("#settingsTab").classList.toggle("hide", t !== "settings");
   $("#libraryTab").classList.toggle("hide", t !== "library");
-  if (t === "library"){ renderShelf(); loadReport(false); loadProgress(false).then(() => TAB === "library" && renderShelf()); }
+  if (t === "library"){ renderShelf(); loadReport(false); loadSeasons(); loadProgress(false).then(() => TAB === "library" && renderShelf()); }
   $("#scan").classList.toggle("hide", t !== "review");
   $("#sub").classList.toggle("hide", t !== "review");
   if (t === "settings") loadSettings();
-  if (t === "drives") pollDrives();
+  if (t === "drives") loadTidy(false).then(pollDrives);
 }
 const gb = b => (b/1e9).toFixed(1) + " GB";
 const eta = s => s == null ? "" : s >= 3600 ? `${Math.floor(s/3600)}h ${pad(Math.floor(s%3600/60))}m left` : `${Math.max(1, Math.round(s/60))} min left`;
@@ -931,9 +1007,81 @@ function homePanels(st){
         <div class="disk">${disk}${st.today ? `<span class="chip good">${st.today} filed today</span>` : ""}</div>
       </div>
     </div>
+    ${g && g.week ? recapPanel(g.week) : ""}
     ${goals ? `<div class="panel" style="flex:1 1 300px;display:grid;gap:14px;align-content:start">
       <div class="row" style="justify-content:space-between"><h2 style="margin:0;font-size:18px">Today's goals</h2><span style="color:var(--muted);font-size:12px">new ones at midnight</span></div>${goals}</div>` : ""}
   </section>`;
+}
+function recapPanel(w){
+  const a = w.this, b = w.last, sunday = new Date().getDay() === 0;
+  if (!a.discs && !b.discs) return "";
+  const delta = (x, y, unit) => { const d = Math.round((x - y) * 10) / 10; if (!y && !x) return ""; return d > 0 ? `<span class="delta" style="color:var(--ok)">▲ ${d.toLocaleString()}${unit} vs last week</span>` : d < 0 ? `<span class="delta" style="color:var(--muted)">▼ ${(-d).toLocaleString()}${unit} vs last week</span>` : `<span class="delta" style="color:var(--muted)">same as last week</span>`; };
+  const cell = (n, lab, d) => `<div style="display:grid;gap:2px"><span class="num">${n}</span><span class="lab">${lab}</span>${d}</div>`;
+  return `<div class="panel recap" style="flex:1 1 300px;display:grid;gap:14px;align-content:start">
+    <div class="row" style="justify-content:space-between"><h2 style="margin:0;font-size:18px">${sunday ? "Your week" : "This week"}</h2><span style="color:var(--muted);font-size:12px">${a.days} day${a.days === 1 ? "" : "s"} with a disc filed</span></div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+      ${cell(a.discs, `disc${a.discs === 1 ? "" : "s"}`, delta(a.discs, b.discs, ""))}${cell(a.hours, "hours", delta(a.hours, b.hours, "h"))}${cell(a.xp.toLocaleString(), "XP", delta(a.xp, b.xp, ""))}</div>
+    ${a.titles.length ? `<div class="row" style="gap:6px">${[...new Set(a.titles)].map(t => `<span class="chip">${esc(t)}</span>`).join("")}</div>` : `<span style="color:var(--muted)">Nothing filed yet this week. Last week: ${b.discs} disc${b.discs === 1 ? "" : "s"}.</span>`}
+  </div>`;
+}
+// ---- leftovers in the rip folder (tidy.py)
+let TIDY = null, TIDY_T = 0, TIDY_OFF = new Set(), TIDY_OPEN = false, TIDY_HIDE = false;
+async function loadTidy(force){
+  if (!force && Date.now() - TIDY_T < 5 * 60000) return;
+  TIDY_T = Date.now();
+  try { TIDY = await api("/api/tidy"); } catch(e){ TIDY = null; }
+}
+const gbz = b => b >= 1e9 ? `${(b / 1e9).toFixed(b >= 1e10 ? 0 : 1)} GB` : b >= 1e6 ? `${Math.round(b / 1e6)} MB` : "a few KB";
+function tidyBox(){
+  if (!TIDY || TIDY_HIDE || !TIDY.items.length) return "";
+  const kinds = {failed:"Didn't get going", duplicate:"Extra copy", clips:"Skipped clips", lock:"Old lock file"};
+  const sel = TIDY.items.filter(x => !TIDY_OFF.has(x.id)), bytes = sel.reduce((n, x) => n + x.bytes, 0);
+  return `<details class="panel tidy" style="margin-bottom:24px" ${TIDY_OPEN ? "open" : ""}>
+    <summary>${TIDY.bytes > 5e8 ? `Free up ${gbz(TIDY.bytes)} in your rip folder` : "Tidy up your rip folder"}: ${TIDY.items.length} leftover${TIDY.items.length === 1 ? "" : "s"} from earlier rips</summary>
+    ${TIDY.never_ripped.length ? `<div class="warn" style="margin:12px 0">Never ripped: <b>${TIDY.never_ripped.map(esc).join(", ")}</b>. Only a failed attempt is here, so put ${TIDY.never_ripped.length === 1 ? "it" : "them"} back in your pile.</div>` : ""}
+    <div style="margin:10px 0">${TIDY.items.map(x => `<label class="ti"><input type="checkbox" data-tidy="${esc(x.id)}" ${TIDY_OFF.has(x.id) ? "" : "checked"}>
+      <span style="flex:1;display:grid;gap:2px"><b style="word-break:break-all">${esc(x.id)}</b><span style="color:var(--muted)">${esc(kinds[x.kind] || x.kind)} · ${esc(x.why)}</span></span>
+      <span class="chip">${gbz(x.bytes)}</span></label>`).join("")}</div>
+    <div class="row"><button class="primary" id="tidygo" ${sel.length ? "" : "disabled"}>Clean up ${sel.length} (${gbz(bytes)})</button>
+      <button id="tidyno">Not now</button><span style="color:var(--muted);font-size:12px">Anything that's still ripping, or waiting for review, is never touched.</span></div>
+  </details>`;
+}
+function wireTidy(el){
+  const d = $("details.tidy", el);
+  if (!d) return;
+  d.ontoggle = () => { TIDY_OPEN = d.open; };
+  el.querySelectorAll("[data-tidy]").forEach(c => c.onchange = () => { c.checked ? TIDY_OFF.delete(c.dataset.tidy) : TIDY_OFF.add(c.dataset.tidy); pollDrives(); });
+  $("#tidyno", el).onclick = () => { TIDY_HIDE = true; pollDrives(); };
+  $("#tidygo", el).onclick = async () => {
+    const ids = TIDY.items.filter(x => !TIDY_OFF.has(x.id)).map(x => x.id);
+    if (!confirm(`Delete ${ids.length} leftover${ids.length === 1 ? "" : "s"} from the rip folder? This can't be undone.`)) return;
+    $("#tidygo", el).disabled = true;
+    const r = await api("/api/tidy", {ids});
+    toast("Rip folder tidied", `${gbz(r.freed)} freed${r.skipped.length ? `; ${r.skipped.length} left alone because they changed` : ""}.`, "var(--ok)");
+    chime("badge");
+    await loadTidy(true); pollDrives();
+  };
+}
+// A new version: the installed app updates itself in one click; other copies get a link.
+function showUpdate(v){
+  const a = $("#upd");
+  a.href = v.url; a.classList.remove("hide");
+  if (!(v.installer && v.can_install)){ a.textContent = `Shelfrip ${v.latest} is out: get it`; return; }
+  a.textContent = `Shelfrip ${v.latest} is out: update now`;
+  a.onclick = async e => {
+    e.preventDefault();
+    if (!confirm(`Update to Shelfrip ${v.latest}? Shelfrip closes, updates and opens again (about a minute).`)) return;
+    let r = await api("/api/update", {});
+    if (r.error){ alert(r.error); return; }
+    const tick = async () => {
+      try { r = await api("/api/version"); } catch(e){ a.textContent = "Installing the update… Shelfrip opens again by itself."; return; }
+      if (r.step === "error"){ a.textContent = r.error; return; }
+      a.textContent = r.step === "installing" ? "Installing the update… Shelfrip opens again by itself."
+        : `Downloading the update… ${r.size ? Math.round(100 * (r.got || 0) / r.size) + "%" : ""}`;
+      setTimeout(tick, 800);
+    };
+    tick();
+  };
 }
 function damagedBox(st){
   const dmg = (st && st.damaged || []).map(r => `<div class="row" style="gap:8px"><span class="err">⚠</span><span>${esc(r.label)}</span>
@@ -960,10 +1108,11 @@ function driveCard(d){
       </div>
     </div>
     ${live || d.progress ? `<div class="bar"><i style="width:${pctOf(d)}%"></i></div>` : ""}
+    ${d.stuck && d.ripping ? `<div class="warn stuck"><b>This disc seems stuck.</b> ${esc(d.stuck)} Stop the rip, clean the disc, then click Rip again.</div>` : ""}
     ${d.loaded ? `<div class="row">
       ${ready && m && m.folder ? `<button class="gold" data-review="${esc(m.folder)}">Review now</button>` : ""}
       ${m && !ready ? `<button data-notthis="1" title="The box art isn't what's in the drive? Fix it on the Review tab once it's ripped.">Not this one?</button>` : ""}
-      ${d.ripping ? `<button data-act="cancel" data-dev="${esc(d.device)}">Cancel rip</button>`
+      ${d.ripping ? `<button data-act="cancel" data-dev="${esc(d.device)}" ${d.stuck ? 'class="primary"' : ""}>${d.stuck ? "Stop this rip" : "Cancel rip"}</button>`
         : `${d.already ? `<button data-act="rip_again" data-dev="${esc(d.device)}">${d.state === "in_plex" && d.rip_label === d.label ? "Rip anyway" : "Rip again"}</button>` : ""}<button data-act="eject" data-dev="${esc(d.device)}">Eject</button>`}
     </div>` : ""}
   </article>`;
@@ -996,8 +1145,11 @@ function renderDrives(j){
   const logOpen = $("details.log", el) && $("details.log", el).open;
   el.innerHTML = `
     ${missing.length ? setupBox(missing, "Needs setting up:") : j.error ? `<div class="warn" style="margin-bottom:14px">${esc(j.error)}</div>` : ""}
+    ${j.leftover_makemkv ? `<div class="warn" style="margin-bottom:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span style="flex:1 1 360px"><b>MakeMKV is still running from before Shelfrip started</b> (${j.leftover_makemkv} cop${j.leftover_makemkv === 1 ? "y" : "ies"}).
+      It holds your drives, so new rips can get stuck on "scanning".</span><button data-act="stop_leftovers">Stop ${j.leftover_makemkv === 1 ? "it" : "them"}</button></div>` : ""}
     ${homePanels(j.stats)}
     ${damagedBox(j.stats)}
+    ${tidyBox()}
     <div class="toolbar">
       <h2>Drives</h2>
       <label class="switch"><input type="checkbox" id="auto" ${j.auto ? "checked" : ""}><span class="tog"></span> Auto-rip
@@ -1009,11 +1161,13 @@ function renderDrives(j){
     ${queueCards()}
     <details class="log" ${logOpen ? "open" : ""}><summary>Activity log</summary><pre class="log">${esc((j.log||[]).slice().reverse().join("\n")) || "Nothing yet."}</pre></details>`;
   hydrate(el);
+  wireTidy(el);
   if (open && $("#" + open, el)) $("#" + open, el).focus();
   $("#auto", el).onchange = e => ripAct(e.target.checked ? "auto_on" : "auto_off");
   $("#ripnow", el).onclick = () => ripAct("rip_now");
   el.querySelectorAll("[data-dmg]").forEach(b => b.onclick = () => api("/api/rip", {action:"dismiss_damaged", label:b.dataset.dmg}).then(pollDrives));
   el.querySelectorAll("[data-act]").forEach(b => b.onclick = () => {
+    if (b.dataset.act === "stop_leftovers" && !confirm("Stop the MakeMKV processes left over from before? Any rip they were doing is cut off (Shelfrip rips that disc again).")) return;
     if (b.dataset.act === "cancel" && !confirm(`Cancel the rip in ${b.dataset.dev}? The part already ripped is left in the Ripped folder for you to delete.`)) return;
     ripAct(b.dataset.act, b.dataset.dev);
   });
@@ -1068,14 +1222,107 @@ async function addNewDiscs(){
 }
 let reportTimer = null;
 const BADGE_COLORS = ["#F2B33D","#6C9BFF","#4CC38A","#B48CFF","#FF8A4C","#5FD3E0"];
+let SHELF = {filter:"all", sort:"new", q:""}, SEASONS = null;
+const fmtOf = sp => sp.kind === "music" ? "cd" : /4k|uhd/i.test(sp.format) ? "uhd" : /blu/i.test(sp.format) ? "bd" : /dvd/i.test(sp.format) ? "dvd" : "bd";
+const BAND = {uhd:"4K ULTRA HD", bd:"BLU-RAY", dvd:"DVD", cd:""};
+// Discs of the same show and season sit together as one box set.
+function collection(g){
+  const out = [], sets = {};
+  g.spines.forEach((sp, k) => {
+    const key = sp.kind === "tv" && sp.tmdb_id && sp.season != null ? `${sp.tmdb_id}:${sp.season}` : null;
+    let it = key && sets[key];
+    if (!it){ it = {...sp, discs:[], eps:[], extras:0, minutes:0, xp:0, k}; out.push(it); if (key) sets[key] = it; }
+    it.discs.push(sp); it.eps.push(...(sp.episodes || [])); it.extras += sp.extras || 0; it.minutes += sp.minutes || 0; it.xp += sp.xp || 0;
+    it.k = k; it.filed_at = sp.filed_at;
+    if (fmtOf(sp) === "uhd" || (fmtOf(sp) === "bd" && fmtOf(it) === "dvd")) it.format = sp.format;  // the best format in the set
+  });
+  out.forEach(it => { it.fmt = fmtOf(it); });
+  return out;
+}
+function caseHtml(it, i, seen){
+  const set = it.discs.length > 1, eps = it.eps.length ? `e${Math.min(...it.eps)}–${Math.max(...it.eps)}` : "";
+  const sub = it.kind === "tv" ? [it.season ? `Season ${it.season}` : "", eps].filter(Boolean).join(" · ") : it.sub;
+  const art = it.kind === "music" ? poster("music", "", null, it.title, "", it.mbid) : poster(it.kind, it.tmdb_id, it.kind === "tv" ? it.season : null, it.title);
+  return `<div class="item ${it.fmt === "cd" ? "cdi" : ""}">
+    <button class="case ${it.fmt} ${set ? "set" : ""} ${it.k >= seen ? "new" : ""}" data-case="${i}" aria-label="${esc(it.title)}${sub ? ", " + esc(sub) : ""}">
+      ${BAND[it.fmt] ? `<span class="band">${BAND[it.fmt]}</span>` : ""}${art}${set ? `<span class="stack">${it.discs.length} discs</span>` : ""}</button>
+    <div class="cap"><b>${esc(it.title)}</b><span>${esc(sub || "")}</span></div></div>`;
+}
+function renderColl(el, g, seen){
+  const items = collection(g);
+  const n = f => items.filter(f).length;
+  const F = {all:() => true, movie:x => x.kind === "movie", tv:x => x.kind === "tv", music:x => x.kind === "music",
+             uhd:x => x.fmt === "uhd", bd:x => x.fmt === "bd", dvd:x => x.fmt === "dvd"};
+  const labels = [["all","All"],["movie","Movies"],["tv","TV"],["music","Music"],["uhd","4K"],["bd","Blu-ray"],["dvd","DVD"]].filter(([k]) => k === "all" || n(F[k]));
+  const q = SHELF.q.trim().toLowerCase();
+  let list = items.map((it, i) => [it, i]).filter(([it]) => (F[SHELF.filter] || F.all)(it) && (!q || it.title.toLowerCase().includes(q)));
+  const order = {uhd:0, bd:1, dvd:2, cd:3};
+  if (SHELF.sort === "new") list.reverse();
+  if (SHELF.sort === "az") list.sort((a, b) => a[0].title.localeCompare(b[0].title));
+  if (SHELF.sort === "fmt") list.sort((a, b) => order[a[0].fmt] - order[b[0].fmt] || a[0].title.localeCompare(b[0].title));
+  el.innerHTML = `
+    <div class="collbar" style="margin-bottom:8px">
+      <div class="seg" role="group" aria-label="Show">${labels.map(([k, l]) => `<button data-f="${k}" class="${SHELF.filter === k ? "on" : ""}" aria-pressed="${SHELF.filter === k}">${l}<span class="n">${n(F[k])}</span></button>`).join("")}</div>
+      <span style="flex:1"></span>
+      <input type="search" id="collq" placeholder="Find a title" value="${esc(SHELF.q)}" style="width:180px" aria-label="Find a title">
+      <select id="colls" aria-label="Sort">${[["new","Newest first"],["az","A to Z"],["fmt","By format"]].map(([k, l]) => `<option value="${k}" ${SHELF.sort === k ? "selected" : ""}>${l}</option>`).join("")}</select>
+    </div>
+    ${list.length ? `<div class="coll">${list.map(([it, i]) => caseHtml(it, i, seen)).join("")}</div>` : `<p class="collempty">${q ? "Nothing on the shelf matches that." : "Nothing here yet."}</p>`}`;
+  hydrate(el);
+  el.querySelectorAll("[data-f]").forEach(b => b.onclick = () => { SHELF.filter = b.dataset.f; renderColl(el, g, Infinity); });
+  $("#colls", el).onchange = e => { SHELF.sort = e.target.value; renderColl(el, g, Infinity); };
+  $("#collq", el).oninput = e => { SHELF.q = e.target.value; const pos = e.target.selectionStart; renderColl(el, g, Infinity); const i = $("#collq", el); i.focus(); i.setSelectionRange(pos, pos); };
+  el.querySelectorAll("[data-case]").forEach(b => b.onclick = () => discDialog(items[+b.dataset.case]));
+}
+async function discDialog(it){
+  let d = $("#discdlg");
+  if (!d){ d = document.createElement("dialog"); d.id = "discdlg"; d.className = "disc"; document.body.appendChild(d);
+    d.addEventListener("click", e => { if (e.target === d) d.close(); }); }
+  const eps = it.eps.length ? `${Math.min(...it.eps)} to ${Math.max(...it.eps)}` : "";
+  const when = new Date(it.filed_at).toLocaleDateString([], {year:"numeric", month:"long", day:"numeric"});
+  const facts = [["Format", (it.format || (it.kind === "music" ? "CD" : "")) + (it.discs.length > 1 ? ` · ${it.discs.length} discs` : "")],
+    it.kind === "tv" && it.season ? ["Season", it.season] : null, eps ? ["Episodes", eps] : null,
+    it.extras ? ["Extras kept", it.extras] : null, it.minutes ? ["On your shelf", it.minutes >= 90 ? `${Math.round(it.minutes / 6) / 10} hours` : `${it.minutes} min`] : null,
+    [it.discs.length > 1 ? "Last filed" : "Filed", when], ["XP earned", `+${it.xp.toLocaleString()}`],
+    ["Disc", it.discs.map(x => x.label).filter(Boolean).join(", ")]].filter(Boolean);
+  const art = it.kind === "music" ? poster("music", "", null, it.title, "big", it.mbid) : poster(it.kind, it.tmdb_id, it.kind === "tv" ? it.season : null, it.title, "big");
+  d.innerHTML = `<div class="in">${art}
+    <div style="flex:1 1 260px;display:grid;gap:10px;align-content:start">
+      <div><h2 style="margin:0;font-size:22px">${esc(it.title)}</h2><span style="color:var(--muted)">${esc(it.kind === "tv" ? (it.season ? `Season ${it.season}` : "TV") : it.sub || "")}</span></div>
+      <p class="blurb" style="margin:0;color:var(--muted);font-size:13px"></p>
+      <dl class="facts">${facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(String(v))}</dd>`).join("")}</dl>
+      <div class="row"><button id="dlgclose" class="primary">Close</button></div></div></div>`;
+  $("#dlgclose", d).onclick = () => d.close();
+  d.showModal();
+  hydrate(d);
+  if (it.tmdb_id && it.kind !== "music"){
+    try { const r = await api(`/api/poster?kind=${it.kind}&id=${it.tmdb_id}&season=${it.kind === "tv" ? it.season ?? "" : ""}`); $(".blurb", d).textContent = r.overview || ""; } catch(e){}
+  }
+}
+async function loadSeasons(){
+  try { SEASONS = await api("/api/seasons"); } catch(e){ SEASONS = {seasons:[]}; }
+  if (TAB === "library" && $("#seasonBox")) renderSeasons($("#seasonBox"));
+}
+function renderSeasons(el){
+  const list = (SEASONS && SEASONS.seasons) || [];
+  if (!list.length){ el.innerHTML = ""; return; }
+  const done = list.filter(x => x.done).length;
+  el.innerHTML = `<section class="panel" style="margin-bottom:20px;display:grid;gap:14px">
+    <div class="row" style="align-items:baseline;gap:12px"><h2 style="margin:0;font-size:18px">Seasons</h2>
+      <span style="color:var(--muted)">${done ? `${done} complete · ` : ""}episodes you have, out of what's aired</span></div>
+    <div class="seasons">${list.map(x => `<div class="season ${x.done ? "done" : ""}">${poster("tv", x.tmdb_id, x.season, x.show)}
+      <div style="flex:1;display:grid;gap:5px;min-width:0"><b style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(x.show)}</b>
+        <span style="color:var(--muted);font-size:12px">${x.season === 0 ? "Specials" : `Season ${x.season}`} · ${x.total ? `${x.have} of ${x.total} episodes` : `${x.have} episodes`}</span>
+        ${x.total ? `<div class="bar ${x.done ? "xp" : "ok"}"><i style="width:${Math.min(100, Math.round(100 * x.have / x.total))}%"></i></div>` : ""}</div>
+      ${x.done ? `<span class="chip xp" title="Every episode">✓ Complete</span>` : ""}</div>`).join("")}</div></section>`;
+  hydrate(el);
+}
 function renderShelf(){
   const tab = $("#libraryTab");
   if (!$("#shelfBox", tab)) tab.innerHTML = `<div id="shelfBox"></div><div id="reportBox" style="margin-top:28px"></div>`;
   const el = $("#shelfBox", tab), g = PROG;
   if (!g || g.none){ el.innerHTML = `<p class="empty">Your shelf fills up as you file discs.</p>`; return; }
   const c = g.counts, seen = el.dataset.n ? +el.dataset.n : c.discs;
-  const spines = g.spines.map((sp, k) => { const h = [150, 168, 136, 184][hueOf(sp.title) % 4];
-    return `<div class="spine ${k >= seen ? "new" : ""}" title="${esc(sp.title)}${sp.sub ? " · " + esc(sp.sub) : ""} · ${esc(sp.format)} · +${sp.xp} XP" style="height:${h}px;background:${tint(sp.title)};width:${sp.kind === "tv" ? 26 : 32}px"><span>${esc(sp.title)}${sp.kind === "tv" && sp.season ? " S" + sp.season : ""}</span></div>`; }).join("");
   const ranks = g.ranks.map(r => `<div class="rank ${g.level >= r.level ? (g.rank === r.name ? "cur" : "got") : ""}"><span class="n">${r.level}</span>
       <div style="display:grid"><b style="${g.level >= r.level ? "" : "color:var(--muted)"}">${esc(r.name)}</b>
       <span style="color:var(--muted);font-size:12px">${g.rank === r.name ? `you're here · ${g.xp.toLocaleString()} XP` : g.level >= r.level ? "reached" : `at ${r.xp.toLocaleString()} XP`}</span></div></div>`).join("");
@@ -1086,11 +1333,12 @@ function renderShelf(){
       ${b.earned ? "" : `<div class="bar"><i style="width:${Math.round(100 * b.have / b.need)}%"></i></div><span style="color:var(--muted);font-size:11px">${b.have} / ${b.need}</span>`}</div>`).join("");
   el.innerHTML = `
     <section class="panel" style="margin-bottom:20px;display:grid;gap:14px">
-      <div class="row" style="align-items:baseline;gap:12px"><h1 style="margin:0;font-size:26px">${c.discs} disc${c.discs === 1 ? "" : "s"} on the shelf</h1>
-        <span style="color:var(--muted)">${g.total ? `${g.total - c.discs} to go to your goal of ${g.total} · ` : ""}newest on the right</span></div>
-      <div class="shelf">${spines}<div class="spine" style="height:150px;width:34px;background:transparent;border:2px dashed var(--line2);color:var(--muted)" title="Your next disc"><span>+</span></div></div>
+      <div class="row" style="align-items:baseline;gap:12px"><h1 style="margin:0;font-size:26px">Your collection</h1>
+        <span style="color:var(--muted)">${c.discs} disc${c.discs === 1 ? "" : "s"}${g.total ? ` · ${Math.max(0, g.total - c.discs)} to go to your goal of ${g.total}` : ""}</span></div>
       <div class="row">${[`${c.movies} movies`, `${c.tv} TV discs`, c.music ? `${c.music} CDs` : "", `${c.episodes} episodes`, `${c.extras} extras`, `${c.hours} hours`, `best streak ${g.best_streak} day${g.best_streak === 1 ? "" : "s"}`].filter(Boolean).map(x => `<span class="chip">${x}</span>`).join("")}</div>
+      <div id="collBox"></div>
     </section>
+    <div id="seasonBox"></div>
     <section class="panels">
       <div class="panel" style="flex:1 1 300px;display:grid;gap:12px;align-content:start"><h2 style="margin:0;font-size:18px">Collector rank</h2><div class="ranks">${ranks}</div></div>
       <div class="panel" style="flex:2 1 520px;display:grid;gap:14px;align-content:start">
@@ -1102,6 +1350,8 @@ function renderShelf(){
       <div style="flex:1 1 360px;display:grid;gap:4px"><h2 style="margin:0;font-size:18px">${c.shared ? `You've shared ${c.shared} disc${c.shared === 1 ? "" : "s"} with other collectors` : "Help other collectors"}</h2>
         <span style="color:var(--muted)">${c.shared ? `Anyone who rips the same disc now gets it named for them.${c.pioneer ? ` ${c.pioneer} of yours were the first ever added.` : ""}` : "Turn on sharing in Settings, and every disc you file makes the next person's rip of it more reliable."}</span></div>
     </section>`;
+  renderColl($("#collBox", el), g, seen);
+  renderSeasons($("#seasonBox", el));
   el.dataset.n = c.discs;
 }
 async function loadReport(start){
@@ -1243,6 +1493,7 @@ const SET_GROUPS = [
     ["app_window", "Open in its own window", "Instead of a browser tab."],
     ["tray_icon", "Keep running by the clock when the window is closed", "Quit from the icon's menu."],
     ["check_updates", "Tell me when a new version is out", ""],
+    ["sounds", "Play sounds", "A chime when a disc is filed, and a fanfare when you level up."],
   ]},
 ];
 let SETS = null, SETGROUP = "library", SHOWADV = false;
@@ -1290,6 +1541,8 @@ function renderSettings(){
         <div class="sgroup">${basic.map(m => setField(rows[m[0]], m)).join("")}</div>
         ${adv.length ? `<button class="advtoggle" id="advt" aria-expanded="${SHOWADV}">${SHOWADV ? "Hide" : "Show"} more options (${adv.length})</button>
           <div class="sgroup ${SHOWADV ? "" : "hide"}">${adv.map(m => setField(rows[m[0]], m)).join("")}</div>` : ""}
+        ${g.id === "app" ? `<div class="srow"><div class="lbl"><label>Something not working?</label><div class="help">Makes a zip of Shelfrip's logs and settings, with your keys removed, to attach to a bug report.</div></div>
+          <div class="ctl" id="probctl"><button id="probbtn">Make a problem report</button></div></div>` : ""}
         <p class="foot2">Saved as you go, in ${esc(j.path)}. Keys are never shown again once saved.<br>
           Shelfrip ${esc((j.version||{}).current || "")}. This product uses the TMDB API but is not endorsed or certified by <a href="https://www.themoviedb.org/" target="_blank" rel="noopener">TMDB</a>.
           Ripping is done by MakeMKV, which you install and license yourself.</p>
@@ -1299,6 +1552,13 @@ function renderSettings(){
   if ($("#advt", el)) $("#advt", el).onclick = () => { SHOWADV = !SHOWADV; renderSettings(); };
   el.querySelectorAll("[data-change]").forEach(b => b.onclick = () => { const i = $("#s_" + b.dataset.change, el); i.classList.remove("hide"); i.focus(); b.remove(); });
   el.querySelectorAll("[data-k]").forEach(i => i.onchange = () => saveOne(i));
+  if ($("#probbtn", el)) $("#probbtn", el).onclick = async () => {
+    $("#probbtn", el).disabled = true;
+    const r = await api("/api/problem", {});
+    $("#probctl", el).innerHTML = r.error ? `<span class="err">${esc(r.error)}</span>`
+      : `<span style="display:grid;gap:4px"><span>Saved: <b style="word-break:break-all">${esc(r.path)}</b></span>
+         <a href="${esc(r.issues)}" target="_blank" rel="noopener">Open a bug report on GitHub and attach it</a></span>`;
+  };
   el.querySelectorAll("[data-pick]").forEach(b => b.onclick = async () => {
     const i = $("#s_" + b.dataset.pick, el);
     b.disabled = true;
@@ -1324,6 +1584,7 @@ async function saveOne(i){
     if (m2){ m2.textContent = "✓ Saved"; m2.className = "saved on"; setTimeout(() => m2 && (m2.className = "saved"), 1800); }
     if (["output_root","plex_library_root","media_server","format_folders"].includes(k)) load(false);
     if (k === "job_total_discs") loadProgress(false);
+    if (k === "sounds"){ SOUND = v; if (v) chime("file"); }
   } catch(e){ if (mark){ mark.textContent = e.message; mark.className = "saved on err"; } }
 }
 async function loadSettings(){
@@ -1344,8 +1605,8 @@ async function loadSettings(){
   document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
   let t = "drives"; try { t = localStorage.getItem("tab") || "drives"; } catch(e){}
   if (["drives","review","library","settings"].includes(location.hash.slice(1))) t = location.hash.slice(1);  // e.g. the tray's "Review" item
-  try { const v = await api("/api/version"); if (v.latest){ const a = $("#upd"); a.href = v.url; a.textContent = `Shelfrip ${v.latest} is out: get it`; a.classList.remove("hide"); } } catch(e){}
-  try { const s = await api("/api/settings"); if (s.first_run || (s.setup||[]).some(x => !x.ok && x.required)) t = "settings"; } catch(e){}
+  try { const v = await api("/api/version"); if (v.latest) showUpdate(v); } catch(e){}
+  try { const s = await api("/api/settings"); SOUND = ((s.settings||[]).find(x => x.key === "sounds") || {value:true}).value !== false; if (s.first_run || (s.setup||[]).some(x => !x.ok && x.required)) t = "settings"; } catch(e){}
   await loadProgress(false);
   showTab(t);
   pollDrives();

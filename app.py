@@ -32,6 +32,8 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 
 import desktop
+import health
+import tidy
 import progress  # noqa: F401  (bundled into the exe)
 import identify
 import naming
@@ -41,7 +43,7 @@ import rip_all
 
 JOB_DEFAULTS = {"auto_file": True, "auto_file_minutes": 15, "audio_language": "eng", "subtitle_language": "",
                 "forced_subtitles": True, "retry_failed_titles": True, "job_total_discs": 0,
-                "min_free_gb_rips": 60, "app_window": True, "tray_icon": True}
+                "min_free_gb_rips": 60, "app_window": True, "tray_icon": True, "sounds": True}
 SECRETS = ("tmdb_api_key", "omdb_api_key", "plex_token")
 SETTINGS = [  # (key, label, kind)
     ("output_root", "Rip folder (where discs are ripped to before review)", "text"),
@@ -79,6 +81,7 @@ SETTINGS = [  # (key, label, kind)
     ("omdb_api_key", "OMDb key", "secret"),
     ("plex_token", "Plex token (Plex only, optional)", "secret"),
     ("check_updates", "Tell me when a new version of Shelfrip is out", "bool"),
+    ("sounds", "Play sounds (a chime when a disc is filed, a fanfare when you level up)", "bool"),
     ("app_window", "Open Shelfrip in its own window (not a browser tab)", "bool"),
     ("tray_icon", "Keep Shelfrip running by the clock when its window is closed (Quit from the icon's menu)", "bool"),
 ]
@@ -231,6 +234,8 @@ class Ripper:
         self.match: dict[str, dict] = {}  # device -> what its disc was recognised as before ripping
         raw = _read_config()
         self.auto = bool(raw.get("auto_rip", False))
+        self.watch = health.Watchdog(notify=notify)
+        self._watched = 0.0
         rip_all.ON_DONE.append(self.after_rip)
         rip_all.ON_LOW_SPACE.append(lambda why: notify("Rip folder is full", why))
         threading.Thread(target=self.loop, daemon=True).start()
@@ -262,6 +267,17 @@ class Ripper:
                             notify("Filed automatically", f"{t} matched with confidence and is being filed into your library.")
                     except Exception as exc:
                         rip_all.log(f"auto-file check failed: {exc}")
+                    if time.time() - self._watched > 60:  # stuck rips
+                        self._watched = time.time()
+                        try:
+                            from pathlib import Path as _P
+                            self.watch.check(self.busy, rip_all.STATUS, _P(self.cfg["output_root"]))
+                        except Exception as exc:
+                            rip_all.log(f"stuck-rip check failed: {exc}")
+                    try:
+                        weekly_recap()
+                    except Exception as exc:
+                        rip_all.log(f"weekly recap failed: {exc}")
                     if self.auto or self.rip_once:
                         self.rip_once = False
                         force, self.force = self.force, set()
@@ -377,11 +393,45 @@ class Ripper:
         except Exception as exc:
             stats = {"error": str(exc)}
         filing = sum(1 for jb in review.JOBS.values() if jb.get("state") == "running")
-        return {"auto": self.auto, "error": self.error, "drives": drives, "stats": stats, "filing": filing, "waiting": waiting, "setup": setup, "active": active,
+        if time.time() - _LEFT["t"] > 20:
+            _LEFT.update(t=time.time(), n=len(health.leftovers()))
+        return {"leftover_makemkv": _LEFT["n"], "auto": self.auto, "error": self.error, "drives": drives, "stats": stats, "filing": filing, "waiting": waiting, "setup": setup, "active": active,
                 "log": list(rip_all.LOG_LINES)[-40:]}
 
 
 RIPPER: Ripper | None = None
+_LEFT = {"t": 0.0, "n": 0}
+
+
+def weekly_recap() -> None:
+    """Sunday evening: a notification with your week (once a week, only if you filed something)."""
+    import datetime as _dt
+    now = _dt.datetime.now()
+    if now.weekday() != 6 or now.hour < 18:
+        return
+    state_path = paths.DATA_DIR / "recap.json"
+    try:
+        sent = json.loads(state_path.read_text(encoding="utf-8")).get("sent")
+    except Exception:
+        sent = None
+    week = (now.date() - _dt.timedelta(days=6)).isoformat()
+    if sent == week:
+        return
+    cfg = {**rip_all.DEFAULT_CONFIG, **JOB_DEFAULTS, **_read_config()}
+    if not cfg.get("output_root"):
+        return
+    w = progress.compute(Path(cfg["output_root"]), int(cfg.get("job_total_discs") or 0))["week"]["this"]
+    state_path.write_text(json.dumps({"sent": week}), encoding="utf-8")
+    if w["discs"]:
+        last = progress.compute(Path(cfg["output_root"]), int(cfg.get("job_total_discs") or 0))["week"]["last"]
+        more = f" That's {w['discs'] - last['discs']} more than last week." if w["discs"] > last["discs"] else ""
+        notify("Your week on the shelf", f"You filed {w['discs']} disc{'s' if w['discs'] != 1 else ''}: "
+               f"{w['hours']:g} hours and {w['extras']} extras, for {w['xp']:,} XP.{more}")
+
+
+def busy_labels() -> set[str]:
+    """Discs in a drive right now: their folders are never tidied away."""
+    return {d["disc_label"] for d in (RIPPER.drives if RIPPER else []) if d.get("loaded") and d.get("disc_label")}
 TRAY: "desktop.Tray | None" = None
 
 
@@ -571,8 +621,13 @@ def setup_check() -> list[dict]:
         out.append({"name": name, "ok": ok, "required": True, "link": "",
                     "detail": p if ok else (f"{p} doesn't exist (or isn't connected)" if p else f"not chosen yet: {what}")})
     mk = rip_all.find_makemkv(cfg)
-    out.append({"name": "MakeMKV", "ok": bool(mk), "detail": mk or "not installed: needed to rip discs",
-                "link": "" if mk else rip_all.MAKEMKV_URL, "required": True})
+    row = {"name": "MakeMKV", "ok": bool(mk), "detail": mk or "not installed: needed to rip discs",
+           "link": "" if mk else rip_all.MAKEMKV_URL, "required": True}
+    if mk and os.name == "nt":
+        chk = health.makemkv_check(mk)  # is its key still good?
+        if chk and chk.get("ok") is False:
+            row.update(ok=False, detail=chk["detail"], link=chk.get("link", ""))
+    out.append(row)
     mm = split.tool(cfg, "mkvmerge")
     bundled = bool(mm) and str(split.BUNDLED).lower() in mm.lower()
     out.append({"name": "MKVToolNix", "ok": bool(mm),
@@ -580,9 +635,16 @@ def setup_check() -> list[dict]:
                           f"not found: needed to split episodes. Install it, or put the portable version in {split.BUNDLED}",
                 "link": "" if mm else split.MKVTOOLNIX_URL, "required": False})
     key = str(cfg.get("tmdb_api_key") or "")
-    out.append({"name": "TMDB key", "ok": bool(key) and "paste" not in key,
-                "detail": "set" if key and "paste" not in key else "not set: needed to name movies and episodes (add it in Settings)",
-                "link": "" if key and "paste" not in key else "https://www.themoviedb.org/settings/api", "required": True})
+    row = {"name": "TMDB key", "ok": bool(key) and "paste" not in key,
+           "detail": "set" if key and "paste" not in key else "not set: needed to name movies and episodes (add it in Settings)",
+           "link": "" if key and "paste" not in key else "https://www.themoviedb.org/settings/api", "required": True}
+    if row["ok"]:
+        chk = health.tmdb_check(key, wait=8)  # does it actually work?
+        if chk and chk.get("ok") is False:
+            row.update(ok=False, detail=chk["detail"], link="https://www.themoviedb.org/settings/api")
+        elif chk:
+            row["detail"] = chk["detail"]
+    out.append(row)
     import music
     cy = music.find_cyanrip(cfg)
     out.append({"name": "cyanrip (music CDs)", "ok": bool(cy),
@@ -692,6 +754,79 @@ def _ver(v: str) -> tuple:
     return tuple(int(x) for x in __import__("re").findall(r"\d+", v)[:3])
 
 
+def installed_copy() -> bool:
+    """Is this the installed Shelfrip (not the portable zip or the scripts)? Only then can it update itself."""
+    return bool(getattr(sys, "frozen", False)) and (Path(sys.executable).parent / "unins000.exe").exists()
+
+
+def install_update() -> None:
+    """Download the new installer and run it. It closes Shelfrip, updates it and starts it again."""
+    import tempfile
+    url, size = UPDATE.get("installer"), UPDATE.get("size") or 0
+    UPDATE.update(step="downloading", got=0)
+    try:
+        dst = Path(tempfile.gettempdir()) / f"Shelfrip Setup {UPDATE.get('latest')}.exe"
+        req = urllib.request.Request(url, headers={"User-Agent": paths.USER_AGENT})
+        with urllib.request.urlopen(req, timeout=60) as r, open(dst, "wb") as f:
+            while True:
+                buf = r.read(1 << 20)
+                if not buf:
+                    break
+                f.write(buf)
+                UPDATE["got"] = UPDATE.get("got", 0) + len(buf)
+        if size and dst.stat().st_size != size:
+            raise OSError("the download was incomplete")
+        UPDATE["step"] = "installing"
+        import subprocess
+        subprocess.Popen([str(dst), "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS"],
+                         close_fds=True, creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+        threading.Timer(2.0, lambda: quit_app(ask=False)).start()
+    except Exception as exc:
+        UPDATE.update(step="error", error=f"Couldn't update: {exc}. Download it from the link instead.")
+
+
+def make_problem_report() -> Path:
+    """A zip of the logs and settings (keys removed) to send when asking for help."""
+    import platform
+    import zipfile
+    cfg = _read_config()
+    secret = ("key", "token", "secret", "password", "notify_url", "install_id")
+    safe_cfg = {k: ("(removed)" if any(s in k.lower() for s in secret) and v else v) for k, v in cfg.items()}
+    out_dir = paths.DATA_DIR / "reports"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dst = out_dir / f"Shelfrip report {time.strftime('%Y-%m-%d %H%M')}.zip"
+    rip_root = review.RIP_ROOT
+    info = [f"Shelfrip {paths.APP_VERSION}", f"Python {platform.python_version()} on {platform.platform()}",
+            f"Frozen: {bool(getattr(sys, 'frozen', False))}, installed: {installed_copy()}", "", "Setup:"]
+    try:
+        info += [f"  {x['name']}: {'ok' if x['ok'] else 'NOT OK'} ({x['detail']})" for x in setup_check()]
+    except Exception as exc:
+        info.append(f"  couldn't check: {exc}")
+    try:
+        info += ["", "Drives:"] + [f"  {d['device']} {d.get('label') or '(empty)'}: {d.get('state') or ''} "
+                                   f"{d.get('message') or ''} {d.get('stuck') or ''}" for d in RIPPER.state()["drives"]]
+    except Exception:
+        pass
+    try:
+        info += ["", "Rip folder:"] + [f"  {d.name}  {sum(f.stat().st_size for f in d.rglob('*') if f.is_file()) / 1e9:.1f} GB"
+                                       for d in sorted(rip_root.iterdir()) if d.is_dir() and not d.name.startswith("_")]
+    except Exception:
+        pass
+    with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("about.txt", "\n".join(info))
+        z.writestr("config (keys removed).json", json.dumps(safe_cfg, indent=2))
+        for f, name in ((desktop.LOG_PATH, "shelfrip.log"), (desktop.LOG_PATH.with_suffix(".old.log"), "shelfrip.old.log"),
+                        (rip_root / "disc_ripper.log", "disc_ripper.log"), (rip_root / "rip_history.csv", "rip_history.csv"),
+                        (rip_root / "damaged_discs.json", "damaged_discs.json")):
+            try:
+                if f.exists():
+                    data = f.read_bytes()
+                    z.writestr(name, data[-3_000_000:])
+            except OSError:
+                pass
+    return dst
+
+
 def check_update() -> None:
     """Ask GitHub once, at start, whether there's a newer release. Never blocks or fails loudly."""
     if not paths.UPDATE_REPO or not _read_config().get("check_updates", True):
@@ -704,6 +839,12 @@ def check_update() -> None:
         tag = str(rel.get("tag_name") or "")
         if tag and _ver(tag) > _ver(paths.APP_VERSION):
             UPDATE.update(latest=tag.lstrip("v"), url=rel.get("html_url") or "")
+            import re as _re
+            for a in rel.get("assets") or []:
+                url = str(a.get("browser_download_url") or "")
+                if _re.search(r"setup.*\.exe$", str(a.get("name") or ""), _re.I) and \
+                        url.startswith(f"https://github.com/{paths.UPDATE_REPO}/releases/download/"):
+                    UPDATE.update(installer=url, size=int(a.get("size") or 0), can_install=installed_copy())
     except Exception:
         pass
 
@@ -788,8 +929,11 @@ class Handler(review.Handler):
                 return self.send(200, REPORT)
             if u.path == "/api/version":
                 return self.send(200, UPDATE)
+            if u.path == "/api/tidy":
+                return self.send(200, tidy.scan(review.RIP_ROOT, busy_labels()))
+            if u.path == "/api/seasons":
+                return self.send(200, progress.seasons(review.TMDB, review.RIP_ROOT, review.LIB_ROOT))
             if u.path == "/api/progress":
-                import progress
                 cfg = {**rip_all.DEFAULT_CONFIG, **JOB_DEFAULTS, **_read_config()}
                 if not cfg.get("output_root"):
                     return self.send(200, {"none": True})
@@ -812,6 +956,30 @@ class Handler(review.Handler):
             b = self.body()
             got = desktop.pick("file" if b.get("kind") == "file" else "folder", str(b.get("start") or ""), str(b.get("title") or ""))
             return self.send(200, {"path": got, "available": got is not None})
+        if u.path == "/api/tidy":
+            res = tidy.clean(review.RIP_ROOT, [str(x) for x in (self.body().get("ids") or [])], busy_labels())
+            if res["done"]:
+                rip_all.log(f"Tidied the rip folder: {len(res['done'])} item(s), {res['freed'] / 1e9:.1f} GB freed")
+            return self.send(200, res)
+        if u.path == "/api/problem":
+            try:
+                dst = make_problem_report()
+            except Exception as exc:
+                return self.send(200, {"error": f"Couldn't make the report: {exc}"})
+            if os.name == "nt":
+                import subprocess
+                subprocess.Popen(["explorer", "/select,", str(dst)])
+            return self.send(200, {"path": str(dst), "issues": paths.APP_URL + "/issues/new"})
+        if u.path == "/api/update":
+            if not (UPDATE.get("installer") and UPDATE.get("can_install")):
+                return self.send(200, {"error": "There's no update to install."})
+            running = sorted(RIPPER.busy) + [k for k, j in review.JOBS.items() if j.get("state") == "running"]
+            if running:
+                return self.send(200, {"error": f"Still working on {', '.join(running)}. Update once that's done."})
+            if UPDATE.get("step") not in ("downloading", "installing"):
+                threading.Thread(target=install_update, daemon=True).start()
+                UPDATE["step"] = "downloading"
+            return self.send(200, UPDATE)
         if u.path not in ("/api/rip", "/api/settings", "/api/quit"):
             return super().do_POST()
         try:
@@ -821,7 +989,11 @@ class Handler(review.Handler):
                 return self.send(200, {"ok": True})
             if u.path == "/api/rip":
                 act = b.get("action")
-                if act in ("auto_on", "auto_off"):
+                if act == "stop_leftovers":
+                    n = health.stop_leftovers()
+                    _LEFT.update(t=0.0)
+                    rip_all.log(f"Stopped {n} MakeMKV process(es) left over from before")
+                elif act in ("auto_on", "auto_off"):
                     RIPPER.auto = act == "auto_on"
                     rip_all.log("Auto-rip on: insert discs any time" if RIPPER.auto else "Auto-rip off")
                 elif act == "rip_now":
@@ -924,6 +1096,11 @@ def main() -> None:
         return
     if paths.MIGRATION_NOTE:
         print(paths.MIGRATION_NOTE)
+    try:
+        if health.find_leftovers():
+            print(f"{len(health.LEFTOVER)} MakeMKV process(es) are still running from before.")
+    except Exception:
+        pass
     RIPPER = Ripper()
     threading.Thread(target=check_update, daemon=True).start()
     try:

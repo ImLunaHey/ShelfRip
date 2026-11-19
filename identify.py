@@ -615,12 +615,39 @@ def plan_movie(folder: Path, disc: dict, titles: list[dict], label_info: dict,
             for r in tmdb.search("movie", q)[:6]:
                 if all(c["id"] != r["id"] for c in candidates):
                     candidates.append(r)
+        # A label with the spaces squeezed out ("RATRACE") finds the wrong film, or none. If nothing
+        # found has the disc's length, also try it split into two words ("Rat Race").
+        lone = re.sub(r"[^A-Za-z]", "", label_info.get("query") or "")
+        if lone and " " not in (label_info.get("query") or "").strip() and 5 <= len(lone) <= 16 \
+                and not any(c.get("id") == label_info.get("force_id") for c in candidates):
+            have_len = False
+            for r in candidates[:6]:
+                try:
+                    rt = tmdb.movie(r["id"]).get("runtime") or 0
+                except Exception:
+                    rt = 0
+                r["_runtime"] = rt
+                have_len = have_len or (rt and abs(rt - main_min) <= 6)
+            if not have_len:
+                for k in range(2, len(lone) - 1):
+                    q = f"{lone[:k]} {lone[k:]}"
+                    try:
+                        found = tmdb.search("movie", q)[:3]
+                    except Exception:
+                        continue
+                    for r in found:
+                        if norm(r.get("title") or "").replace(" ", "") == lone.lower() and \
+                                all(c["id"] != r["id"] for c in candidates):
+                            candidates.insert(0, r)
         scored = []
-        for r in candidates[:6]:
-            try:
-                runtime = tmdb.movie(r["id"]).get("runtime") or 0
-            except Exception:
-                runtime = 0
+        for r in candidates[:8]:
+            if "_runtime" in r:
+                runtime = r.pop("_runtime")
+            else:
+                try:
+                    runtime = tmdb.movie(r["id"]).get("runtime") or 0
+                except Exception:
+                    runtime = 0
             diff = abs(runtime - main_min) if runtime else 999
             scored.append((diff, -r.get("popularity", 0), r, runtime))
         scored.sort(key=lambda x: (x[0] > 6, x[1] if x[0] <= 6 else x[0]))
@@ -632,7 +659,11 @@ def plan_movie(folder: Path, disc: dict, titles: list[dict], label_info: dict,
     else:
         title, year, tid = match["title"], year_of(match.get("release_date")), str(match["id"])
         if match.get("runtime") and abs(match["runtime"] - main_min) > 6:
-            warnings.append(f"Runtime doesn't match: disc {main_min:.0f} min vs TMDB {match['runtime']} min.")
+            warnings.append(f"Possibly the wrong movie: the disc's movie is {main_min:.0f} min, but TMDB says "
+                            f"{match['title']} ({year}) is {match['runtime']} min. Check the cover, or pick the right one.")
+        elif not match.get("runtime") and not label_info.get("force_id"):
+            warnings.append(f"TMDB doesn't list a length for {match['title']} ({year}), so Shelfrip couldn't check "
+                            "it's the right movie. Check the cover.")
 
     # --- OMDb (IMDb data) as a second opinion on run time and year
     checked = ""

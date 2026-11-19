@@ -24,7 +24,7 @@ HERE = Path(__file__).resolve().parent
 OUT = HERE / "installer"
 NAME = "Shelfrip"
 MODULES = ["app", "review", "identify", "rip_all", "split", "music", "plex", "extras", "discdb",
-           "catalog", "crosscheck", "naming", "paths", "community", "desktop", "progress"]
+           "catalog", "crosscheck", "naming", "paths", "community", "desktop", "progress", "health", "tidy"]
 SHIP = ["README.md", "LICENSE.txt", "THIRD-PARTY-NOTICES.txt"]
 
 
