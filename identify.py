@@ -27,6 +27,8 @@ import json
 import re
 import statistics
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -197,8 +199,20 @@ class TMDB:
         if url in self.cache:
             return self.cache[url]
         req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=20) as r:
-            data = json.loads(r.read().decode("utf-8"))
+        for attempt in range(4):  # a dropped connection or a busy TMDB: wait a moment and try again
+            try:
+                with urllib.request.urlopen(req, timeout=20) as r:
+                    data = json.loads(r.read().decode("utf-8"))
+                break
+            except urllib.error.HTTPError as exc:
+                if exc.code not in (429, 500, 502, 503, 504) or attempt == 3:
+                    raise
+                wait = float(exc.headers.get("Retry-After") or 0) if exc.code == 429 else 0
+            except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
+                if attempt == 3:
+                    raise
+                wait = 0
+            time.sleep(max(wait, 2 ** attempt))
         self.cache[url] = data
         return data
 

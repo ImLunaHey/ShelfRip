@@ -80,6 +80,30 @@ def library(refresh: bool = False) -> dict:
 PLAN_LOCK = threading.Lock()
 
 
+def save_plan(folder: Path, plan: dict) -> None:
+    """Write plan.json safely: to a temporary file first, then swapped in, so a crash or a full
+    disk mid-save can never leave a half-written plan (and lose your names)."""
+    data = json.dumps({k: v for k, v in plan.items() if k not in ("job", "folder", "auto", "season_files")}, indent=2)
+    tmp = folder / "plan.json.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, folder / "plan.json")
+
+
+def library_reachable() -> str:
+    """'' if the library folder can be reached, else a sentence saying it can't."""
+    try:
+        if LIB_ROOT.is_dir():
+            next(LIB_ROOT.iterdir(), None)  # a dropped network drive can pass is_dir() but fail here
+            return ""
+    except OSError:
+        pass
+    return (f"Your library ({LIB_ROOT}) can't be reached right now. If it's on a NAS or network drive, check it's "
+            "on and connected. Shelfrip tries again by itself.")
+
+
 def plan_new_folders() -> int:
     with PLAN_LOCK:  # a rip finishing and the "Check for new rips" button can overlap
         return _plan_new_folders()
@@ -116,9 +140,17 @@ def _plan_new_folders() -> int:
             continue
         if plan:
             plan["planned_at"] = time.time()
-            (folder / "plan.json").write_text(json.dumps(plan, indent=2), encoding="utf-8")
+            save_plan(folder, plan)
             n += 1
     return n
+
+
+def unnamed_folders() -> list[str]:
+    """Finished rips that have no names yet (naming failed, e.g. no internet at the time)."""
+    if not RIP_ROOT.is_dir():
+        return []
+    return [p.name for p in RIP_ROOT.iterdir() if p.is_dir() and not p.name.startswith("_")
+            and (p / "disc_info.json").exists() and not (p / "plan.json").exists()]
 
 
 def _is_music(folder: Path) -> bool:
@@ -217,17 +249,53 @@ def start_filing(folder: Path, plan: dict) -> list[str]:
     plan.pop("folder", None)
     plan.pop("auto", None)
     refresh_warnings(plan)
-    (folder / "plan.json").write_text(json.dumps(plan, indent=2), encoding="utf-8")
+    save_plan(folder, plan)
     problems = check_plan(folder, plan)
     if problems:
-        (folder / "plan.json").write_text(json.dumps(plan, indent=2), encoding="utf-8")
+        save_plan(folder, plan)
         return problems
     with LOCK:
         if JOBS.get(folder.name, {}).get("state") == "running":
             return ["Already filing this disc."]
         JOBS[folder.name] = {"state": "running", "done_bytes": 0, "total_bytes": 0, "current": "starting"}
+    f = plan.get("filing") or {}
+    plan["filing"] = {"started": f.get("started") or time.strftime("%Y-%m-%dT%H:%M:%S"),
+                      "tries": int(f.get("tries") or 0) + 1, "at": time.time()}
+    save_plan(folder, plan)  # marks it as being filed, so an interrupted filing is finished next time
     threading.Thread(target=file_job, args=(folder, plan), daemon=True).start()
     return []
+
+
+def resume_tick(log=print) -> list[str]:
+    """Finish filings that were cut off: by Shelfrip closing (picked up straight away) or by an
+    error such as the library dropping off the network (tried again every 5 minutes, 3 times)."""
+    started = []
+    if any(j.get("state") == "running" for j in JOBS.values()):
+        return started
+    for plan in list_plans():
+        f, name = plan.get("filing"), plan["folder"]
+        if not f:
+            continue
+        job = JOBS.get(name) or {}
+        if job.get("state") == "running" or int(f.get("tries") or 0) >= 6:
+            continue
+        if job.get("state") == "error" and (int(f.get("tries") or 0) >= 3 or time.time() - float(f.get("at") or 0) < 300):
+            continue
+        if library_reachable():
+            continue  # still away: try again later
+        folder = folder_path(name)
+        problems = start_filing(folder, plan)
+        title = plan.get("album") if plan.get("kind") == "music" else plan.get("title")
+        if problems:
+            log(f"{title or name}: couldn't finish filing ({problems[0]})")
+            plan = json.loads((folder / "plan.json").read_text(encoding="utf-8"))
+            plan.pop("filing", None)  # needs you now: it's back on the Review tab
+            save_plan(folder, plan)
+        else:
+            log(f"{title or name}: finishing the filing that was interrupted")
+            started.append(title or name)
+        break  # one at a time
+    return started
 
 
 def auto_file_tick(log=print) -> list[str]:
@@ -248,7 +316,7 @@ def auto_file_tick(log=print) -> list[str]:
             plan["hold"] = True
             plan["auto_problem"] = problems[:3]
             plan.setdefault("warnings", []).append("Couldn't file automatically: " + " ".join(problems[:3]))
-            (folder / "plan.json").write_text(json.dumps(plan, indent=2), encoding="utf-8")
+            save_plan(folder, plan)
             log(f"{plan.get('title') or name}: not filed automatically ({problems[0]})")
         else:
             JOBS[name]["auto"] = True
@@ -325,11 +393,21 @@ def pieces(it: dict) -> list[dict]:
     return out
 
 
+def item_done(it: dict) -> bool:
+    """Already copied into the library by an earlier filing of this disc that didn't finish."""
+    to = it.get("filed_to")
+    files = to if isinstance(to, list) else [to] if to else []
+    return bool(files) and all(Path(f).exists() for f in files)
+
+
 def check_plan(folder: Path, plan: dict) -> list[str]:
     if plan.get("kind") == "music":
         import music
         return music.check_plan(folder, plan, CFG)
     problems, seen = [], set()
+    away = library_reachable()
+    if away:
+        return [away]
     # Has the library gained a copy since this disc was named? Skip those, same as the namer does.
     try:
         mine = identify.quality_rank(plan.get("format") or "", CFG)
@@ -337,7 +415,7 @@ def check_plan(folder: Path, plan: dict) -> list[str]:
         newly = 0
         for it in plan["items"]:
             have = copies.get(it["source"])
-            if it.get("action") != "move" or not have or it.get("library_copy"):
+            if it.get("action") != "move" or not have or it.get("library_copy") or item_done(it):
                 continue
             best = max(have, key=lambda h: h["rank"])
             it["library_copy"] = {"format": best["format"], "better": best["rank"] > mine}
@@ -353,14 +431,17 @@ def check_plan(folder: Path, plan: dict) -> list[str]:
         print(f"couldn't check the library for copies: {exc}")
     try:  # room in the library for it?
         need = sum((folder / it["source"]).stat().st_size for it in plan["items"]
-                   if it.get("action") == "move" and (folder / it["source"]).exists())
+                   if it.get("action") == "move" and not item_done(it) and (folder / it["source"]).exists())
         free = shutil.disk_usage(LIB_ROOT).free
         if need + 2e9 > free:
             problems.append(f"Not enough space in {LIB_ROOT}: needs {need / 1e9:.1f} GB, {free / 1e9:.1f} GB free.")
     except OSError:
         pass
     for it in plan["items"]:
-        if it.get("action") != "move":
+        if (plan.get("filing") and it.get("action") == "move" and not it.get("needs_split") and not item_done(it)
+                and not (folder / it["source"]).exists() and dest_for(it, plan).exists()):
+            it["filed_to"] = str(dest_for(it, plan))  # moved just before Shelfrip closed, before it could note it
+        if it.get("action") != "move" or item_done(it):  # done = copied by a filing that was interrupted
             continue
         if it.get("needs_split"):
             bad = split_ok(it)
@@ -466,6 +547,33 @@ def _forget_progress() -> None:
         pass
 
 
+def _length(path: Path, mkvmerge: str) -> float:
+    import subprocess
+    r = subprocess.run([mkvmerge, "-J", str(path)], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       timeout=300, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    return (json.loads(r.stdout or "{}").get("container", {}).get("properties", {}).get("duration") or 0) / 1e9
+
+
+def verify_copy(src: Path, copy: Path) -> str:
+    """'' if the copy plays as long as the original (MKVToolNix reads both), else what's wrong.
+    The sizes already match; this catches a copy that was garbled on the way (a flaky network)."""
+    if src.suffix.lower() != ".mkv":
+        return ""
+    try:
+        mkvmerge = split.tool(CFG, "mkvmerge")
+    except Exception:
+        mkvmerge = None
+    if not mkvmerge:
+        return ""
+    try:
+        a, b = _length(src, mkvmerge), _length(copy, mkvmerge)
+    except Exception as exc:
+        return f"couldn't read it back: {exc}"
+    if a and abs(a - b) > 1:
+        return f"it plays {b:.0f} s instead of {a:.0f} s"
+    return ""
+
+
 def copy_with_progress(src: Path, dst: Path, job: dict) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     if same_volume(src, dst.parent):
@@ -484,6 +592,10 @@ def copy_with_progress(src: Path, dst: Path, job: dict) -> None:
     if tmp.stat().st_size != size:
         tmp.unlink(missing_ok=True)
         raise IOError(f"size mismatch copying {src.name}")
+    bad = verify_copy(src, tmp)
+    if bad:  # keep the original: it's only deleted once the copy is known to be good
+        tmp.unlink(missing_ok=True)
+        raise IOError(f"the copy of {src.name} didn't check out ({bad}), so the original was kept")
     os.replace(tmp, dst)
     shutil.copystat(src, dst)
     src.unlink()
@@ -525,7 +637,8 @@ def file_music_job(folder: Path, plan: dict) -> None:
         filed = music.file_job(folder, plan, job, CFG)
         plan["status"] = "filed"
         plan["filed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-        (folder / "plan.json").write_text(json.dumps(plan, indent=2), encoding="utf-8")
+        plan.pop("filing", None)
+        save_plan(folder, plan)
         if all(Path(f).exists() for f in filed):
             record = FILED_DIR / folder.name
             record.mkdir(parents=True, exist_ok=True)
@@ -547,7 +660,7 @@ def file_music_job(folder: Path, plan: dict) -> None:
                          daemon=True).start()
     except Exception as exc:
         traceback.print_exc()
-        (folder / "plan.json").write_text(json.dumps(plan, indent=2), encoding="utf-8")
+        save_plan(folder, plan)
         job.update(state="error", current=str(exc))
 
 
@@ -559,8 +672,11 @@ def file_job(folder: Path, plan: dict) -> None:
     disc_info = read_disc_info(folder)
     moves = [it for it in plan["items"] if it.get("action") == "move"]
     try:
-        job["total_bytes"] = sum((folder / it["source"]).stat().st_size for it in moves)
+        job["total_bytes"] = sum((folder / it["source"]).stat().st_size for it in moves
+                                 if not item_done(it) and (folder / it["source"]).exists())
         for i, it in enumerate(moves, 1):
+            if item_done(it) and not (folder / it["source"]).exists():
+                continue  # copied by the earlier, interrupted filing
             if it.get("needs_split"):
                 # cut each episode out (no re-encoding) next to the rip, then move it into the library
                 src, filed = folder / it["source"], []
@@ -578,9 +694,14 @@ def file_job(folder: Path, plan: dict) -> None:
                     copy_with_progress(part, dst, job)
                     filed.append(str(dst))
                 it["filed_to"] = filed
+                save_plan(folder, plan)  # progress, in case filing is interrupted
                 shutil.rmtree(folder / "_split", ignore_errors=True)
                 continue
             dst = dest_for(it, plan)
+            if not (folder / it["source"]).exists() and dst.exists():
+                it["filed_to"] = str(dst)  # moved just before Shelfrip closed, before it could note it
+                save_plan(folder, plan)
+                continue
             job["current"] = f"{i}/{len(moves)}: {dst.name}"
             why = "; ".join(x for x in (split.tag_audio(folder / it["source"], it.get("audio"), CFG),  # name commentary tracks
                                         split.set_default_tracks(folder / it["source"], CFG)) if x)
@@ -588,9 +709,11 @@ def file_job(folder: Path, plan: dict) -> None:
                 job["note"] = "; ".join(x for x in (job.get("note"), f"{dst.stem}: {why}") if x)
             copy_with_progress(folder / it["source"], dst, job)
             it["filed_to"] = str(dst)
+            save_plan(folder, plan)  # progress, in case filing is interrupted
         plan["status"] = "filed"
         plan["filed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-        (folder / "plan.json").write_text(json.dumps(plan, indent=2), encoding="utf-8")
+        plan.pop("filing", None)
+        save_plan(folder, plan)
         # Every kept file is now in the library (copied and size-checked). Keep only the small
         # record files in _Filed (they help name later discs of the same show) and delete the
         # rest of the disc folder, including skipped clips, to free up space.
@@ -646,7 +769,7 @@ def file_job(folder: Path, plan: dict) -> None:
         threading.Thread(target=plex.scan_and_check, args=(CFG, plan, job["plex"]), daemon=True).start()
     except Exception as exc:
         traceback.print_exc()
-        (folder / "plan.json").write_text(json.dumps(plan, indent=2), encoding="utf-8")
+        save_plan(folder, plan)
         job.update(state="error", current=str(exc))
 
 
@@ -728,7 +851,7 @@ class Handler(BaseHTTPRequestHandler):
                 plan.pop("folder", None)
                 plan["edited"] = True
                 refresh_warnings(plan)
-                (folder / "plan.json").write_text(json.dumps(plan, indent=2), encoding="utf-8")
+                save_plan(folder, plan)
                 return self.send(200, {"ok": True})
             if u.path == "/api/discard":  # delete a rip you don't want (e.g. already in Plex)
                 if JOBS.get(folder.name, {}).get("state") == "running":
@@ -742,7 +865,7 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/rematch":
                 plan = identify.plan_folder(folder, RIP_ROOT, TMDB, library(), CFG, override={
                     "kind": b.get("kind"), "tmdb_id": b.get("tmdb_id"), "season": b.get("season")})
-                (folder / "plan.json").write_text(json.dumps(plan, indent=2), encoding="utf-8")
+                save_plan(folder, plan)
                 plan["folder"] = folder.name
                 return self.send(200, {"plan": plan})
             if u.path == "/api/release":  # music CD: the user picked another MusicBrainz release
@@ -751,7 +874,7 @@ class Handler(BaseHTTPRequestHandler):
                 plan.pop("job", None)
                 plan.pop("folder", None)
                 music.change_release(folder, plan, b["release"])
-                (folder / "plan.json").write_text(json.dumps(plan, indent=2), encoding="utf-8")
+                save_plan(folder, plan)
                 plan["folder"] = folder.name
                 return self.send(200, {"plan": plan})
             if u.path == "/api/edition":  # the user picked which release (edition) the disc is
@@ -767,7 +890,7 @@ class Handler(BaseHTTPRequestHandler):
                     identify.attach_audio(plan, folder, read_disc_info(folder))
                 except Exception as exc:
                     print(f"    (couldn't re-read the audio tracks: {exc})")
-                (folder / "plan.json").write_text(json.dumps(plan, indent=2), encoding="utf-8")
+                save_plan(folder, plan)
                 plan["folder"] = folder.name
                 return self.send(200, {"plan": plan})
             if u.path == "/api/epnames":  # TMDB names for renumbered episodes
@@ -798,7 +921,7 @@ class Handler(BaseHTTPRequestHandler):
                 pj = folder / "plan.json"
                 plan = json.loads(pj.read_text(encoding="utf-8"))
                 plan["hold"] = bool(b.get("hold", True))
-                pj.write_text(json.dumps(plan, indent=2), encoding="utf-8")
+                save_plan(folder, plan)
                 return self.send(200, {"ok": True})
         except Exception as exc:
             traceback.print_exc()
