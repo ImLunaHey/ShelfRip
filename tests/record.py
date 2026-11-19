@@ -16,6 +16,7 @@ The fixtures are your own discs, so they stay on your PC: tests\fixtures is neve
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 import urllib.request
@@ -30,9 +31,10 @@ def main() -> None:
     rip_root = Path(sys.argv[1] if len(sys.argv) > 1 else r"E:\Ripped")
     filed = sorted(d for d in (rip_root / "_Filed").iterdir() if (d / "disc_info.json").exists()
                    and (d / "plan.json").exists())
-    sys.path.insert(0, str(discs.HERE.parent))
-    import paths
-    real = json.loads(paths.CONFIG_PATH.read_text(encoding="utf-8-sig"))
+    # your settings, read directly: Shelfrip itself must start in a throwaway folder (below), so your
+    # learned labels and disc database can't answer for the web services being recorded
+    real_cfg = Path(os.environ.get("SHELFRIP_DATA") or Path(os.environ.get("APPDATA") or Path.home()) / "Shelfrip") / "config.json"
+    real = json.loads(real_cfg.read_text(encoding="utf-8-sig"))
     secrets = [str(real.get(k) or "") for k in real if any(p in k.lower() for p in ("key", "token", "secret"))]
     fcfg = discs.fixture_config(real)
     tmp = discs.setup_env({**fcfg, **{k: real.get(k, "") for k in discs.HAS_KEYS if fcfg.get(k)}})
