@@ -205,3 +205,54 @@ def tmdb_check(key: str, wait: float = 0) -> dict | None:
         hit = _CACHE.get("tmdb:" + key[-8:])
         res = hit[1] if hit and not hit[2] else None
     return res
+
+
+# --------------------------------------------------------------------------- backups
+
+BACKUP_DIR_NAME = "backups"
+DATA_FILES = ("config.json", "disc_catalog.db", "learned_labels.json", "shared.json", "recap.json")
+
+
+def backup(data_dir: Path, rip_root: Path | None, keep: int = 7) -> Path | None:
+    """Once a day: zip your own data (settings, disc database, learned labels) and the records of
+    every disc you've filed, into <data folder>/backups. The newest `keep` are kept. Returns the
+    new backup, or None if today's is already there."""
+    import datetime as dt
+    import sqlite3
+    import tempfile
+    import zipfile
+    out_dir = data_dir / BACKUP_DIR_NAME
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dst = out_dir / f"Shelfrip backup {dt.date.today().isoformat()}.zip"
+    if dst.exists():
+        return None
+    tmp = dst.with_suffix(".partial")
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
+        for name in DATA_FILES:
+            f = data_dir / name
+            if not f.exists():
+                continue
+            if f.suffix == ".db":  # copy through SQLite, so a write in progress can't give a broken copy
+                with tempfile.TemporaryDirectory() as td:
+                    copy = Path(td) / name
+                    src, out = sqlite3.connect(str(f)), sqlite3.connect(str(copy))
+                    try:
+                        src.backup(out)
+                    finally:
+                        out.close()
+                        src.close()
+                    z.write(copy, name)
+            else:
+                z.write(f, name)
+        filed = (rip_root / "_Filed") if rip_root else None
+        if filed and filed.is_dir():
+            for f in filed.rglob("*"):
+                if f.is_file() and (f.suffix.lower() == ".json" or f.name == "makemkv_info.txt"):
+                    z.write(f, "_Filed/" + f.relative_to(filed).as_posix())
+    os.replace(tmp, dst)
+    for old in sorted(out_dir.glob("Shelfrip backup *.zip"))[:-keep]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    return dst

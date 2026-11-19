@@ -236,6 +236,8 @@ class Ripper:
         self.auto = bool(raw.get("auto_rip", False))
         self.watch = health.Watchdog(notify=notify)
         self._watched = 0.0
+        self._upkeep = 0.0
+        self.beat = time.time()
         rip_all.ON_DONE.append(self.after_rip)
         rip_all.ON_LOW_SPACE.append(lambda why: notify("Rip folder is full", why))
         threading.Thread(target=self.loop, daemon=True).start()
@@ -253,6 +255,7 @@ class Ripper:
 
     def loop(self) -> None:
         while True:
+            self.beat = time.time()
             self.load()
             if self.cfg:
                 try:
@@ -274,6 +277,26 @@ class Ripper:
                             self.watch.check(self.busy, rip_all.STATUS, _P(self.cfg["output_root"]))
                         except Exception as exc:
                             rip_all.log(f"stuck-rip check failed: {exc}")
+                    try:
+                        for t in review.resume_tick(log=rip_all.log):
+                            notify("Finishing a filing", f"{t}: picking up the filing that was interrupted.")
+                    except Exception as exc:
+                        rip_all.log(f"resume check failed: {exc}")
+                    if time.time() - self._upkeep > 600:  # every 10 minutes
+                        self._upkeep = time.time()
+                        try:  # discs that couldn't be named (say TMDB was unreachable): try again
+                            if review.unnamed_folders():
+                                n = review.plan_new_folders()
+                                if n:
+                                    rip_all.log(f"Named {n} disc(s) that couldn't be named before")
+                        except Exception as exc:
+                            rip_all.log(f"naming retry failed: {exc}")
+                        try:
+                            made = health.backup(paths.DATA_DIR, Path(self.cfg["output_root"]))
+                            if made:
+                                rip_all.log(f"Backed up your Shelfrip data: {made.name}")
+                        except Exception as exc:
+                            rip_all.log(f"backup failed: {exc}")
                     try:
                         weekly_recap()
                     except Exception as exc:
@@ -469,6 +492,39 @@ def quit_app(ask: bool = True) -> None:
     os._exit(0)
 
 
+HUNG = {"why": ""}
+
+
+def app_problem(url: str) -> str:
+    """'' if Shelfrip is working, else what isn't (checked from the tray's own thread)."""
+    try:
+        with urllib.request.urlopen(url + "api/version", timeout=8) as r:
+            r.read()
+    except Exception:
+        return "Its page has stopped answering."
+    if RIPPER and time.time() - RIPPER.beat > 20 * 60:
+        return "It has stopped checking the drives."
+    return ""
+
+
+def restart_app() -> None:
+    """Start a fresh Shelfrip (after a short pause, so this one has let go of its port) and quit."""
+    import base64
+    import subprocess
+    if getattr(sys, "frozen", False):
+        exe, args = sys.executable, []
+    else:
+        pyw = Path(sys.executable).with_name("pythonw.exe")
+        exe, args = str(pyw if pyw.exists() else sys.executable), [str(Path(__file__).resolve())]
+    q = lambda x: "'" + str(x).replace("'", "''") + "'"
+    ps = f"Start-Sleep -Seconds 4; Start-Process -FilePath {q(exe)}" + (f" -ArgumentList {','.join(q(a) for a in args)}" if args else "")
+    if os.name == "nt":
+        subprocess.Popen(["powershell", "-NoProfile", "-EncodedCommand", base64.b64encode(ps.encode("utf-16-le")).decode()],
+                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0),
+                         close_fds=True)
+    quit_app(ask=True)
+
+
 def start_tray(url: str, use_window: bool) -> None:
     global TRAY
     shown = {"console": False}
@@ -487,7 +543,7 @@ def start_tray(url: str, use_window: bool) -> None:
             n = len(review.list_plans())
         except Exception:
             n = 0
-        items = [(f"Shelfrip: {tray_status()}", None), None,
+        items = [(f"Not responding: {HUNG['why']}", None) if HUNG["why"] else (f"Shelfrip: {tray_status()}", None), None,
                  ("Open Shelfrip", lambda: desktop.open_window(url, use_window))]
         if n:
             items.append((f"Review {n} disc{'s' if n != 1 else ''}", lambda: desktop.open_window(url + "#review", use_window)))
@@ -496,7 +552,7 @@ def start_tray(url: str, use_window: bool) -> None:
             items.append(("Hide log window" if shown["console"] else "Show log window", toggle_console))
         elif desktop.LOG_PATH.exists():
             items.append(("Open the log", lambda: desktop.open_file(desktop.LOG_PATH)))
-        items += [None, ("Quit Shelfrip", quit_app)]
+        items += [None, ("Restart Shelfrip", restart_app), ("Quit Shelfrip", quit_app)]
         return items
 
     console = desktop.owns_console()
@@ -508,10 +564,22 @@ def start_tray(url: str, use_window: bool) -> None:
         desktop.show_console(False)  # the tray icon is the way back in now
 
     def keep_tip_fresh():
+        fails, warned = 0, False
         while True:
             time.sleep(10)
+            problem = app_problem(url)  # is the page still answering, and the drive watcher still running?
+            fails = fails + 1 if problem else 0
+            HUNG["why"] = problem if fails >= 3 else ""
             try:
-                tray.set_tip(f"Shelfrip: {tray_status()}")
+                if HUNG["why"]:
+                    tray.set_tip("Shelfrip isn't responding: right-click to restart it")
+                    if not warned:
+                        warned = True
+                        tray.notify("Shelfrip isn't responding", f"{problem} Right-click the Shelfrip icon by the clock "
+                                    "and choose Restart Shelfrip.")
+                else:
+                    warned = False
+                    tray.set_tip(f"Shelfrip: {tray_status()}")
             except Exception:
                 pass
     threading.Thread(target=keep_tip_fresh, daemon=True).start()
