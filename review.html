@@ -248,6 +248,8 @@ dialog.disc .in{display:flex;gap:22px;padding:22px;flex-wrap:wrap}
 dialog.disc .facts{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:13px}
 dialog.disc .facts dt{color:var(--muted)}
 dialog.disc .facts dd{margin:0}
+#dlgres .result{display:flex;gap:4px 10px;align-items:center;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--line)}
+#dlgres .result small:last-child{flex-basis:100%}
 .seasons{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
 .season{display:flex;gap:12px;align-items:center;background:var(--card2);border:1px solid var(--line);border-radius:14px;padding:10px 12px}
 .season .poster{width:46px;height:68px;border-radius:6px;font-size:8px;padding:4px}
@@ -313,7 +315,7 @@ function poster(kind, id, season, title, cls = "", mbid = ""){
   const k = kind === "music" ? mbid : `${kind}:${id}:${season ?? ""}`, url = SHOWN[k];
   return `<div class="poster ${cls} ${url ? "has" : ""}" ${data} role="img" aria-label="Box art: ${esc(title)}" style="background-color:${tint(title)}${url ? `;background-image:url('${esc(url)}')` : ""}"><span>${esc(title)}</span></div>`;
 }
-let SOUND = true, AC = null;
+let SOUND = true, SHARING = true, AC = null;
 function chime(kind){  // made on the spot with Web Audio: no sound files to ship
   if (!SOUND) return;
   try {
@@ -1317,8 +1319,34 @@ async function discDialog(it){
       <div><h2 style="margin:0;font-size:22px">${esc(it.title)}</h2><span style="color:var(--muted)">${esc(it.kind === "tv" ? (it.season ? `Season ${it.season}` : "TV") : it.sub || "")}</span></div>
       <p class="blurb" style="margin:0;color:var(--muted);font-size:13px"></p>
       <dl class="facts">${facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(String(v))}</dd>`).join("")}</dl>
-      <div class="row"><button id="dlgclose" class="primary">Close</button></div></div></div>`;
+      <div class="row"><button id="dlgclose" class="primary">Close</button>
+        ${it.kind === "movie" && it.discs.length === 1 && it.discs[0].folder ? `<button id="dlgfix">Wrong movie?</button>` : ""}</div>
+      <div id="dlgfixbox" class="hide" style="display:grid;gap:8px">
+        <span style="color:var(--muted);font-size:13px">Pick the right movie. Its folder and file in ${esc(SERVER_NAME)} are renamed, and your records${SHARING ? " and the shared disc database" : ""} are corrected.</span>
+        <div class="row"><input id="dlgq" value="${esc(it.title)}" style="flex:1"><button id="dlggo">Search</button></div>
+        <div id="dlgres" style="display:grid;gap:6px;font-size:13px"></div></div></div></div>`;
   $("#dlgclose", d).onclick = () => d.close();
+  const fx = $("#dlgfix", d);
+  if (fx) fx.onclick = () => { $("#dlgfixbox", d).classList.toggle("hide"); $("#dlgq", d).focus(); };
+  const go = $("#dlggo", d);
+  if (go) go.onclick = async () => {
+    const res = $("#dlgres", d); res.textContent = "Searching…";
+    try {
+      const j = await api(`/api/search?kind=movie&q=${encodeURIComponent($("#dlgq", d).value)}`);
+      if (j.error) throw new Error(j.error);
+      res.innerHTML = j.results.filter(r => String(r.id) !== String(it.tmdb_id)).map(r => `<div class="result"><button data-id="${r.id}">Use</button>
+        <b>${esc(r.title)}</b> <small>${esc(r.year)} · tmdb-${r.id}</small> <small style="color:var(--muted)">${esc(r.overview)}</small></div>`).join("") || "No other matches.";
+      res.querySelectorAll("button").forEach(b => b.onclick = async () => {
+        const r = j.results.find(x => String(x.id) === b.dataset.id);
+        if (!confirm(`Re-file ${it.title} as ${r.title}${r.year ? ` (${r.year})` : ""}? Its folder and file in ${SERVER_NAME} will be renamed.`)) return;
+        res.textContent = "Renaming…";
+        const k = await api("/api/refile", {folder: it.discs[0].folder, tmdb_id: b.dataset.id});
+        if (k.error){ res.innerHTML = `<span class="err">${esc(k.error)}</span>`; return; }
+        d.close(); await loadProgress(false); renderShelf();
+      });
+    } catch(e){ res.textContent = e.message; }
+  };
+  $("#dlgq", d) && ($("#dlgq", d).onkeydown = e => { if (e.key === "Enter") go.click(); });
   d.showModal();
   hydrate(d);
   if (it.tmdb_id && it.kind !== "music"){
@@ -1611,6 +1639,7 @@ async function saveOne(i){
     if (["output_root","plex_library_root","media_server","format_folders"].includes(k)) load(false);
     if (k === "job_total_discs") loadProgress(false);
     if (k === "sounds"){ SOUND = v; if (v) chime("file"); }
+    if (k === "share_discs") SHARING = v;
   } catch(e){ if (mark){ mark.textContent = e.message; mark.className = "saved on err"; } }
 }
 async function loadSettings(){
@@ -1632,7 +1661,7 @@ async function loadSettings(){
   let t = "drives"; try { t = localStorage.getItem("tab") || "drives"; } catch(e){}
   if (["drives","review","library","settings"].includes(location.hash.slice(1))) t = location.hash.slice(1);  // e.g. the tray's "Review" item
   try { const v = await api("/api/version"); if (v.latest) showUpdate(v); } catch(e){}
-  try { const s = await api("/api/settings"); SOUND = ((s.settings||[]).find(x => x.key === "sounds") || {value:true}).value !== false; if (s.first_run || (s.setup||[]).some(x => !x.ok && x.required)) t = "settings"; } catch(e){}
+  try { const s = await api("/api/settings"); SOUND = ((s.settings||[]).find(x => x.key === "sounds") || {value:true}).value !== false; SHARING = ((s.settings||[]).find(x => x.key === "share_discs") || {value:true}).value !== false; if (s.first_run || (s.setup||[]).some(x => !x.ok && x.required)) t = "settings"; } catch(e){}
   await loadProgress(false);
   showTab(t);
   pollDrives();
