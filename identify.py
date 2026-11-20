@@ -81,6 +81,9 @@ EXTRA_CATEGORIES = ["Featurettes", "Behind the Scenes", "Deleted Scenes", "Inter
                     "Scenes", "Shorts", "Trailers", "Other"]
 
 # words to strip from disc labels / disc names before searching TMDB
+# Tokens that are never part of a title: "'17" (a release year), "20THANNIV", "DUB", "BD2", "D1".
+NOISE_PATTERNS = (r"'\d{2}", r"\d+(ST|ND|RD|TH)?ANNIV(ERSARY)?", r"ANNIV(ERSARY)?", r"DUB(BED)?", r"SUB(BED|S)?",
+                  r"BD\d{1,2}", r"D\d{1,2}")
 NOISE_WORDS = {
     "DISC", "DISK", "DVD", "BD", "BLURAY", "BLU", "RAY", "UHD", "4K", "HD", "WS",
     "WIDESCREEN", "FULLSCREEN", "FS", "EDITION", "SPECIAL", "COLLECTORS", "COLLECTOR'S",
@@ -158,21 +161,30 @@ def mmss(seconds: int) -> str:
 
 def parse_label(label: str) -> dict:
     """'TRANSFORMERS_G1_S2_D7' -> {'query': 'Transformers G1', 'season': 2, 'disc': 7}"""
+    label = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", label)        # 'HaikyuDub' -> 'Haikyu Dub'
+    label = re.sub(r"(?<=[A-Za-z])(?='\d)", " ", label)        # "Dub'17" -> "Dub '17"
+    label = re.sub(r"(?<=\d)(?=(?:BD|DVD)(?:\b|[-_\s\d]))", " ", label, flags=re.I)  # "'17BD-3" -> "'17 BD-3"
+    label = re.sub(r"(?<=[A-Za-z]{3})(?=\d{1,2}(?:\b|_))", " ", label)  # 'TRANSFORMERS2' -> 'TRANSFORMERS 2'
     up = label.upper().replace("_", " ").replace("-", " ").replace(".", " ")
     season = disc = None
     m = re.search(r"\b(?:S|SEASON|SERIES)\s?(\d{1,2})\b", up)
     if m:
         season = int(m.group(1))
-    m = re.search(r"\b(?:D|DISC|DISK|DVD)\s?(\d{1,2})\b", up)
+    m = re.search(r"\b(?:D|DISC|DISK|DVD|BD)\s?(\d{1,2})\b", up)
     if m:
         disc = int(m.group(1))
-    words = []
+    words, prev = [], ""
     for w in up.split():
         if w in NOISE_WORDS:
+            prev = w
             continue
         if re.fullmatch(r"(S|D|V|VOL|DISC|DISK|SEASON|SERIES)\d{1,2}", w):
             continue
-        if re.fullmatch(r"\d{1,2}", w) and words and words[-1] in ("S", "D"):
+        if re.fullmatch(r"\d{1,2}", w) and prev in ("S", "D", "DISC", "DISK", "SEASON", "SERIES", "VOL", "VOLUME", "BD"):
+            prev = w
+            continue  # 'SEASON 4', 'DISC 1': the number belongs to the marker
+        prev = w
+        if any(re.fullmatch(p, w) for p in NOISE_PATTERNS):
             continue
         words.append(w)
     query = " ".join(words).title()
@@ -626,7 +638,13 @@ def plan_movie(folder: Path, disc: dict, titles: list[dict], label_info: dict,
         candidates = [tmdb.movie(int(label_info["force_id"]))]
     elif tmdb:
         for q in dict.fromkeys(q for q in queries if q):
-            for r in tmdb.search("movie", q)[:6]:
+            words, found = q.split(), []
+            while words and not found:  # 'Transformers: Revenge Of The Fallen Bse' -> '... Fallen'
+                found = tmdb.search("movie", " ".join(words))[:6]
+                if found or len(words) <= 2:
+                    break
+                words = words[:-1]
+            for r in found:
                 if all(c["id"] != r["id"] for c in candidates):
                     candidates.append(r)
         # A label with the spaces squeezed out ("RATRACE") finds the wrong film, or none. If nothing
