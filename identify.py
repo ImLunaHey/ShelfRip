@@ -988,6 +988,52 @@ def plan_tv(folder: Path, rip_root: Path, disc: dict, titles: list[dict], label_
     }
 
 
+# What people skip, learned from real filings: menus, warnings and logos; clips too short to be
+# anything that nobody could name; and "Play All" titles whose pieces are kept anyway.
+CLUTTER = re.compile(r"\b(menu|copyright|fbi|piracy|warning|(disc|bonus features?) credits|easter egg|digital copy|"
+                     r"sneak peeks?|previews|promo|disneyparks(\.com)?|logo)\b", re.I)
+PLACEHOLDER = re.compile(r"^(Extra \d+|Unused clip) \(", re.I)
+PLAY_ALL = re.compile(r"play all|\((all|play all)\)|\s-\s+all\b", re.I)
+
+
+def _sums_others(it: dict, extras: list[dict]) -> bool:
+    """A run of 3+ neighbouring extras adds up to this one's length: it plays them all."""
+    d = int(it.get("duration_seconds") or 0)
+    lens = [int(o.get("duration_seconds") or 0) for o in extras if o is not it]
+    slack = 2  # seconds
+    for i in range(len(lens)):
+        total = 0
+        for j in range(i, len(lens)):
+            total += lens[j]
+            if total > d + slack:
+                break
+            if j > i + 1 and abs(total - d) <= slack:
+                return True
+    return False
+
+
+def skip_clutter(items: list[dict]) -> None:
+    extras = [it for it in items if it.get("role") == "extra" and it.get("action") == "move"]
+    for it in extras:
+        name, d = str(it.get("name") or ""), int(it.get("duration_seconds") or 0)
+        why = ""
+        if CLUTTER.search(name):
+            why = "looks like a menu, warning or promo"
+        elif PLACEHOLDER.match(name) and d < 45:
+            why = "short, and nothing could name it"
+        elif PLACEHOLDER.match(name) and _sums_others(it, extras):
+            why = "about as long as the other extras together: probably a Play All"
+        elif PLAY_ALL.search(name):
+            parts = sum(int(o.get("duration_seconds") or 0) for o in extras
+                        if o is not it and o.get("action") == "move" and not PLAY_ALL.search(str(o.get("name") or ""))
+                        and (o.get("category") or "") == (it.get("category") or "") and (o.get("duration_seconds") or 0) < d)
+            if parts >= 0.7 * d:
+                why = "its pieces are kept separately"
+        if why:
+            it["action"] = "skip"
+            it["note"] = "; ".join(x for x in (f"skipped: {why}. Set Keep to add it anyway", it.get("note")) if x)
+
+
 def plan_folder(folder: Path, rip_root: Path, tmdb: TMDB | None, lib: dict, cfg: dict,
                 override: dict | None = None) -> dict | None:
     """override (from the review page): {"kind": "movie"|"tv", "tmdb_id": "123", "season": 2}"""
@@ -1080,6 +1126,8 @@ def plan_folder(folder: Path, rip_root: Path, tmdb: TMDB | None, lib: dict, cfg:
     for it in plan["items"]:
         if it.get("role") == "extra" and it.get("name"):
             it["name"] = capital_case(it["name"])
+    if cfg.get("skip_clutter", True):
+        skip_clutter(plan["items"])
     try:
         attach_audio(plan, folder, disc)
     except Exception as exc:
