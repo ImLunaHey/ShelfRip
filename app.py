@@ -63,7 +63,7 @@ SETTINGS = [  # (key, label, kind)
     ("music_lyrics", "Save lyrics next to music tracks (.lrc / .txt, from LRCLIB)", "bool"),
     ("min_length_seconds", "Skip titles shorter than (seconds)", "number"),
     ("skip_extras_under_seconds", "Set extras shorter than this to Skip (seconds)", "number"),
-    ("skip_clutter", "Set menus, warnings, promos, unnamed short clips and Play All titles to Skip", "bool"),
+    ("skip_clutter", "Set menus, warnings, promos, trailers for other films, unnamed short clips and Play All titles to Skip", "bool"),
     ("watch_poll_seconds", "Check drives every (seconds)", "number"),
     ("eject_after_filing", "Eject each disc once you've filed (or discarded) it", "bool"),
     ("eject_when_done", "Eject each disc as soon as its rip finishes instead", "bool"),
@@ -1000,6 +1000,17 @@ class Handler(review.Handler):
             if u.path == "/api/version":
                 import platform
                 return self.send(200, {**UPDATE, "os": platform.platform(terse=True)})
+            if u.path == "/api/inbox":  # feedback and wrong-answer reports, on the copy that deployed the database
+                import community
+                if not community.admin_token():
+                    return self.send(200, {"admin": False})
+                cfg = {**rip_all.DEFAULT_CONFIG, **JOB_DEFAULTS, **_read_config()}
+                try:
+                    fb = community.admin("feedback" + ("?all=1" if "all=1" in (u.query or "") else ""), cfg)
+                    rp = community.admin("reports", cfg)
+                except Exception as exc:
+                    return self.send(200, {"admin": True, "error": f"Couldn't reach the disc database: {exc}"})
+                return self.send(200, {"admin": True, "feedback": fb.get("feedback", []), "reports": rp.get("reports", [])})
             if u.path == "/api/tidy":
                 return self.send(200, tidy.scan(review.RIP_ROOT, busy_labels()))
             if u.path == "/api/seasons":
@@ -1032,6 +1043,18 @@ class Handler(review.Handler):
             if res["done"]:
                 rip_all.log(f"Tidied the rip folder: {len(res['done'])} item(s), {res['freed'] / 1e9:.1f} GB freed")
             return self.send(200, res)
+        if u.path == "/api/feedback":
+            import community
+            cfg = {**rip_all.DEFAULT_CONFIG, **JOB_DEFAULTS, **_read_config()}
+            return self.send(200, community.send_feedback(self.body(), cfg))
+        if u.path == "/api/inbox":  # mark feedback done
+            import community
+            cfg = {**rip_all.DEFAULT_CONFIG, **JOB_DEFAULTS, **_read_config()}
+            b = self.body()
+            try:
+                return self.send(200, community.admin("feedback", cfg, {"id": int(b.get("id") or 0), "done": bool(b.get("done", True))}))
+            except Exception as exc:
+                return self.send(200, {"error": str(exc)})
         if u.path == "/api/problem":
             try:
                 dst = make_problem_report()

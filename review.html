@@ -1327,29 +1327,57 @@ async function discDialog(it){
       <p class="blurb" style="margin:0;color:var(--muted);font-size:13px"></p>
       <dl class="facts">${facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(String(v))}</dd>`).join("")}</dl>
       <div class="row"><button id="dlgclose" class="primary">Close</button>
-        ${it.kind === "movie" && it.discs.length === 1 && it.discs[0].folder ? `<button id="dlgfix">Wrong movie?</button>` : ""}</div>
+        ${it.kind === "movie" && it.discs.length === 1 && it.discs[0].folder ? `<button id="dlgfix">Wrong movie?</button>` : ""}
+        ${it.kind === "tv" && it.discs.every(x => x.folder) ? `<button id="dlgfix">Wrong show or season?</button>` : ""}</div>
       <div id="dlgfixbox" class="hide" style="display:grid;gap:8px">
-        <span style="color:var(--muted);font-size:13px">Pick the right movie. Its folder and file in ${esc(SERVER_NAME)} are renamed, and your records${SHARING ? " and the shared disc database" : ""} are corrected.</span>
+        <span style="color:var(--muted);font-size:13px">${it.kind === "tv"
+          ? `Pick the right show, then the season. ${it.discs.length > 1 ? `All ${it.discs.length} discs' episodes` : "Its episodes"} and extras in ${esc(SERVER_NAME)} are moved and renamed`
+          : `Pick the right movie. Its folder and file in ${esc(SERVER_NAME)} are renamed`}, and your records${SHARING ? " and the shared disc database" : ""} are corrected.</span>
         <div class="row"><input id="dlgq" value="${esc(it.title)}" style="flex:1"><button id="dlggo">Search</button></div>
         <div id="dlgres" style="display:grid;gap:6px;font-size:13px"></div></div></div></div>`;
   $("#dlgclose", d).onclick = () => d.close();
   const fx = $("#dlgfix", d);
   if (fx) fx.onclick = () => { $("#dlgfixbox", d).classList.toggle("hide"); $("#dlgq", d).focus(); };
-  const go = $("#dlggo", d);
+  const go = $("#dlggo", d), tv = it.kind === "tv";
+  const done = async () => { d.close(); await loadProgress(false); renderShelf(); };
+  // TV: after picking the show, pick the season and (if the numbers are off) the first episode
+  const pickSeason = async (res, r) => {
+    res.textContent = "Loading seasons…";
+    const s = await api(`/api/showinfo?id=${r.id}`);
+    if (s.error){ res.innerHTML = `<span class="err">${esc(s.error)}</span>`; return; }
+    const first = it.eps.length ? Math.min(...it.eps) : 1;
+    const cur = String(r.id) === String(it.tmdb_id) ? it.season : (s.seasons.find(x => x.n > 0) || s.seasons[0] || {}).n;
+    res.innerHTML = `<b>${esc(r.title)}${r.year ? ` (${esc(r.year)})` : ""}</b>
+      <div class="row" style="flex-wrap:wrap;gap:8px"><label>Season <select id="dlgsn">${s.seasons.map(x => `<option value="${x.n}" ${x.n === cur ? "selected" : ""}>${esc(x.n === 0 ? "Specials" : `Season ${x.n}`)}${x.episodes ? ` (${x.episodes} episodes)` : ""}</option>`).join("")}</select></label>
+        <label>First episode <input id="dlgfe" type="number" min="1" value="${first}" style="width:70px"></label>
+        <button class="primary" id="dlgmv">Move</button></div>
+      <small style="color:var(--muted)">Episodes ${it.eps.length ? `e${first}–e${Math.max(...it.eps)}` : ""} keep their order. Change the first episode only if the numbers are off.</small>`;
+    $("#dlgmv", d).onclick = async () => {
+      const season = +$("#dlgsn", d).value, shift = (+$("#dlgfe", d).value || first) - first;
+      if (!confirm(`Move ${it.title}${it.season != null ? ` season ${it.season}` : ""} to ${r.title}, ${season === 0 ? "Specials" : `season ${season}`}${shift ? `, starting at episode ${first + shift}` : ""}? Its files in ${SERVER_NAME} will be moved and renamed.`)) return;
+      for (const [n, disc] of it.discs.entries()){
+        res.textContent = `Moving${it.discs.length > 1 ? ` disc ${n + 1} of ${it.discs.length}` : ""}…`;
+        const k = await api("/api/refile", {kind:"tv", folder: disc.folder, tmdb_id: r.id, season, shift});
+        if (k.error && !(it.discs.length > 1 && /already filed as that/.test(k.error))){ res.innerHTML = `<span class="err">${esc(k.error)}</span>${n ? ` <small>(${n} disc${n > 1 ? "s" : ""} already moved)</small>` : ""}`; return; }
+      }
+      done();
+    };
+  };
   if (go) go.onclick = async () => {
     const res = $("#dlgres", d); res.textContent = "Searching…";
     try {
-      const j = await api(`/api/search?kind=movie&q=${encodeURIComponent($("#dlgq", d).value)}`);
+      const j = await api(`/api/search?kind=${tv ? "tv" : "movie"}&q=${encodeURIComponent($("#dlgq", d).value)}`);
       if (j.error) throw new Error(j.error);
-      res.innerHTML = j.results.filter(r => String(r.id) !== String(it.tmdb_id)).map(r => `<div class="result"><button data-id="${r.id}">Use</button>
-        <b>${esc(r.title)}</b> <small>${esc(r.year)} · tmdb-${r.id}</small> <small style="color:var(--muted)">${esc(r.overview)}</small></div>`).join("") || "No other matches.";
+      res.innerHTML = j.results.filter(r => tv || String(r.id) !== String(it.tmdb_id)).map(r => `<div class="result"><button data-id="${r.id}">Use</button>
+        <b>${esc(r.title)}</b> <small>${esc(r.year)} · tmdb-${r.id}${String(r.id) === String(it.tmdb_id) ? " · filed as this now" : ""}</small> <small style="color:var(--muted)">${esc(r.overview)}</small></div>`).join("") || "No other matches.";
       res.querySelectorAll("button").forEach(b => b.onclick = async () => {
         const r = j.results.find(x => String(x.id) === b.dataset.id);
+        if (tv) return pickSeason(res, r);
         if (!confirm(`Re-file ${it.title} as ${r.title}${r.year ? ` (${r.year})` : ""}? Its folder and file in ${SERVER_NAME} will be renamed.`)) return;
         res.textContent = "Renaming…";
         const k = await api("/api/refile", {folder: it.discs[0].folder, tmdb_id: b.dataset.id});
         if (k.error){ res.innerHTML = `<span class="err">${esc(k.error)}</span>`; return; }
-        d.close(); await loadProgress(false); renderShelf();
+        done();
       });
     } catch(e){ res.textContent = e.message; }
   };
@@ -1520,7 +1548,7 @@ const SET_GROUPS = [
     ["auto_file", "File discs automatically when everything matched", "Only discs Shelfrip is sure about; anything uncertain waits for you."],
     ["auto_file_minutes", "…after waiting", "Time to step in first. Touching a disc on the Review tab holds it for you.", {unit:"minutes"}],
     ["eject_after_filing", "Eject each disc once it's filed", ""],
-    ["skip_clutter", "Skip the clutter", "Menus, copyright warnings, promos, short clips nothing could name, and Play All titles whose pieces you keep. You can still keep them on the Review tab."],
+    ["skip_clutter", "Skip the clutter", "Menus, copyright warnings, promos, trailers for other films, short clips nothing could name, and Play All titles whose pieces you keep. You can still keep them on the Review tab."],
     ["skip_extras_under_seconds", "Mark extras shorter than this as Skip", "You can still keep them on the Review tab.", {unit:"seconds", adv:1}],
     ["audio_language", "Default audio language", "Three-letter code, for example eng, jpn or fra. That track plays first.", {short:1}],
     ["subtitle_language", "Turn on subtitles in", "Leave empty for no subtitles by default.", {short:1}],
@@ -1604,7 +1632,7 @@ function renderSettings(){
         ${adv.length ? `<button class="advtoggle" id="advt" aria-expanded="${SHOWADV}">${SHOWADV ? "Hide" : "Show"} more options (${adv.length})</button>
           <div class="sgroup ${SHOWADV ? "" : "hide"}">${adv.map(m => setField(rows[m[0]], m)).join("")}</div>` : ""}
         ${g.id === "app" ? `<div class="srow"><div class="lbl"><label>Something not working?</label><div class="help">Makes a zip of Shelfrip's logs and settings, with your keys removed, to attach to a bug report.</div></div>
-          <div class="ctl" id="probctl"><button id="probbtn">Make a problem report</button></div></div>` : ""}
+          <div class="ctl" id="probctl"><button id="probbtn">Make a problem report</button></div></div><div id="inbox"></div>` : ""}
         <p class="foot2">Saved as you go, in ${esc(j.path)}. Keys are never shown again once saved.<br>
           Shelfrip ${esc((j.version||{}).current || "")}. This product uses the TMDB API but is not endorsed or certified by <a href="https://www.themoviedb.org/" target="_blank" rel="noopener">TMDB</a>.
           Ripping is done by MakeMKV, which you install and license yourself.</p>
@@ -1614,6 +1642,7 @@ function renderSettings(){
   if ($("#advt", el)) $("#advt", el).onclick = () => { SHOWADV = !SHOWADV; renderSettings(); };
   el.querySelectorAll("[data-change]").forEach(b => b.onclick = () => { const i = $("#s_" + b.dataset.change, el); i.classList.remove("hide"); i.focus(); b.remove(); });
   el.querySelectorAll("[data-k]").forEach(i => i.onchange = () => saveOne(i));
+  if ($("#inbox", el)) loadInbox($("#inbox", el));
   if ($("#probbtn", el)) $("#probbtn", el).onclick = async () => {
     $("#probbtn", el).disabled = true;
     const r = await api("/api/problem", {});
@@ -1685,7 +1714,35 @@ async function loadSettings(){
   };
 })();
 
-// Feedback: opens a ready-filled GitHub issue in the browser (nothing is sent from Shelfrip itself)
+// Feedback inbox: only on the copy that deployed the disc database (it has server/.secrets.json)
+let INBOXALL = false;
+async function loadInbox(el){
+  let j; try { j = await api(`/api/inbox${INBOXALL ? "?all=1" : ""}`); } catch(e){ return; }
+  if (!j.admin) return;
+  const when = t => new Date(t * 1000).toLocaleString([], {month:"short", day:"numeric", hour:"numeric", minute:"2-digit"});
+  const KIND = {idea:"Idea", problem:"Problem", other:"Other"};
+  const fb = (j.feedback || []).map(f => `<div class="ti" style="display:grid;gap:3px${f.done ? ";opacity:.55" : ""}">
+      <div class="row" style="gap:8px;align-items:baseline"><span class="chip">${esc(KIND[f.kind] || f.kind)}</span><b>${esc(f.title || "(no title)")}</b>
+        <span style="flex:1"></span><small style="color:var(--muted)">${esc(when(f.created))}</small>
+        <button data-done="${f.id}" data-v="${f.done ? 0 : 1}">${f.done ? "Not done" : "Done"}</button></div>
+      ${f.body ? `<div style="white-space:pre-wrap;font-size:13px">${esc(f.body)}</div>` : ""}
+      <small style="color:var(--muted)">${[f.contact ? `Reply to ${esc(f.contact)}` : "", f.app_version ? `Shelfrip ${esc(f.app_version)}` : "", esc(f.os || "")].filter(Boolean).join(" · ")}</small></div>`).join("");
+  const rp = (j.reports || []).map(r => `<div class="ti" style="font-size:13px">
+      <b>${esc(r.title || `tmdb-${r.tmdb_id}`)}${r.season != null ? ` season ${r.season}` : ""}</b> reported wrong ${r.n > 1 ? `${r.n} times` : "once"}${r.disc_label ? ` (disc ${esc(r.disc_label)})` : ""}.
+      ${r.better && r.better.title ? `Filed instead as ${esc(r.better.title)}${r.better.year ? ` (${esc(r.better.year)})` : ""}${r.better.season != null ? ` season ${r.better.season}` : ""}.` : ""}
+      <span style="color:var(--muted)">Now answering: ${r.answer ? (r.answer.disputed ? "nothing (disputed)" : esc(r.answer.title) + (r.answer.confirmed ? ", confirmed" : ", not confirmed")) : "nothing"}.</span></div>`).join("");
+  el.innerHTML = `<div class="srow" style="display:block"><div class="lbl"><label>Feedback inbox</label>
+      <div class="help">Only shown on this PC, because it's the one that runs the disc database.</div></div>
+    ${j.error ? `<div class="err">${esc(j.error)}</div>` : `
+    <div class="tidy" style="margin-top:8px">${fb || `<div style="color:var(--muted);font-size:13px">No ${INBOXALL ? "" : "new "}feedback.</div>`}</div>
+    <button id="inball" style="margin-top:6px">${INBOXALL ? "Hide done" : "Show done too"}</button>
+    <div class="lbl" style="margin-top:16px"><label>Wrong answers people reported</label>
+      <div class="help">The disc database already counts these against the answer. Two installs agreeing on another answer replaces it.</div></div>
+    <div class="tidy" style="margin-top:8px">${rp || `<div style="color:var(--muted);font-size:13px">None.</div>`}</div>`}</div>`;
+  el.querySelectorAll("[data-done]").forEach(b => b.onclick = async () => { b.disabled = true; await api("/api/inbox", {id: +b.dataset.done, done: b.dataset.v === "1"}); loadInbox(el); });
+  if ($("#inball", el)) $("#inball", el).onclick = () => { INBOXALL = !INBOXALL; loadInbox(el); };
+}
+// Feedback: sent to the Shelfrip disc database's server (no account needed), or posted on GitHub
 const FB_KINDS = [["idea","Idea"],["problem","Something's wrong"],["other","Other"]];
 let FBKIND = "idea";
 function feedbackDialog(){
@@ -1693,17 +1750,19 @@ function feedbackDialog(){
   if (!d){ d = document.createElement("dialog"); d.id = "fbdlg"; d.className = "disc"; document.body.appendChild(d);
     d.addEventListener("click", e => { if (e.target === d) d.close(); }); }
   const draw = () => {
-    const keep = {t: $("#fbt", d)?.value || "", m: $("#fbm", d)?.value || ""};
+    const keep = {t: $("#fbt", d)?.value || "", m: $("#fbm", d)?.value || "", c: $("#fbc", d)?.value || ""};
     d.innerHTML = `<div class="fb">
       <h2>Send feedback</h2>
-      <span style="color:var(--muted);font-size:13px">Ideas, bugs, wrong names, anything. This opens a GitHub issue for you to check and post. It needs a free GitHub account.</span>
+      <span style="color:var(--muted);font-size:13px">Ideas, bugs, wrong names, anything. It goes straight to the people who make Shelfrip.</span>
       <div class="seg filt" role="group" aria-label="Kind" style="justify-self:start">${FB_KINDS.map(([k, n]) => `<button data-k="${k}" class="${k === FBKIND ? "on" : ""}" aria-pressed="${k === FBKIND}">${esc(n)}</button>`).join("")}</div>
-      <label>In a few words<input type="text" id="fbt" maxlength="120" value="${esc(keep.t)}" placeholder="${FBKIND === "problem" ? "e.g. Filing stops at 50% on TV discs" : "e.g. Show the runtime on each title"}"></label>
-      <label>Details<textarea id="fbm" placeholder="${FBKIND === "problem" ? "What did you do, what happened, and what did you expect?" : "Tell us more"}">${esc(keep.m)}</textarea></label>
+      <label>In a few words<input type="text" id="fbt" maxlength="200" value="${esc(keep.t)}" placeholder="${FBKIND === "problem" ? "e.g. Filing stops at 50% on TV discs" : "e.g. Show the runtime on each title"}"></label>
+      <label>Details<textarea id="fbm" maxlength="5000" placeholder="${FBKIND === "problem" ? "What did you do, what happened, and what did you expect?" : "Tell us more"}">${esc(keep.m)}</textarea></label>
+      <label>Your email, if you'd like a reply (optional)<input type="text" id="fbc" maxlength="200" value="${esc(keep.c)}" autocomplete="email"></label>
       <label class="chk"><input type="checkbox" id="fbv" checked> Add my Shelfrip and Windows versions</label>
-      ${FBKIND === "problem" ? `<div id="fbprob" style="font-size:13px"><button id="fbrep">Make a problem report to attach</button>
-        <span style="color:var(--muted)"> Logs and settings, with your keys removed.</span></div>` : ""}
-      <div class="row"><button class="primary" id="fbgo">Continue on GitHub</button><button id="fbx">Cancel</button></div></div>`;
+      ${FBKIND === "problem" ? `<div id="fbprob" style="font-size:13px;color:var(--muted)">Need to send logs? <button id="fbrep">Make a problem report</button> and attach it to a <a href="#" id="fbgh2">GitHub issue</a>.</div>` : ""}
+      <div id="fbmsg" style="font-size:13px"></div>
+      <div class="row" style="align-items:center"><button class="primary" id="fbgo">Send</button><button id="fbx">Cancel</button>
+        <span style="flex:1"></span><a href="#" id="fbgh" style="font-size:13px">Post on GitHub instead</a></div></div>`;
     d.querySelectorAll("[data-k]").forEach(b => b.onclick = () => { FBKIND = b.dataset.k; draw(); });
     $("#fbx", d).onclick = () => d.close();
     const rep = $("#fbrep", d);
@@ -1711,20 +1770,31 @@ function feedbackDialog(){
       rep.disabled = true; rep.textContent = "Making the report…";
       const r = await api("/api/problem", {});
       $("#fbprob", d).innerHTML = r.error ? `<span class="err">${esc(r.error)}</span>`
-        : `Saved <b style="word-break:break-all">${esc(r.path)}</b>. Drag it into the GitHub page to attach it.`;
+        : `Saved <b style="word-break:break-all">${esc(r.path)}</b>. Drag it into a <a href="#" id="fbgh2">GitHub issue</a> to attach it.`;
+      wireGh();
     };
-    $("#fbgo", d).onclick = async () => {
-      const t = $("#fbt", d).value.trim(), m = $("#fbm", d).value.trim();
-      if (!t && !m){ $("#fbt", d).focus(); return; }
-      let body = m || t;
-      if ($("#fbv", d).checked){
-        try { const v = await api("/api/version"); body += `\n\n---\nShelfrip ${v.current || "?"}${v.os ? ` on ${v.os}` : ""}`; } catch(e){}
-      }
+    const read = () => ({t: $("#fbt", d).value.trim(), m: $("#fbm", d).value.trim(), c: $("#fbc", d).value.trim(), v: $("#fbv", d).checked});
+    const github = async e => {
+      e.preventDefault();
+      const f = read();
+      let body = f.m || f.t || "";
+      if (f.v){ try { const v = await api("/api/version"); body += `\n\n---\nShelfrip ${v.current || "?"}${v.os ? ` on ${v.os}` : ""}`; } catch(e){} }
       const name = FB_KINDS.find(x => x[0] === FBKIND)[1];
-      const title = `${FBKIND === "problem" ? "Bug" : name}: ${t || m.split("\n")[0].slice(0, 80)}`;
+      const title = f.t || f.m ? `${FBKIND === "problem" ? "Bug" : name}: ${f.t || f.m.split("\n")[0].slice(0, 80)}` : "";
       window.open(`https://github.com/VandykeConnor/ShelfRip/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`, "_blank", "noopener");
-      d.close();
-      toast("Thanks! Finish posting it on the GitHub page.");
+    };
+    const wireGh = () => d.querySelectorAll("#fbgh, #fbgh2").forEach(a => a.onclick = github);
+    wireGh();
+    $("#fbgo", d).onclick = async () => {
+      const f = read();
+      if (!f.t && !f.m){ $("#fbt", d).focus(); return; }
+      if (f.c && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.c)){ $("#fbmsg", d).innerHTML = `<span class="err">That email doesn't look right.</span>`; $("#fbc", d).focus(); return; }
+      $("#fbgo", d).disabled = true; $("#fbmsg", d).textContent = "Sending…";
+      const r = await api("/api/feedback", {kind: FBKIND, title: f.t, body: f.m, contact: f.c, versions: f.v});
+      if (r.error){ $("#fbgo", d).disabled = false; $("#fbmsg", d).innerHTML = `<span class="err">${esc(r.error)}</span>`; return; }
+      d.close(); $("#fbt", d).value = ""; $("#fbm", d).value = "";
+      d.innerHTML = "";
+      toast("Thanks for the feedback!", f.c ? "We'll reply by email if we have questions." : "");
     };
   };
   draw();

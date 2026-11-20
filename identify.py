@@ -1012,8 +1012,26 @@ def _sums_others(it: dict, extras: list[dict]) -> bool:
     return False
 
 
-def skip_clutter(items: list[dict]) -> None:
+OWN_TRAILER = re.compile(r"\b(trailers?|teasers?|tv spots?|spots?|promos?)\b", re.I)
+TITLE_STOP = {"the", "and", "movie", "film", "season", "part", "with", "from", "edition", "collection"}
+
+
+def _title_words(title: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]+", re.sub(r"[-']", "", title.lower())) if len(w) >= 4 and w not in TITLE_STOP}
+
+
+def _same_length_run(it, extras) -> bool:
+    """3 or more unnamed clips of the same length (within a second), 30 s to 3 min: a reel of trailers."""
+    d = int(it.get("duration_seconds") or 0)
+    if not 30 <= d <= 180:
+        return False
+    same = [o for o in extras if PLACEHOLDER.match(str(o.get("name") or "")) and abs(int(o.get("duration_seconds") or 0) - d) <= 1]
+    return len(same) >= 3
+
+
+def skip_clutter(items: list[dict], title: str = "") -> None:
     extras = [it for it in items if it.get("role") == "extra" and it.get("action") == "move"]
+    own = _title_words(title)
     for it in extras:
         name, d = str(it.get("name") or ""), int(it.get("duration_seconds") or 0)
         why = ""
@@ -1023,6 +1041,11 @@ def skip_clutter(items: list[dict]) -> None:
             why = "short, and nothing could name it"
         elif PLACEHOLDER.match(name) and _sums_others(it, extras):
             why = "about as long as the other extras together: probably a Play All"
+        elif PLACEHOLDER.match(name) and _same_length_run(it, extras):
+            why = "one of several unnamed clips of the same length: probably trailers for other titles"
+        elif (it.get("category") == "Trailers" and own and not OWN_TRAILER.search(name)
+              and not PLACEHOLDER.match(name) and not (_title_words(name) & own)):
+            why = "looks like a trailer for another title"
         elif PLAY_ALL.search(name):
             parts = sum(int(o.get("duration_seconds") or 0) for o in extras
                         if o is not it and o.get("action") == "move" and not PLAY_ALL.search(str(o.get("name") or ""))
@@ -1108,6 +1131,9 @@ def plan_folder(folder: Path, rip_root: Path, tmdb: TMDB | None, lib: dict, cfg:
         plan["match_source"] = known_source + (f"; {plan['match_source']}" if plan.get("match_source") else "")
     if known:
         apply_discdb(plan, known, tmdb)
+        if known.get("community"):  # remembered, so a correction can be reported back
+            plan["community_answer"] = {"kind": known["kind"], "tmdb_id": known["tmdb_id"], "season": known.get("season"),
+                                        "title": known.get("title")}
         if known.get("community") and not known.get("confirmed"):
             plan["warnings"].append("Only one person has shared this disc with the Shelfrip disc database so far: "
                             "check the names before filing.")
@@ -1127,7 +1153,7 @@ def plan_folder(folder: Path, rip_root: Path, tmdb: TMDB | None, lib: dict, cfg:
         if it.get("role") == "extra" and it.get("name"):
             it["name"] = capital_case(it["name"])
     if cfg.get("skip_clutter", True):
-        skip_clutter(plan["items"])
+        skip_clutter(plan["items"], plan.get("title") or "")
     try:
         attach_audio(plan, folder, disc)
     except Exception as exc:
