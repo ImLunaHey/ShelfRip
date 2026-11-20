@@ -43,7 +43,8 @@ import rip_all
 
 JOB_DEFAULTS = {"auto_file": True, "auto_file_minutes": 15, "audio_language": "eng", "subtitle_language": "",
                 "forced_subtitles": True, "retry_failed_titles": True, "job_total_discs": 0,
-                "min_free_gb_rips": 60, "app_window": True, "tray_icon": True, "sounds": True}
+                "min_free_gb_rips": 60, "app_window": True, "tray_icon": True, "sounds": True,
+                "skip_clutter": True}
 SECRETS = ("tmdb_api_key", "omdb_api_key", "plex_token")
 SETTINGS = [  # (key, label, kind)
     ("output_root", "Rip folder (where discs are ripped to before review)", "text"),
@@ -62,6 +63,7 @@ SETTINGS = [  # (key, label, kind)
     ("music_lyrics", "Save lyrics next to music tracks (.lrc / .txt, from LRCLIB)", "bool"),
     ("min_length_seconds", "Skip titles shorter than (seconds)", "number"),
     ("skip_extras_under_seconds", "Set extras shorter than this to Skip (seconds)", "number"),
+    ("skip_clutter", "Set menus, warnings, promos, unnamed short clips and Play All titles to Skip", "bool"),
     ("watch_poll_seconds", "Check drives every (seconds)", "number"),
     ("eject_after_filing", "Eject each disc once you've filed (or discarded) it", "bool"),
     ("eject_when_done", "Eject each disc as soon as its rip finishes instead", "bool"),
