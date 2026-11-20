@@ -641,7 +641,7 @@ def plan_movie(folder: Path, disc: dict, titles: list[dict], label_info: dict,
             words, found = q.split(), []
             while words and not found:  # 'Transformers: Revenge Of The Fallen Bse' -> '... Fallen'
                 found = tmdb.search("movie", " ".join(words))[:6]
-                if found or len(words) <= 2:
+                if found or len(words) <= 2 or candidates:  # shorten only while nothing at all is found
                     break
                 words = words[:-1]
             for r in found:
