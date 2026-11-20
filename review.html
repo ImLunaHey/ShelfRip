@@ -248,6 +248,12 @@ dialog.disc .in{display:flex;gap:22px;padding:22px;flex-wrap:wrap}
 dialog.disc .facts{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:13px}
 dialog.disc .facts dt{color:var(--muted)}
 dialog.disc .facts dd{margin:0}
+dialog.disc .fb{display:grid;gap:12px;padding:22px;width:100%}
+dialog.disc .fb h2{margin:0;font:700 20px/1.2 var(--head)}
+dialog.disc .fb label{display:grid;gap:5px;font-size:13px;color:var(--muted)}
+dialog.disc .fb input[type=text],dialog.disc .fb textarea{width:100%;box-sizing:border-box;font:inherit}
+dialog.disc .fb textarea{min-height:120px;resize:vertical}
+dialog.disc .fb .chk{display:flex;gap:8px;align-items:center;color:var(--ink)}
 #dlgres .result{display:flex;gap:4px 10px;align-items:center;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--line)}
 #dlgres .result small:last-child{flex-basis:100%}
 .seasons{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
@@ -280,6 +286,7 @@ dialog.disc .facts dd{margin:0}
   <button id="scan" class="tab-review">Check for new rips</button>
   <a id="upd" class="hide" target="_blank" rel="noopener"></a>
   <div class="hud hide" id="hud"></div>
+  <button id="fbbtn" title="Send an idea or report a problem">Feedback</button>
   <button id="quit" class="hide">Quit</button>
 </header>
 <div id="toasts" aria-live="polite"></div>
@@ -1678,6 +1685,53 @@ async function loadSettings(){
   };
 })();
 
+// Feedback: opens a ready-filled GitHub issue in the browser (nothing is sent from Shelfrip itself)
+const FB_KINDS = [["idea","Idea"],["problem","Something's wrong"],["other","Other"]];
+let FBKIND = "idea";
+function feedbackDialog(){
+  let d = $("#fbdlg");
+  if (!d){ d = document.createElement("dialog"); d.id = "fbdlg"; d.className = "disc"; document.body.appendChild(d);
+    d.addEventListener("click", e => { if (e.target === d) d.close(); }); }
+  const draw = () => {
+    const keep = {t: $("#fbt", d)?.value || "", m: $("#fbm", d)?.value || ""};
+    d.innerHTML = `<div class="fb">
+      <h2>Send feedback</h2>
+      <span style="color:var(--muted);font-size:13px">Ideas, bugs, wrong names, anything. This opens a GitHub issue for you to check and post. It needs a free GitHub account.</span>
+      <div class="seg filt" role="group" aria-label="Kind" style="justify-self:start">${FB_KINDS.map(([k, n]) => `<button data-k="${k}" class="${k === FBKIND ? "on" : ""}" aria-pressed="${k === FBKIND}">${esc(n)}</button>`).join("")}</div>
+      <label>In a few words<input type="text" id="fbt" maxlength="120" value="${esc(keep.t)}" placeholder="${FBKIND === "problem" ? "e.g. Filing stops at 50% on TV discs" : "e.g. Show the runtime on each title"}"></label>
+      <label>Details<textarea id="fbm" placeholder="${FBKIND === "problem" ? "What did you do, what happened, and what did you expect?" : "Tell us more"}">${esc(keep.m)}</textarea></label>
+      <label class="chk"><input type="checkbox" id="fbv" checked> Add my Shelfrip and Windows versions</label>
+      ${FBKIND === "problem" ? `<div id="fbprob" style="font-size:13px"><button id="fbrep">Make a problem report to attach</button>
+        <span style="color:var(--muted)"> Logs and settings, with your keys removed.</span></div>` : ""}
+      <div class="row"><button class="primary" id="fbgo">Continue on GitHub</button><button id="fbx">Cancel</button></div></div>`;
+    d.querySelectorAll("[data-k]").forEach(b => b.onclick = () => { FBKIND = b.dataset.k; draw(); });
+    $("#fbx", d).onclick = () => d.close();
+    const rep = $("#fbrep", d);
+    if (rep) rep.onclick = async () => {
+      rep.disabled = true; rep.textContent = "Making the report…";
+      const r = await api("/api/problem", {});
+      $("#fbprob", d).innerHTML = r.error ? `<span class="err">${esc(r.error)}</span>`
+        : `Saved <b style="word-break:break-all">${esc(r.path)}</b>. Drag it into the GitHub page to attach it.`;
+    };
+    $("#fbgo", d).onclick = async () => {
+      const t = $("#fbt", d).value.trim(), m = $("#fbm", d).value.trim();
+      if (!t && !m){ $("#fbt", d).focus(); return; }
+      let body = m || t;
+      if ($("#fbv", d).checked){
+        try { const v = await api("/api/version"); body += `\n\n---\nShelfrip ${v.current || "?"}${v.os ? ` on ${v.os}` : ""}`; } catch(e){}
+      }
+      const name = FB_KINDS.find(x => x[0] === FBKIND)[1];
+      const title = `${FBKIND === "problem" ? "Bug" : name}: ${t || m.split("\n")[0].slice(0, 80)}`;
+      window.open(`https://github.com/VandykeConnor/ShelfRip/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`, "_blank", "noopener");
+      d.close();
+      toast("Thanks! Finish posting it on the GitHub page.");
+    };
+  };
+  draw();
+  d.showModal();
+  $("#fbt", d).focus();
+}
+$("#fbbtn").onclick = feedbackDialog;
 $("#scan").onclick = async () => { $("#scan").disabled = true; const j = await api("/api/scan", {}); $("#scan").disabled = false; await load(false); $("#sub").textContent += ` · ${j.planned} new`; };
 load(false).catch(e => $("#list").innerHTML = `<p class="empty err">${esc(e.message)}</p>`);
 </script>

@@ -998,7 +998,8 @@ class Handler(review.Handler):
             if u.path == "/api/report":
                 return self.send(200, REPORT)
             if u.path == "/api/version":
-                return self.send(200, UPDATE)
+                import platform
+                return self.send(200, {**UPDATE, "os": platform.platform(terse=True)})
             if u.path == "/api/tidy":
                 return self.send(200, tidy.scan(review.RIP_ROOT, busy_labels()))
             if u.path == "/api/seasons":
