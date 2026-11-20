@@ -22,6 +22,7 @@ import hashlib
 import json
 import re
 import threading
+import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
@@ -89,6 +90,9 @@ def lookup(disc: dict, titles: list[dict], cfg: dict, log=print) -> dict | None:
         log(f"    (Shelfrip disc database lookup failed: {exc})")
         return None
     if not ans.get("found") or not ans.get("kind"):
+        return None
+    if ans.get("disputed"):
+        log(f"    (the Shelfrip disc database says {ans.get('title')}, but people reported that as wrong: not using it)")
         return None
 
     import catalog
@@ -171,6 +175,76 @@ def submission(plan: dict, disc: dict, cfg: dict) -> dict | None:
     }
 
 
+def _ident(x: dict) -> tuple:
+    return (x.get("kind"), str(x.get("tmdb_id") or ""), x.get("season") if x.get("kind") == "tv" else None)
+
+
+def wrong_answer(plan: dict) -> dict | None:
+    """The shared answer this disc was given, if you then filed (or re-matched) it as something else."""
+    ca = plan.get("community_answer")
+    if not ca and SOURCE in str(plan.get("match_source") or "") and plan.get("refiled"):
+        ca = {**(plan["refiled"].get("from") or {}), "kind": plan.get("kind")}  # filed before this was noted
+    if not ca or not ca.get("tmdb_id") or _ident(ca) == _ident(plan):
+        return None
+    return {"kind": ca.get("kind"), "tmdb_id": str(ca["tmdb_id"]), "season": ca.get("season")}
+
+
+def report(plan: dict, body: dict, cfg: dict, log=print) -> None:
+    """Tell the database the answer it gave for this disc was wrong (counts against that answer)."""
+    wrong = wrong_answer(plan)
+    if not wrong:
+        return
+    try:
+        _http(f"{base_url(cfg)}/v1/report", {
+            "install_id": body["install_id"], "disc": {k: body["disc"][k] for k in ("content_hash", "signature")},
+            "wrong": wrong, "instead": {k: body["media"][k] for k in ("kind", "title", "year", "tmdb_id", "season")}})
+        log("Told the Shelfrip disc database its answer for this disc was wrong.")
+    except Exception as exc:
+        log(f"(couldn't report the wrong answer to the Shelfrip disc database: {exc})")
+
+
+def send_feedback(fb: dict, cfg: dict) -> dict:
+    """Send a message from the Feedback button. Returns {ok} or {error}."""
+    import platform
+    base = base_url(cfg)
+    if not base:
+        return {"error": "There's no feedback address set up in this copy of Shelfrip."}
+    body = {"install_id": install_id(cfg), "app_version": paths.APP_VERSION, "kind": str(fb.get("kind") or "other"),
+            "title": str(fb.get("title") or "")[:200], "body": str(fb.get("body") or "")[:5000],
+            "contact": str(fb.get("contact") or "")[:200], "os": platform.platform(terse=True)}
+    if not fb.get("versions", True):
+        body["app_version"] = body["os"] = ""
+    try:
+        _http(f"{base}/v1/feedback", body)
+        return {"ok": True}
+    except urllib.error.HTTPError as exc:
+        return {"error": "Too much feedback from here today. Try again tomorrow." if exc.code == 429
+                else f"The feedback server said no ({exc.code})."}
+    except Exception as exc:
+        return {"error": f"Couldn't reach the feedback server ({exc}). Check your internet connection."}
+
+
+def admin_token() -> str:
+    """The database's admin token, if this is the copy that deployed it (server/.secrets.json)."""
+    try:
+        return str(json.loads((paths.APP_DIR / "server" / ".secrets.json").read_text(encoding="utf-8")).get("ADMIN_TOKEN") or "")
+    except (OSError, ValueError):
+        return ""
+
+
+def admin(path: str, cfg: dict, body: dict | None = None) -> dict:
+    """Call an admin endpoint (feedback inbox, reports) with the local admin token."""
+    token, base = admin_token(), base_url(cfg)
+    if not token or not base:
+        return {"error": "not the admin copy"}
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    req = urllib.request.Request(f"{base}/v1/admin/{path}", data=data, method="POST" if data else "GET",
+                                 headers={"User-Agent": paths.USER_AGENT, "Content-Type": "application/json",
+                                          "Authorization": f"Bearer {token}"})
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
 def share(plan: dict, disc: dict, cfg: dict, log=print) -> None:
     """Send one filed disc in the background. Never holds up or fails filing."""
     base = base_url(cfg)
@@ -184,6 +258,7 @@ def share(plan: dict, disc: dict, cfg: dict, log=print) -> None:
         try:
             _http(f"{base}/v1/submit", body)
             log(f"Shared {plan.get('title')} with the Shelfrip disc database.")
+            report(plan, body, cfg, log)
             try:  # remembered for the Pioneer badge: nobody had added this disc before you
                 import progress
                 d = body["disc"]

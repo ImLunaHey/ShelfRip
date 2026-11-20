@@ -21,6 +21,8 @@ the `ADMIN_TOKEN` for the admin calls. Keep it: a new SALT makes every install l
 | Call | What it does |
 |---|---|
 | `POST /v1/submit` | One filed disc: `{install_id, app_version, disc: {content_hash, signature, format, label, name}, media: {kind, title, year, tmdb_id, imdb_id, season}, titles: [...]}` |
+| `POST /v1/report` | "This disc is not that": `{install_id, disc: {content_hash, signature}, wrong: {kind, tmdb_id, season}, instead: {...}}`. Sent when someone was given a shared answer and filed or re-matched the disc as something else |
+| `POST /v1/feedback` | A message from the app's Feedback button: `{install_id, kind, title, body, contact, app_version, os}` (20 a day per install) |
 | `GET /v1/disc?h=<content hash>&s=<signature>` | The agreed answer for a disc, title by title, with vote counts |
 | `GET /v1/export` | Every disc's agreed answer as one JSON file (CC0) |
 | `GET /v1/stats` | How many discs, submissions and installs |
@@ -28,15 +30,23 @@ the `ADMIN_TOKEN` for the admin calls. Keep it: a new SALT makes every install l
 | `POST /v1/admin/block` `{install, why}` | Hide everything from one install (first 12 characters of its id as shown in `recent`) |
 | `POST /v1/admin/hide` `{id, hidden}` | Hide or show one submission |
 | `POST /v1/admin/lock` `{disc_key, answer}` | Fix a disc's answer by hand (`answer: null` removes the lock) |
+| `GET /v1/admin/reports` | Discs people said were wrong, with what they filed instead and the current answer |
+| `GET /v1/admin/feedback` | Feedback, newest first (`?all=1` includes ones marked done) |
+| `POST /v1/admin/feedback` `{id, done}` | Mark feedback done |
+
+On the PC that deployed the database (the one with `.secrets.json`), Shelfrip shows the feedback
+and the reports in Settings > Shelfrip.
 
 ## How answers are decided
 
 - A disc is found by its content hash (the same fingerprint TheDiscDB uses), or failing that by a
   signature of its titles' lengths and sizes.
-- What the disc *is* (movie or show, TMDB id, season) is whatever most installs said.
+- What the disc *is* (movie or show, TMDB id, season) is whatever most installs said, less one for
+  each other install that reported it as wrong. If the reports cancel out every vote, the disc has
+  no answer (the app falls back to its other sources) until someone files it again.
 - Among those, each title (matched by playlist and length) gets the answer most installs gave:
   the movie, an episode number, an extra's category and name, or "skipped".
-- An answer counts as confirmed once two separate installs agree and nobody outvotes them. The app
+- An answer counts as confirmed once two separate installs agree (after reports) and nobody outvotes them. The app
   still uses an unconfirmed answer, but warns on the review page and doesn't file the disc on its own.
 - Each install counts once per disc (filing the same disc again replaces your earlier submission).
   Rate limits: 200 submissions a day per install, 400 per IP.

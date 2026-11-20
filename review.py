@@ -352,6 +352,13 @@ def refile_movie(name: str, tmdb_id: str, log=print) -> dict:
                 refiled={"from": was, "at": time.strftime("%Y-%m-%dT%H:%M:%S")})
     plan["warnings"] = [w for w in plan.get("warnings", []) if "wrong movie" not in w and "Runtime doesn't match" not in w]
     save_plan(rec, plan)
+    _after_refile(rec, plan, name, log)
+    log(f"Re-matched {was['title']} ({was['year']}) as {title} ({year})")
+    return {"ok": True, "title": title, "year": year, "folder": str(new_dir)}
+
+
+def _after_refile(rec: Path, plan: dict, name: str, log=print) -> None:
+    """Pass a corrected match on to your disc database, learned labels, the shared database and Plex."""
     info = rec / "disc_info.json"
     disc = json.loads(info.read_text(encoding="utf-8")) if info.exists() else {}
     for step in ("catalog", "label", "share", "plex"):
@@ -372,8 +379,139 @@ def refile_movie(name: str, tmdb_id: str, log=print) -> dict:
             log(f"re-matching {name}: couldn't update the {step} ({exc})")
     _forget_progress()
     library(refresh=True)
-    log(f"Re-matched {was['title']} ({was['year']}) as {title} ({year})")
-    return {"ok": True, "title": title, "year": year, "folder": str(new_dir)}
+
+
+def refile_tv(name: str, tmdb_id: str, season, shift=0, log=print) -> dict:
+    """Move a filed TV disc to the right show and/or season (and shift its episode numbers by
+    `shift`): every file it put in the library is moved and renamed with TMDB's episode names,
+    then the records are corrected as in refile_movie. Nothing moves unless every file can."""
+    rec = (FILED_DIR / name).resolve()
+    if rec.parent != FILED_DIR.resolve() or not (rec / "plan.json").exists():
+        return {"error": "Couldn't find that disc's record."}
+    plan = json.loads((rec / "plan.json").read_text(encoding="utf-8"))
+    if plan.get("kind") != "tv":
+        return {"error": "That disc isn't a TV disc."}
+    if not TMDB:
+        return {"error": "Add your TMDB key in Settings first."}
+    try:
+        season, shift = int(season), int(shift or 0)
+    except (TypeError, ValueError):
+        return {"error": "Pick a season."}
+    if not str(tmdb_id).isdigit() or season < 0:
+        return {"error": "Pick a show from the search results."}
+    away = library_reachable()
+    if away:
+        return {"error": away}
+    show = TMDB.tv(int(tmdb_id))
+    title, year = show.get("name") or "", identify.year_of(show.get("first_air_date")) or ""
+    names = {x["episode_number"]: x.get("name") or "" for x in TMDB.season(int(tmdb_id), season).get("episodes", [])}
+    old_rel = str(plan.get("library_dir") or "").replace("/", "\\").rstrip("\\")
+    if not old_rel or not title:
+        return {"error": "This disc's record doesn't say where it was filed."}
+    tag = naming.id_tag(CFG, tmdb_id)
+    new_prefix = identify.fs_safe(f"{title} ({year})" if year else title)
+    new_rel = old_rel.rsplit("\\", 1)[0] + "\\" + new_prefix + (f" {tag}" if tag else "") if "\\" in old_rel \
+        else new_prefix + (f" {tag}" if tag else "")
+    old_season = plan.get("season")
+    if new_rel == old_rel and season == old_season and not shift:
+        return {"error": "It's already filed as that show and season."}
+    eps_items = [it for it in plan.get("items", []) if it.get("role") == "episode" and it.get("action") != "skip"]
+    if len({it.get("season") for it in eps_items}) > 1:
+        return {"error": "This disc has episodes from more than one season, so it can't be moved in one go."}
+    if any(n + shift < 1 for it in eps_items for n in (it.get("episodes") or [it.get("episode") or 1])):
+        return {"error": "That would number an episode below 1."}
+
+    def where(rel):
+        return LIB_ROOT.joinpath(*[identify.fs_safe(x) for x in rel.replace("/", "\\").split("\\") if x.strip()])
+    old_show, new_show = where(old_rel), where(new_rel)
+    sdir = "Specials" if season == 0 else f"Season {season}"
+
+    def ep_name(nums):
+        t = identify.fs_safe(names.get(nums[0], ""))
+        return f"{new_prefix} - s{season:02d}e{nums[0]:02d}" + (f"-e{nums[-1]:02d}" if len(nums) > 1 else "") + (f" - {t}" if t else "")
+    stems: dict[str, str] = {}  # old file name (no extension) -> new one
+    changes = []  # (item, new fields)
+    for it in eps_items:
+        nums = [n + shift for n in (it.get("episodes") or [it["episode"]])]
+        new = {"season": season, "episode": nums[0], "episodes": nums, "name": ep_name(nums)}
+        stems[it.get("name") or ""] = new["name"]
+        sp = it.get("split")
+        if sp and sp.get("names"):
+            new["split_names"] = [ep_name([n]) for n in nums][:len(sp["names"])]
+            stems.update(zip(sp["names"], new["split_names"]))
+        changes.append((it, new))
+    old_prefix = identify.fs_safe(f"{plan.get('title')} ({plan.get('year')})" if plan.get("year") else plan.get("title") or "")
+
+    def new_stem(stem):
+        for o in sorted(stems, key=len, reverse=True):
+            if o and (stem == o or stem.startswith(o + "-")):
+                return stems[o] + stem[len(o):]
+        return stem.replace(old_prefix, new_prefix, 1) if old_prefix else stem
+
+    def new_path(old: Path) -> Path:
+        try:
+            parts = list(old.relative_to(old_show).parts)
+        except ValueError:
+            return old
+        if parts and old_season is not None and parts[0] == ("Specials" if old_season == 0 else f"Season {old_season}"):
+            parts[0] = sdir
+        parts[-1] = new_stem(Path(parts[-1]).stem) + Path(parts[-1]).suffix
+        return new_show.joinpath(*parts)
+    moves = []
+    for it in plan.get("items", []):
+        ft = it.get("filed_to")
+        for f in ([ft] if isinstance(ft, str) else ft or []):
+            src = Path(f)
+            moves.append((it, f, src, new_path(src)))
+    missing = [str(m[2]) for m in moves if not m[2].exists()]
+    if missing:
+        return {"error": f"Couldn't find {missing[0]} in your library{f' (and {len(missing) - 1} more)' if len(missing) > 1 else ''}. Was it moved or renamed?"}
+    taken = [str(m[3]) for m in moves if m[3] != m[2] and m[3].exists()]
+    if taken:
+        return {"error": f"{taken[0]} already exists. Is that episode already in your library?"}
+    done = []
+    try:
+        for it, f, src, dst in moves:
+            if dst != src:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                os.rename(src, dst)
+                done.append((src, dst))
+    except OSError as exc:
+        for src, dst in reversed(done):  # put back what already moved
+            try:
+                os.rename(dst, src)
+            except OSError:
+                pass
+        return {"error": f"Couldn't move the files ({exc}). Nothing was changed."}
+    for d in sorted({m[2].parent for m in moves}, key=lambda p: len(p.parts), reverse=True):
+        while d != old_show.parent and d.is_dir() and not any(d.iterdir()):  # tidy emptied folders
+            d.rmdir()
+            d = d.parent
+    newf = {f: str(dst) for it, f, src, dst in moves}
+    old_dest = old_rel + ("\\" + ("Specials" if old_season == 0 else f"Season {old_season}") if old_season is not None else "")
+    for it in plan.get("items", []):
+        if isinstance(it.get("filed_to"), str):
+            it["filed_to"] = newf.get(it["filed_to"], it["filed_to"])
+        elif it.get("filed_to"):
+            it["filed_to"] = [newf.get(f, f) for f in it["filed_to"]]
+        dd = str(it.get("dest_dir") or "")
+        if dd.startswith(old_dest) and old_season is not None:
+            it["dest_dir"] = new_rel + "\\" + sdir + dd[len(old_dest):]
+        elif dd.startswith(old_rel):
+            it["dest_dir"] = new_rel + dd[len(old_rel):]
+        if it.get("attach_to"):
+            it["attach_to"] = new_stem(it["attach_to"])
+    for it, new in changes:
+        if "split_names" in new:
+            it["split"]["names"] = new.pop("split_names")
+        it.update(new)
+    was = {k: plan.get(k) for k in ("title", "year", "tmdb_id", "season", "library_dir")}
+    plan.update(title=title, year=year, tmdb_id=str(tmdb_id), show_key=str(tmdb_id), season=season, library_dir=new_rel,
+                refiled={"from": was, "shift": shift, "at": time.strftime("%Y-%m-%dT%H:%M:%S")})
+    save_plan(rec, plan)
+    _after_refile(rec, plan, name, log)
+    log(f"Re-matched {was['title']} season {was['season']} as {title} season {season}" + (f" (episodes moved by {shift:+d})" if shift else ""))
+    return {"ok": True, "title": title, "year": year, "season": season, "folder": str(new_show / sdir)}
 
 
 def auto_file_tick(log=print) -> list[str]:
@@ -896,6 +1034,12 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/poster":  # box art, so you can see the match is the right one
                 import progress
                 return self.send(200, progress.poster(TMDB, q.get("kind", ""), q.get("id", ""), q.get("season") or None))
+            if u.path == "/api/showinfo":  # a show's seasons, for "Wrong show or season?"
+                if not TMDB:
+                    return self.send(400, {"error": "No TMDB key in config.json"})
+                t = TMDB.tv(int(q.get("id", "0")))
+                return self.send(200, {"seasons": [{"n": x.get("season_number"), "name": x.get("name") or "",
+                                                    "episodes": x.get("episode_count") or 0} for x in t.get("seasons", [])]})
             if u.path == "/api/search":
                 if not TMDB:
                     return self.send(400, {"error": "No TMDB key in config.json"})
@@ -918,6 +1062,9 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/scan":
                 return self.send(200, {"planned": plan_new_folders()})
             if u.path == "/api/refile":  # a filed movie turned out to be the wrong match
+                if b.get("kind") == "tv":
+                    return self.send(200, refile_tv(str(b.get("folder") or ""), str(b.get("tmdb_id") or ""),
+                                                    b.get("season"), b.get("shift") or 0))
                 return self.send(200, refile_movie(str(b.get("folder") or ""), str(b.get("tmdb_id") or "")))
             folder = folder_path(b["folder"])
             if u.path == "/api/play":
@@ -945,8 +1092,14 @@ class Handler(BaseHTTPRequestHandler):
                                      "note": "Rip deleted" + (f"; disc {note[8:]} ejected" if note else "")}
                 return self.send(200, {"ok": True})
             if u.path == "/api/rematch":
+                try:  # keep what the shared database said, so filing can report it was wrong
+                    was = json.loads((folder / "plan.json").read_text(encoding="utf-8")).get("community_answer")
+                except (OSError, ValueError):
+                    was = None
                 plan = identify.plan_folder(folder, RIP_ROOT, TMDB, library(), CFG, override={
                     "kind": b.get("kind"), "tmdb_id": b.get("tmdb_id"), "season": b.get("season")})
+                if was and not plan.get("community_answer"):
+                    plan["community_answer"] = was
                 save_plan(folder, plan)
                 plan["folder"] = folder.name
                 return self.send(200, {"plan": plan})

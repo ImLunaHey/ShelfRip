@@ -141,6 +141,51 @@ class Core(unittest.TestCase):
         self.assertIn("error", again)
         self.assertIn("error", bad)
 
+    def test_refile_wrong_show(self):
+        name = "SHOWX_D1__20261120-120000"
+        show = "TV Shows\\Wrong Show (2001) {tmdb-7}"
+        items = [{"source": "a.mkv", "action": "move", "role": "episode", "season": 2, "episode": 1, "episodes": [1],
+                  "dest_dir": show + "\\Season 2", "name": "Wrong Show (2001) - s02e01 - Old"},
+                 {"source": "b.mkv", "action": "move", "role": "episode", "season": 2, "episode": 2, "episodes": [2],
+                  "dest_dir": show + "\\Season 2", "name": "Wrong Show (2001) - s02e02"},
+                 {"source": "c.mkv", "action": "move", "role": "extra", "category": "Other", "attach": "episode",
+                  "attach_to": "Wrong Show (2001) - s02e02", "dest_dir": show + "\\Season 2", "name": "Deleted Scene"},
+                 {"source": "d.mkv", "action": "move", "role": "extra", "category": "Featurettes",
+                  "dest_dir": show, "name": "Making Of"}]
+        d = make_disc(name, items, "Wrong Show", "2001", "7")
+        plan = json.loads((d / "plan.json").read_text())
+        plan.update(kind="tv", season=2, library_dir=show)
+        review.save_plan(d, plan)
+        self.assertEqual(review.start_filing(d, plan), [])
+        self.assertEqual(wait_job(name)["state"], "done")
+        old = TMP / "lib" / "TV Shows" / "Wrong Show (2001) {tmdb-7}"
+        self.assertTrue((old / "Season 2" / "Wrong Show (2001) - s02e02-other.mkv").exists())
+
+        class FakeTMDB:
+            def tv(self, tid):
+                return {"name": "Right Show", "first_air_date": "2005-01-01"}
+
+            def season(self, tid, n):
+                return {"episodes": [{"episode_number": 3, "name": "Three"}, {"episode_number": 4, "name": "Four"}]}
+        real = review.TMDB
+        review.TMDB = FakeTMDB()
+        try:
+            r = review.refile_tv(name, "8", 1, 2, log=lambda *a: None)
+            below = review.refile_tv(name, "8", 1, -5, log=lambda *a: None)
+        finally:
+            review.TMDB = real
+        self.assertTrue(r.get("ok"), r)
+        new = TMP / "lib" / "TV Shows" / "Right Show (2005) {tmdb-8}"
+        self.assertTrue((new / "Season 1" / "Right Show (2005) - s01e03 - Three.mkv").exists())
+        self.assertTrue((new / "Season 1" / "Right Show (2005) - s01e04 - Four.mkv").exists())
+        self.assertTrue((new / "Season 1" / "Right Show (2005) - s01e04 - Four-other.mkv").exists())
+        self.assertTrue((new / "Featurettes" / "Making Of.mkv").exists())
+        self.assertFalse(old.exists())
+        rec = json.loads((TMP / "rip" / "_Filed" / name / "plan.json").read_text())
+        self.assertEqual((rec["title"], rec["season"], rec["items"][0]["episode"]), ("Right Show", 1, 3))
+        self.assertEqual(rec["items"][2]["attach_to"], "Right Show (2005) - s01e04 - Four")
+        self.assertIn("error", below)
+
 
 if __name__ == "__main__":
     unittest.main()

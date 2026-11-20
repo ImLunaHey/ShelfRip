@@ -6,6 +6,8 @@
 // the app asks here first and gets the answer most people agreed on.
 //
 //   POST /v1/submit           one filed disc               (rate limited per install and per IP)
+//   POST /v1/report           "this disc is not <answer>"  (counts against that answer)
+//   POST /v1/feedback         a message from the app's Feedback button
 //   GET  /v1/disc?h=..&s=..   the agreed answer for a disc (h = content hash, s = title signature)
 //   GET  /v1/export           every disc's agreed answer, CC0 (cached for an hour)
 //   GET  /v1/stats            counts
@@ -13,6 +15,9 @@
 //   POST /v1/admin/block      {install, why}: hide everything from one install
 //   POST /v1/admin/hide       {id, hidden}: hide or show one submission
 //   POST /v1/admin/lock       {disc_key, answer|null}: fix a disc's answer by hand
+//   GET  /v1/admin/reports    discs people said were wrong, newest first
+//   GET  /v1/admin/feedback   feedback, newest first (?all=1 includes ones marked done)
+//   POST /v1/admin/feedback   {id, done}: mark feedback done (or not)
 //
 // Nothing personal is stored: install ids and IPs are only kept as salted hashes (SALT secret),
 // IPs only inside daily rate-limit counters.
@@ -21,6 +26,8 @@ const MAX_BODY = 128 * 1024;
 const MAX_TITLES = 300;
 const PER_INSTALL_PER_DAY = 200;
 const PER_IP_PER_DAY = 400;
+const PER_INSTALL_FEEDBACK = 20;
+const PER_IP_FEEDBACK = 40;
 const CONFIRM = 2;              // independent installs that must agree before an answer counts as confirmed
 const ROLES = new Set(["main", "edition", "episode", "extra", "play_all"]);
 const CATEGORIES = new Set(["Featurettes", "Behind the Scenes", "Deleted Scenes", "Interviews", "Scenes",
@@ -34,6 +41,8 @@ export default {
       if (url.pathname === "/" || url.pathname === "/v1") return json({ name: "Shelfrip disc database", version: 1,
         docs: "https://github.com/VandykeConnor/ShelfRip/tree/main/server" });
       if (url.pathname === "/v1/submit" && req.method === "POST") return await submit(req, env);
+      if (url.pathname === "/v1/report" && req.method === "POST") return await report(req, env);
+      if (url.pathname === "/v1/feedback" && req.method === "POST") return await feedback(req, env);
       if (url.pathname === "/v1/disc" && req.method === "GET") return await lookup(url, env);
       if (url.pathname === "/v1/export" && req.method === "GET") return await exportAll(req, env, ctx);
       if (url.pathname === "/v1/stats" && req.method === "GET") return await stats(env);
@@ -97,25 +106,34 @@ async function bump(env, key, limit) {
   if (row && row.n > limit) throw new Refusal("too many submissions today, try again tomorrow", 429);
 }
 
-async function submit(req, env) {
+async function body(req) {
   const len = Number(req.headers.get("Content-Length") || 0);
   if (len > MAX_BODY) throw new Refusal("too large", 413);
   const text = await req.text();
   if (text.length > MAX_BODY) throw new Refusal("too large", 413);
-  let b;
-  try { b = JSON.parse(text); } catch { throw new Refusal("not JSON"); }
-
+  try { return JSON.parse(text); } catch { throw new Refusal("not JSON"); }
+}
+async function installOf(b, env) {
   const installId = str(b.install_id, 64);
   if (!/^[0-9a-f-]{16,64}$/i.test(installId)) throw new Refusal("bad install_id");
   const install = await sha(env.SALT + "|install|" + installId);
   if (await env.DB.prepare("SELECT 1 FROM blocked WHERE install = ?").bind(install).first())
     throw new Refusal("submissions from this install are blocked", 403);
-
-  const d = b.disc || {}, m = b.media || {};
+  return install;
+}
+function discKeys(d) {
   const hash = str(d.content_hash, 64).toLowerCase(), sig = str(d.signature, 64).toLowerCase();
   if (!hash && !sig) throw new Refusal("disc needs a content_hash or signature");
   if ((hash && !/^[0-9a-f]{16,64}$/.test(hash)) || (sig && !/^[0-9a-f]{16,64}$/.test(sig)))
     throw new Refusal("bad fingerprint");
+  return { discKey: hash ? "h:" + hash : "s:" + sig, altKey: hash && sig ? "s:" + sig : null };
+}
+
+async function submit(req, env) {
+  const b = await body(req);
+  const install = await installOf(b, env);
+  const d = b.disc || {}, m = b.media || {};
+  const { discKey, altKey } = discKeys(d);
   const kind = m.kind === "tv" ? "tv" : m.kind === "movie" ? "movie" : null;
   if (!kind) throw new Refusal("media.kind must be movie or tv");
   const tmdb = str(m.tmdb_id, 20);
@@ -127,8 +145,9 @@ async function submit(req, env) {
   await bump(env, await sha(env.SALT + "|ip|" + ip), PER_IP_PER_DAY);
   await bump(env, install, PER_INSTALL_PER_DAY);
 
-  const discKey = hash ? "h:" + hash : "s:" + sig;
-  const altKey = hash && sig ? "s:" + sig : null;
+  // what you file now is your answer: drop any report of yours saying this is what the disc *isn't*
+  await env.DB.prepare("DELETE FROM reports WHERE disc_key = ? AND install = ? AND kind = ? AND tmdb_id = ? AND IFNULL(season, -1) = ?")
+    .bind(discKey, install, kind, tmdb, kind === "tv" ? (int(m.season) ?? -1) : -1).run();
   await env.DB.prepare(
     `INSERT INTO submissions (disc_key, alt_key, install, created, app_version, format, disc_label, disc_name,
        kind, title, year, tmdb_id, imdb_id, season, titles)
@@ -141,6 +160,41 @@ async function submit(req, env) {
     str(d.name, 200), kind, str(m.title, 200), str(m.year, 4), tmdb, str(m.imdb_id, 20),
     kind === "tv" ? int(m.season) : null, JSON.stringify(titles)).run();
   return json({ ok: true, disc_key: discKey });
+}
+
+async function report(req, env) {
+  const b = await body(req);
+  const install = await installOf(b, env);
+  const { discKey, altKey } = discKeys(b.disc || {});
+  const w = b.wrong || {}, r = b.instead || {};
+  const kind = w.kind === "tv" ? "tv" : w.kind === "movie" ? "movie" : null;
+  const tmdb = str(w.tmdb_id, 20);
+  if (!kind || !/^\d+$/.test(tmdb)) throw new Refusal("wrong needs kind and tmdb_id");
+  const ip = req.headers.get("CF-Connecting-IP") || "";
+  await bump(env, await sha(env.SALT + "|ip|" + ip), PER_IP_PER_DAY);
+  await bump(env, install, PER_INSTALL_PER_DAY);
+  const better = JSON.stringify({ kind: r.kind === "tv" ? "tv" : "movie", title: str(r.title, 200), year: str(r.year, 4),
+    tmdb_id: str(r.tmdb_id, 20), season: int(r.season) });
+  await env.DB.prepare(
+    `INSERT INTO reports (disc_key, alt_key, install, created, kind, tmdb_id, season, better) VALUES (?,?,?,?,?,?,?,?)
+     ON CONFLICT(disc_key, install, kind, tmdb_id, season) DO UPDATE SET created=excluded.created, better=excluded.better`
+  ).bind(discKey, altKey, install, now(), kind, tmdb, kind === "tv" ? int(w.season) : null, better).run();
+  return json({ ok: true });
+}
+
+async function feedback(req, env) {
+  const b = await body(req);
+  const install = await installOf(b, env);
+  const title = str(b.title, 200), text = str(b.body, 5000);
+  if (!title && !text) throw new Refusal("empty");
+  const ip = req.headers.get("CF-Connecting-IP") || "";
+  await bump(env, await sha(env.SALT + "|fbip|" + ip), PER_IP_FEEDBACK);
+  await bump(env, await sha(env.SALT + "|fb|" + install), PER_INSTALL_FEEDBACK);
+  const kind = ["idea", "problem", "other"].includes(b.kind) ? b.kind : "other";
+  await env.DB.prepare(
+    `INSERT INTO feedback (created, install, kind, title, body, contact, app_version, os) VALUES (?,?,?,?,?,?,?,?)`
+  ).bind(now(), install, kind, title, text, str(b.contact, 200), str(b.app_version, 20), str(b.os, 120)).run();
+  return json({ ok: true });
 }
 
 // ------------------------------------------------------------------ consensus
@@ -157,16 +211,23 @@ function answerKey(t) {
 // often than you'd think, but the playlist is what TheDiscDB uses too).
 const titleKey = t => t.source_file ? `${t.source_file}|${Math.round((t.duration_s || 0) / 2)}` : `size|${t.size_bytes}`;
 
-function consensus(rows) {
+const idKey = r => `${r.kind}|${r.tmdb_id}|${r.kind === "tv" ? r.season ?? "" : ""}`;
+
+function consensus(rows, reports = []) {
   if (!rows.length) return null;
-  // 1. what the disc is: most installs win
-  const ids = new Map();
-  for (const r of rows) {
-    const k = `${r.kind}|${r.tmdb_id}|${r.kind === "tv" ? r.season ?? "" : ""}`;
-    ids.set(k, [...(ids.get(k) || []), r]);
+  // 1. what the disc is: most installs win, less one for each install that said it's wrong
+  const ids = new Map(), against = new Map();
+  for (const r of rows) ids.set(idKey(r), [...(ids.get(idKey(r)) || []), r]);
+  for (const r of reports) {
+    const mine = ids.get(idKey(r)) || [];
+    if (!mine.some(x => x.install === r.install)) against.set(idKey(r), (against.get(idKey(r)) || 0) + 1);
   }
-  const ranked = [...ids.values()].sort((a, b) => b.length - a.length);
+  const score = list => list.length - (against.get(idKey(list[0])) || 0);
+  const ranked = [...ids.values()].sort((a, b) => score(b) - score(a) || b.length - a.length);
   const agree = ranked[0], first = agree[0];
+  const reported = against.get(idKey(first)) || 0;
+  if (score(agree) <= 0) return { disputed: true, kind: first.kind, title: first.title, tmdb_id: first.tmdb_id,
+    season: first.season, submitters: rows.length, agree: agree.length, reported };
   // 2. what each title is, among those who agree on the disc
   const per = new Map();
   for (const r of agree) {
@@ -195,8 +256,8 @@ function consensus(rows) {
   return {
     kind: first.kind, title: first.title, year: first.year, tmdb_id: first.tmdb_id, imdb_id: first.imdb_id,
     season: first.season, format: first.format, disc_name: first.disc_name, disc_label: first.disc_label,
-    submitters: rows.length, agree: agree.length,
-    confirmed: agree.length >= CONFIRM && agree.length > (ranked[1] ? ranked[1].length : 0),
+    submitters: rows.length, agree: agree.length, reported,
+    confirmed: score(agree) >= CONFIRM && score(agree) > (ranked[1] ? score(ranked[1]) : 0),
     titles,
   };
 }
@@ -207,7 +268,10 @@ async function answerFor(env, key) {
   const { results } = await env.DB.prepare(
     `SELECT * FROM submissions WHERE (disc_key = ?1 OR alt_key = ?1) AND hidden = 0
        AND install NOT IN (SELECT install FROM blocked) ORDER BY created DESC LIMIT 500`).bind(key).all();
-  return consensus(results);
+  const reps = await env.DB.prepare(
+    `SELECT install, kind, tmdb_id, season FROM reports WHERE (disc_key = ?1 OR alt_key = ?1)
+       AND install NOT IN (SELECT install FROM blocked)`).bind(key).all();
+  return consensus(results, reps.results || []);
 }
 
 async function lookup(url, env) {
@@ -228,7 +292,7 @@ async function exportAll(req, env, ctx) {
   const discs = [];
   for (const r of results) {
     const a = await answerFor(env, r.disc_key);
-    if (a) discs.push({ disc_key: r.disc_key, ...a });
+    if (a && !a.disputed) discs.push({ disc_key: r.disc_key, ...a });
   }
   const res = json({ license: "CC0-1.0", exported_at: new Date().toISOString(), discs }, 200,
     { "Cache-Control": "public, max-age=3600" });
@@ -256,7 +320,31 @@ async function admin(req, url, env) {
          year, tmdb_id, season, hidden, titles FROM submissions ORDER BY created DESC LIMIT ?`).bind(limit).all();
     return json({ submissions: results.map(r => ({ ...r, titles: JSON.parse(r.titles) })) });
   }
+  if (p === "reports" && req.method === "GET") {
+    const limit = Math.min(200, int(url.searchParams.get("limit")) || 50);
+    const { results } = await env.DB.prepare(
+      `SELECT r.disc_key, MAX(r.created) created, r.kind, r.tmdb_id, r.season, COUNT(*) n, MAX(r.better) better,
+         (SELECT title FROM submissions s WHERE s.disc_key = r.disc_key AND s.tmdb_id = r.tmdb_id LIMIT 1) title,
+         (SELECT disc_label FROM submissions s WHERE s.disc_key = r.disc_key LIMIT 1) disc_label,
+         (SELECT 1 FROM locks l WHERE l.disc_key = r.disc_key) locked
+       FROM reports r GROUP BY r.disc_key, r.kind, r.tmdb_id, r.season ORDER BY created DESC LIMIT ?`).bind(limit).all();
+    const out = [];
+    for (const r of results) out.push({ ...r, better: r.better ? JSON.parse(r.better) : null, answer: await answerFor(env, r.disc_key) });
+    return json({ reports: out });
+  }
+  if (p === "feedback" && req.method === "GET") {
+    const limit = Math.min(200, int(url.searchParams.get("limit")) || 100);
+    const all = url.searchParams.get("all") === "1";
+    const { results } = await env.DB.prepare(
+      `SELECT id, created, substr(install, 1, 12) install, kind, title, body, contact, app_version, os, done FROM feedback
+         ${all ? "" : "WHERE done = 0"} ORDER BY created DESC LIMIT ?`).bind(limit).all();
+    return json({ feedback: results });
+  }
   const b = req.method === "POST" ? await req.json() : {};
+  if (p === "feedback") {
+    await env.DB.prepare("UPDATE feedback SET done = ? WHERE id = ?").bind(b.done === false ? 0 : 1, int(b.id)).run();
+    return json({ ok: true });
+  }
   if (p === "block") {
     const prefix = str(b.install, 64);
     if (prefix.length < 12) throw new Refusal("give at least the first 12 characters of the install");
