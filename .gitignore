@@ -18,3 +18,8 @@ tests/fixtures/
 Old settings (not used)/
 *.before-refile.*
 backups/
+# Marketing and internal notes never go in this repo
+marketing/
+internal/
+notes/
+*.internal.md

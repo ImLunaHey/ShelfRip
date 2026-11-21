@@ -59,14 +59,11 @@ _OLD_FILES = ("config.json", "disc_catalog.db", "learned_labels.json")
 # didn't store them, because the old defaults were right for it: write the old values in,
 # so an existing setup keeps behaving exactly as it did.
 _OLD_DEFAULTS = {
-    "output_root": r"E:\Ripped",
-    "plex_library_root": r"N:\Media Library",
     "media_server": "plex",
     "format_folders": True,
     "movie_format_folders": {"4k": "4K Blu-Ray", "bluray": "Blu-Ray", "dvd": "DVD"},
     "tv_format_folders": {"4k": "4K Blu Ray", "bluray": "Blu-Ray", "dvd": "DVD"},
     "use_dvdcompare": True,
-    "job_total_discs": 400,
 }
 
 

@@ -2,7 +2,7 @@ r"""
 record.py - make the naming fixtures from the discs you've filed. Run it on a PC with
 internet and your keys:
 
-    python tests\record.py "E:\Ripped"
+    python tests\record.py "D:\Ripped"
 
 For each disc in <rip folder>\_Filed it saves the disc's records and how Shelfrip names it
 today (tests\fixtures\<disc>\), plus every web answer that naming used (tests\fixtures\http.json,
@@ -28,7 +28,9 @@ import net  # noqa: E402
 
 
 def main() -> None:
-    rip_root = Path(sys.argv[1] if len(sys.argv) > 1 else r"E:\Ripped")
+    if len(sys.argv) < 2:
+        sys.exit("Usage: python tests/record.py <your rip folder>")
+    rip_root = Path(sys.argv[1])
     filed = sorted(d for d in (rip_root / "_Filed").iterdir() if (d / "disc_info.json").exists()
                    and (d / "plan.json").exists())
     # your settings, read directly: Shelfrip itself must start in a throwaway folder (below), so your
