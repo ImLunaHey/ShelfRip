@@ -144,6 +144,13 @@ The **Feedback** button at the top of the window sends your idea or problem stra
 who make Shelfrip, with no account needed. Leave your email if you'd like a reply. You can also open
 an issue on [GitHub](https://github.com/VandykeConnor/ShelfRip/issues).
 
+## Support Shelfrip
+
+Shelfrip is free and always will be. If it saves you time, you can
+[buy the project a coffee on Ko-fi](https://ko-fi.com/shelfrip) (it's the ♥ in the app's top bar too).
+Donations go towards code signing, so Windows stops warning people when they install it, and towards
+running the shared disc database.
+
 ## The shared disc database
 
 Every disc you file makes the next person's rip of the same disc more reliable. When sharing is on
