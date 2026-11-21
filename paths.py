@@ -28,6 +28,8 @@ APP_URL = "https://github.com/VandykeConnor/ShelfRip"
 USER_AGENT = f"Shelfrip/{APP_VERSION} ( {APP_URL} )"
 # GitHub repository ("owner/name") whose Releases hold new versions. Empty = don't check for updates.
 UPDATE_REPO = "VandykeConnor/ShelfRip"
+# Where the Donate button goes (empty hides it)
+DONATE_URL = ""
 # The shared Shelfrip disc database (server/ in the repository). Empty = off. "community_url" in config.json overrides it.
 COMMUNITY_URL = "https://shelfrip-db.shelfrip.workers.dev"
 

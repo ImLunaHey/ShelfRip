@@ -1,37 +1,108 @@
 # Shelfrip
 
-Rip DVDs, Blu-rays and 4K discs with MakeMKV, then name movies, episodes and extras automatically
-for Plex, Jellyfin, Emby or Kodi.
+Rip your DVDs, Blu-rays and 4K discs, and Shelfrip names everything for Plex, Jellyfin, Emby or
+Kodi: the movie, every episode in the right order, and the special features.
 
-Load your drives, and Shelfrip rips every disc as you insert it, works out what's on it (the movie,
-each episode, every special feature), shows you the proposed names to check, then files everything
-into your media library with the folder and file names your media server expects.
+Put a disc in. Shelfrip rips it with MakeMKV, works out what's on it, and shows you the names it
+picked. Check them, click **File**, and it lands in your media library exactly where your media
+server expects it.
 
-![First-run setup](docs/setup.png)
+![The Home tab: discs filed this week, today's goals and the discs waiting for review](docs/home.png)
 
 ## What it does
 
-- **Rips** every title worth keeping as a straight remux (no re-encoding, no quality loss), from
-  several drives at once. Auto-rip starts as soon as a disc goes in.
-- **Identifies** the disc: movie or TV, which TMDB entry, which title is the main feature, which
-  are episodes (and in what order), and which are extras.
-- **Names extras** from [TheDiscDB](https://thediscdb.com/) (and optionally DVDCompare) by matching
-  run times, and sorts them into Featurettes, Deleted Scenes, Behind the Scenes and so on.
-- **Splits TV discs** where several episodes were mastered as one long video, by chapter, with
-  MKVToolNix.
-- **Keeps every audio and subtitle track**, names commentary tracks properly, and sets your
-  language's audio as the default.
-- **Lets you review** everything on one page before anything is moved: change a match, rename an
-  extra, mark a title as an episode, skip clips. Discs that match with full confidence can be filed
-  automatically.
-- **Skips what you already have**: a disc whose movie or episodes are already in your library in the
-  same or better quality isn't ripped again.
-- **Music CDs** too: ripped to FLAC with cyanrip, verified with AccurateRip, named from MusicBrainz,
-  with cover art and lyrics.
+- **Rips without re-encoding.** Every title worth keeping is copied as-is (a "remux"), so there's no
+  loss of quality. It can rip from several drives at once, and with auto-rip on it starts as soon as
+  a disc goes in.
+- **Works out what's on the disc.** Movie or TV, which film or show, which title is the main feature,
+  which are episodes and in what order, and which are extras.
+- **Names the special features** by matching run times against [TheDiscDB](https://thediscdb.com/),
+  the Shelfrip disc database and (if you turn it on) DVDCompare, and sorts them into Featurettes,
+  Deleted Scenes, Behind the Scenes and so on.
+- **Skips the clutter.** Menus, copyright warnings, promos, trailers for other films and "Play All"
+  titles are set to Skip for you.
+- **Splits TV discs** where several episodes were mastered as one long video, by chapter.
+- **Keeps every audio and subtitle track**, names commentary tracks, and makes your language the
+  default.
+- **Lets you check everything first.** Nothing moves until you've seen the names. You can change the
+  match, rename an extra, or Keep and Skip titles. Discs that match with full confidence can be filed
+  on their own after 15 minutes.
+- **Fixes mistakes later.** If something was filed as the wrong movie, or the wrong show or season,
+  pick the right one on My shelf and Shelfrip moves and renames the files.
+- **Skips what you already have.** A disc that's already in your library in the same or better
+  quality isn't ripped again.
+- **Rips music CDs** too, to FLAC with cover art and lyrics, named from MusicBrainz.
+- **Makes it a bit of a game.** Every disc you file earns XP towards your next rank, with daily goals,
+  streaks and badges, and your collection fills a shelf.
+
+## Quick start (Windows 10 or 11)
+
+1. **Install [MakeMKV](https://www.makemkv.com/download/).** It does the actual ripping. It's free
+   while in beta, but needs a key: copy the current one from the
+   [MakeMKV forum](https://forum.makemkv.com/forum/viewtopic.php?t=1053) into MakeMKV under
+   Help › Register. You can also buy a permanent licence.
+2. **Download Shelfrip Setup** from [Releases](https://github.com/VandykeConnor/ShelfRip/releases) and
+   run it. It doesn't need admin rights.
+
+   Shelfrip isn't code-signed yet, so Windows may say **"Windows protected your PC"**. Click
+   **More info**, then **Run anyway**. If you'd rather not install anything, the portable zip on the
+   same page works too.
+3. **Open Shelfrip and answer the setup questions:**
+   - which media server you use,
+   - your media library folder (the one that holds `Movies` and `TV Shows`),
+   - a rip folder with room to spare (about 50 GB per Blu-ray and 100 GB per 4K disc while it works),
+   - your free TMDB key (see below).
+4. **Put a disc in** and click **Rip loaded discs now** (or turn on Auto-rip). When the rip finishes,
+   the disc shows up under **Review**.
+
+Optional extras: [MKVToolNix](https://mkvtoolnix.download/downloads.html) to split TV discs, and
+[cyanrip](https://github.com/cyanreg/cyanrip/releases) for music CDs. Settings › Programs shows
+what Shelfrip has found.
+
+### Getting your TMDB key (2 minutes, free)
+
+TMDB is where Shelfrip gets movie and episode names.
+
+1. Make an account at [themoviedb.org](https://www.themoviedb.org/signup).
+2. Go to [Settings › API](https://www.themoviedb.org/settings/api) and click **Create** (or "click here"
+   under Request an API Key). Choose **Developer**, accept the terms and describe it as personal
+   use, for example "Naming my own disc backups".
+3. Copy the **API Key** (the shorter one, not the long "Read Access Token") into Shelfrip.
+
+### Other keys (optional)
+
+- **OMDb** ([omdbapi.com/apikey.aspx](https://www.omdbapi.com/apikey.aspx), free tier): a second
+  check of a movie's year and running time.
+- **Plex**: to have Shelfrip refresh Plex and check that each disc was matched, add your server's
+  address and token in Settings › Plex.
+  [How to find your Plex token](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/).
+
+## Checking a disc
+
+![The Review tab: each title on the disc with Keep or Skip, its type and its name](docs/review.png)
+
+Each ripped disc gets a card with the box art. If the cover isn't the disc in your hand, click
+**No, pick the right one**. Each title gets a row:
+
+- **Keep** or **Skip.** Skipped titles are deleted once the disc is filed.
+- **Type:** the movie, an episode, or a kind of extra.
+- **Name:** what the file will be called. The full path in your library is shown underneath.
+
+The ▶ button plays a title in your video player, if you want to see what it is. When the names look
+right, click **File N titles into Plex** (or your media server). The files are copied into your library and checked, the rip is cleared
+out, and the disc is ejected.
+
+## My shelf
+
+![My shelf: your filed discs as cases on a shelf, with format bands](docs/shelf.png)
+
+Everything you've filed, as cases on a shelf. Discs from the same season sit together as a box set.
+Click a case for its details. **Wrong movie?** and **Wrong show or season?** are there too, if
+something was filed under the wrong name.
 
 ## Media servers
 
-Pick yours in setup; ripping and review work the same, only the names differ.
+Pick yours during setup. Ripping and review work the same either way; only the names differ.
 
 | Server   | Folder              | Another cut of a film             | Extras                         |
 |----------|---------------------|-----------------------------------|--------------------------------|
@@ -40,41 +111,53 @@ Pick yours in setup; ripping and review work the same, only the names differ.
 | Emby     | `Alien (1979) [tmdbid=348]` | `Alien (1979) [tmdbid=348] - Director's Cut`       | same folders as Plex           |
 | Kodi     | `Alien (1979)`              | `Alien (1979) - Director's Cut`                    | `Extras\`                      |
 
-TV shows go in `TV Shows\Show (Year)\Season 1\Show (Year) - s01e01 - Title.mkv`. Existing libraries
-are recognised whichever style they use, and you can keep each format in its own folder
-(`Movies\Blu-Ray\...`, `Movies\DVD\...`) if you like.
+TV shows go in `TV Shows\Show (Year)\Season 1\Show (Year) - s01e01 - Title.mkv`. Shelfrip
+recognises an existing library whichever style it uses. You can also keep each format in its own
+folder (`Movies\Blu-Ray\...`, `Movies\DVD\...`).
 
-## Install (Windows)
+## Good to know
 
-1. Install [MakeMKV](https://www.makemkv.com/download/). It does the actual ripping. It's free while
-   in beta (use the current beta key from the MakeMKV forum) or you can buy a licence.
-2. Download **Shelfrip Setup** from [Releases](https://github.com/VandykeConnor/ShelfRip/releases) and
-   run it. No admin rights needed. There's also a portable zip.
-3. Open Shelfrip. The first-run setup asks for:
-   - your media server,
-   - your media library folder (the one holding `Movies` and `TV Shows`),
-   - a rip folder with room to spare (about 50 GB per Blu-ray, 100 GB per 4K disc),
-   - a free [TMDB API key](https://www.themoviedb.org/settings/api) (sign up, Settings › API, request
-     a key for personal use, copy the short "API Key").
-4. Optional: [MKVToolNix](https://mkvtoolnix.download/downloads.html) for splitting TV discs, and
-   [cyanrip](https://github.com/cyanreg/cyanrip/releases) for music CDs.
+- Shelfrip opens in its own window. Closing the window keeps it running as an icon by the clock, so
+  discs keep ripping. Click the icon to open it again, or right-click it to pause auto-rip or quit.
+- Behind the window is a small web server at `http://127.0.0.1:8765` that only your own PC can reach.
+- Your settings, your disc history and a daily backup are kept in `%APPDATA%\Shelfrip`.
+- Shelfrip checks for new versions and can install them for you (Settings › Shelfrip).
 
-Shelfrip opens in its own window (it uses Microsoft Edge, which comes with Windows; without it, your
-browser). Closing the window keeps it running as an icon by the clock, so discs keep ripping: click
-the icon to open it again, or right-click it to pause auto-rip or quit. Behind the window is a small
-local web server at `http://127.0.0.1:8765`, only reachable from your own PC. Your settings live in `%APPDATA%\Shelfrip`.
+## Troubleshooting
 
-## Run from source
+**"No disc drives found".** Check that MakeMKV is installed and that Settings › Programs found it.
+If MakeMKV itself says its key has expired, copy the new beta key from the forum (step 1 above).
 
-Needs Python 3.10 or newer on Windows; only the standard library is used.
+**It picked the wrong movie or show.** Before filing, click **No, pick the right one** on the card.
+After filing, open the disc on My shelf and use **Wrong movie?** or **Wrong show or season?**.
 
-```
-python app.py
-```
+**An extra has a name like "Extra 03 (2m31s)".** Nothing could name it. Play it, then type a name or
+set it to Skip.
 
-or double-click `Run Shelfrip.bat`. To build the installer yourself, run `Build Installer.bat`
-(needs [Inno Setup 6](https://jrsoftware.org/isdl.php) for the Setup exe; without it you get the
-portable zip).
+**Anything else.** Click **Feedback** at the top of the window. For a problem, Settings › Shelfrip ›
+**Make a problem report** saves a zip of the logs, with your keys removed, which you can attach to
+a [GitHub issue](https://github.com/VandykeConnor/ShelfRip/issues).
+
+## Feedback
+
+The **Feedback** button at the top of the window sends your idea or problem straight to the people
+who make Shelfrip, with no account needed. Leave your email if you'd like a reply. You can also open
+an issue on [GitHub](https://github.com/VandykeConnor/ShelfRip/issues).
+
+## The shared disc database
+
+Every disc you file makes the next person's rip of the same disc more reliable. When sharing is on
+(you're asked during setup, and it's in Settings), Shelfrip sends what each title on the disc turned
+out to be: the movie, which episode, the extra's name and category, or that you skipped it. When
+anyone rips that disc later, Shelfrip asks the database first and uses the answer most people agreed
+on. An answer that only one person has given yet is still used, but the review page says so and the
+disc waits for you instead of being filed automatically. If you file a disc as something other than
+the shared answer, that counts against the answer, so a wrong entry gets corrected.
+
+Only the disc's fingerprint, its label, the title lengths and sizes, and the names chosen are sent.
+Nothing about you, your files or your library is sent. Your install is identified by a random id,
+which is stored only as a salted hash. The whole database can be downloaded (CC0) from `/v1/export`.
+The server code, and how answers are decided, are in [server/](server/).
 
 ## Where the names come from
 
@@ -85,28 +168,22 @@ portable zip).
 - [DVDCompare](https://www.dvdcompare.net/): extras lists by release. Off by default; turn it on in Settings.
 - [MusicBrainz](https://musicbrainz.org/), Cover Art Archive and [LRCLIB](https://lrclib.net/) for music.
 
-## The shared disc database
+## Run from source
 
-Every disc you file makes the next person's rip of the same disc more reliable. When sharing is on
-(you're asked during setup, and it's in Settings), Shelfrip sends what each title on the disc turned
-out to be: the movie, which episode, the extra's name and category, or that you skipped it. When
-anyone rips that disc later, Shelfrip asks the database first and uses the answer most people agreed
-on. An answer only one person has given yet is still used, but the review page says so and the disc
-waits for you instead of being filed automatically.
+You need Python 3.10 or newer on Windows. Only the standard library is used.
 
-Only the disc's fingerprint, its label, title lengths and sizes, and the names chosen are sent:
-nothing about you, your files or your library. Your install is identified by a random id, stored only
-as a salted hash. The whole database can be downloaded (CC0) from `/v1/export`. The server code and
-how answers are decided are in [server/](server/).
+```
+python app.py
+```
 
-## Roadmap
-
-- A hosted web interface for the review page.
+You can also double-click `Run Shelfrip.bat`. To build the installer yourself, run
+`Build Installer.bat`. The Setup exe needs [Inno Setup 6](https://jrsoftware.org/isdl.php); without
+it you get the portable zip. Tests: `python tests\run_all.py`.
 
 ## Legal
 
-Shelfrip doesn't decrypt anything: MakeMKV does the ripping, and you install and license it yourself.
-Shelfrip is for organising backups of discs you own. Copyright law differs between countries, and you
-are responsible for following the law where you live.
+Shelfrip doesn't decrypt anything. MakeMKV does the ripping, and you install and license it
+yourself. Shelfrip is for organising backups of discs you own. Copyright law differs between
+countries, and you are responsible for following the law where you live.
 
 Licensed under the [MIT License](LICENSE.txt). See [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt).

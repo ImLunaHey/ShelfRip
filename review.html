@@ -180,6 +180,9 @@ tr.splitrow td{background:var(--card2);border-bottom:1px solid var(--line)}
 .play{border-radius:50%;width:34px;height:34px;padding:0;display:flex;align-items:center;justify-content:center}
 @media (max-width:700px){ td.src{display:none} th.src{display:none} .lvl{min-width:0} .lvl .t{display:none} .poster.big{width:110px;height:162px} }
 #upd{font-size:13px;font-weight:600}
+@media (max-width:1440px){header .sub{display:none}header{gap:10px}#donate .dt{display:none}}
+#donate{font-size:13px;font-weight:600;color:#E0607E;text-decoration:none;padding:6px 10px;border-radius:10px}
+#donate:hover{background:var(--card2)}
 .setwrap{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
 .setnav{flex:0 1 220px;display:grid;gap:2px;position:sticky;top:80px}
 .setnav button{display:flex;gap:10px;align-items:center;text-align:left;border:0;background:transparent;color:var(--muted);padding:10px 12px;border-radius:10px;font-weight:500}
@@ -286,6 +289,7 @@ dialog.disc .fb .chk{display:flex;gap:8px;align-items:center;color:var(--ink)}
   <button id="scan" class="tab-review">Check for new rips</button>
   <a id="upd" class="hide" target="_blank" rel="noopener"></a>
   <div class="hud hide" id="hud"></div>
+  <a id="donate" class="hide" target="_blank" rel="noopener" title="Shelfrip is free. Donations help pay for things like code signing.">&#9829;<span class="dt"> Donate</span></a>
   <button id="fbbtn" title="Send an idea or report a problem">Feedback</button>
   <button id="quit" class="hide">Quit</button>
 </header>
@@ -322,7 +326,7 @@ function poster(kind, id, season, title, cls = "", mbid = ""){
   const k = kind === "music" ? mbid : `${kind}:${id}:${season ?? ""}`, url = SHOWN[k];
   return `<div class="poster ${cls} ${url ? "has" : ""}" ${data} role="img" aria-label="Box art: ${esc(title)}" style="background-color:${tint(title)}${url ? `;background-image:url('${esc(url)}')` : ""}"><span>${esc(title)}</span></div>`;
 }
-let SOUND = true, SHARING = true, AC = null;
+let SOUND = true, SHARING = true, AC = null, DONATE = "";
 function chime(kind){  // made on the spot with Web Audio: no sound files to ship
   if (!SOUND) return;
   try {
@@ -1634,7 +1638,7 @@ function renderSettings(){
         ${g.id === "app" ? `<div class="srow"><div class="lbl"><label>Something not working?</label><div class="help">Makes a zip of Shelfrip's logs and settings, with your keys removed, to attach to a bug report.</div></div>
           <div class="ctl" id="probctl"><button id="probbtn">Make a problem report</button></div></div><div id="inbox"></div>` : ""}
         <p class="foot2">Saved as you go, in ${esc(j.path)}. Keys are never shown again once saved.<br>
-          Shelfrip ${esc((j.version||{}).current || "")}. This product uses the TMDB API but is not endorsed or certified by <a href="https://www.themoviedb.org/" target="_blank" rel="noopener">TMDB</a>.
+          Shelfrip ${esc((j.version||{}).current || "")} is free.${DONATE ? ` If it saves you time, you can <a href="${esc(DONATE)}" target="_blank" rel="noopener">support its development</a>.` : ""} This product uses the TMDB API but is not endorsed or certified by <a href="https://www.themoviedb.org/" target="_blank" rel="noopener">TMDB</a>.
           Ripping is done by MakeMKV, which you install and license yourself.</p>
       </section>
     </div>`;
@@ -1697,7 +1701,8 @@ async function loadSettings(){
   document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
   let t = "drives"; try { t = localStorage.getItem("tab") || "drives"; } catch(e){}
   if (["drives","review","library","settings"].includes(location.hash.slice(1))) t = location.hash.slice(1);  // e.g. the tray's "Review" item
-  try { const v = await api("/api/version"); if (v.latest) showUpdate(v); } catch(e){}
+  try { const v = await api("/api/version"); if (v.latest) showUpdate(v);
+        if (/^https:\/\//.test(v.donate || "")){ $("#donate").href = v.donate; $("#donate").classList.remove("hide"); DONATE = v.donate; } } catch(e){}
   try { const s = await api("/api/settings"); SOUND = ((s.settings||[]).find(x => x.key === "sounds") || {value:true}).value !== false; SHARING = ((s.settings||[]).find(x => x.key === "share_discs") || {value:true}).value !== false; if (s.first_run || (s.setup||[]).some(x => !x.ok && x.required)) t = "settings"; } catch(e){}
   await loadProgress(false);
   showTab(t);
