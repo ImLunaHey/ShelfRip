@@ -1,0 +1,17 @@
+name: Idea or request
+description: Something Shelfrip should do, or do better.
+title: "Idea: "
+labels: ["idea"]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like Shelfrip to do?
+      description: Tell us what you were trying to do when you wished it worked differently. That helps more than a finished design.
+    validations:
+      required: true
+  - type: textarea
+    id: now
+    attributes:
+      label: What do you do today instead?
+      description: Optional. A workaround, another tool, doing it by hand...

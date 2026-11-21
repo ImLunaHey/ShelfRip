@@ -1,0 +1,12 @@
+# Blank issues stay on: the Feedback button in Shelfrip opens a ready-filled issue without a template.
+blank_issues_enabled: true
+contact_links:
+  - name: Ask a question or share your setup
+    url: https://github.com/Shelfrip/ShelfRip/discussions
+    about: How-to questions, ideas you want to talk through, and screenshots of your shelf.
+  - name: MakeMKV says its key has expired
+    url: https://forum.makemkv.com/forum/viewtopic.php?t=1053
+    about: Copy the current beta key into MakeMKV under Help > Register. That's MakeMKV, not Shelfrip.
+  - name: Send feedback without a GitHub account
+    url: https://github.com/Shelfrip/ShelfRip#feedback
+    about: Click Feedback at the top of the Shelfrip window. Leave your email if you'd like a reply.

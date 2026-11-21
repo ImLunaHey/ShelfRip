@@ -1,0 +1,47 @@
+name: Something isn't working
+description: An error, a crash, a rip that fails, or a button that does nothing.
+title: "Bug: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead. Screenshots help.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Shelfrip version
+      description: Settings > Shelfrip shows it.
+      placeholder: "1.0.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How do you run Shelfrip?
+      options:
+        - Installer (Shelfrip Setup)
+        - Portable zip
+        - From source (python app.py)
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 24H2"
+  - type: dropdown
+    id: server
+    attributes:
+      label: Media server
+      options:
+        - Plex
+        - Jellyfin
+        - Emby
+        - Kodi
+  - type: textarea
+    id: report
+    attributes:
+      label: Problem report
+      description: Settings > Shelfrip > **Make a problem report** saves a zip of the logs with your keys removed. Drag it in here.

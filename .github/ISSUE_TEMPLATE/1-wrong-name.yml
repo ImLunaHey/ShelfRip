@@ -1,0 +1,52 @@
+name: A disc was named wrong
+description: The wrong movie or show, episodes out of order, or an extra with the wrong name or type.
+title: "Wrong name: "
+labels: ["naming"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks! Wrong names are the most useful thing you can report: each one makes the next rip of that disc better.
+        If you fixed it in Shelfrip (**No, pick the right one**, or **Wrong movie?** on My shelf) and file with sharing on, the shared database already learns from it. This issue helps fix the cause.
+  - type: input
+    id: disc
+    attributes:
+      label: Which disc?
+      description: The title, the edition and the format. A link to the release on Blu-ray.com or DVDCompare helps a lot.
+      placeholder: "Alien (1979), 4K Ultra HD, 2019 40th Anniversary edition"
+    validations:
+      required: true
+  - type: textarea
+    id: wrong
+    attributes:
+      label: What Shelfrip picked, and what it should have been
+      description: A screenshot of the Review card is perfect.
+      placeholder: |
+        Picked: Alien (2009)
+        Should be: Alien (1979)
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of mistake?
+      options:
+        - The wrong movie or show
+        - The wrong season, or episodes in the wrong order
+        - An extra with the wrong name or type
+        - A title skipped that should be kept (or kept that should be skipped)
+        - TV episodes not split
+        - Something else
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Shelfrip version
+      description: Settings > Shelfrip shows it.
+      placeholder: "1.0.1"
+  - type: textarea
+    id: report
+    attributes:
+      label: Problem report (optional)
+      description: Settings > Shelfrip > **Make a problem report** saves a zip of the logs with your keys removed. Drag it in here.

@@ -1,11 +1,20 @@
 # Shelfrip
 
+[![Latest release](https://img.shields.io/github/v/release/Shelfrip/ShelfRip?label=download&color=6C9BFF)](https://github.com/Shelfrip/ShelfRip/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/Shelfrip/ShelfRip/total?color=4CC38A)](https://github.com/Shelfrip/ShelfRip/releases)
+![Windows 10 and 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0E1014)
+[![Tests](https://github.com/Shelfrip/ShelfRip/actions/workflows/tests.yml/badge.svg)](https://github.com/Shelfrip/ShelfRip/actions/workflows/tests.yml)
+[![MIT License](https://img.shields.io/github/license/Shelfrip/ShelfRip?color=F2B33D)](LICENSE.txt)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-support%20Shelfrip-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/shelfrip)
+
 Rip your DVDs, Blu-rays and 4K discs, and Shelfrip names everything for Plex, Jellyfin, Emby or
 Kodi: the movie, every episode in the right order, and the special features.
 
 Put a disc in. Shelfrip rips it with MakeMKV, works out what's on it, and shows you the names it
 picked. Check them, click **File**, and it lands in your media library exactly where your media
 server expects it.
+
+**[Download Shelfrip for Windows](https://github.com/Shelfrip/ShelfRip/releases/latest)** · free, no account, nothing to subscribe to.
 
 ![The Home tab: discs filed this week, today's goals and the discs waiting for review](docs/home.png)
 
@@ -142,7 +151,12 @@ a [GitHub issue](https://github.com/Shelfrip/ShelfRip/issues).
 
 The **Feedback** button at the top of the window sends your idea or problem straight to the people
 who make Shelfrip, with no account needed. Leave your email if you'd like a reply. You can also open
-an issue on [GitHub](https://github.com/Shelfrip/ShelfRip/issues).
+an issue on [GitHub](https://github.com/Shelfrip/ShelfRip/issues/new/choose).
+
+- **A disc was named wrong?** [Tell us which one](https://github.com/Shelfrip/ShelfRip/issues/new?template=1-wrong-name.yml).
+  These reports make the biggest difference.
+- **Questions, ideas, or your shelf to show off?** Post in [Discussions](https://github.com/Shelfrip/ShelfRip/discussions).
+- **Want to help?** See [CONTRIBUTING.md](CONTRIBUTING.md). You don't need to write code.
 
 ## Support Shelfrip
 
