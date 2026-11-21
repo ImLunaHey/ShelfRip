@@ -999,7 +999,7 @@ class Handler(review.Handler):
                 return self.send(200, REPORT)
             if u.path == "/api/version":
                 import platform
-                return self.send(200, {**UPDATE, "os": platform.platform(terse=True)})
+                return self.send(200, {**UPDATE, "os": platform.platform(terse=True), "donate": paths.DONATE_URL})
             if u.path == "/api/inbox":  # feedback and wrong-answer reports, on the copy that deployed the database
                 import community
                 if not community.admin_token():
