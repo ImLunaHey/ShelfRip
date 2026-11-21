@@ -910,10 +910,12 @@ def check_update() -> None:
         if tag and _ver(tag) > _ver(paths.APP_VERSION):
             UPDATE.update(latest=tag.lstrip("v"), url=rel.get("html_url") or "")
             import re as _re
+            # downloads must come from this same repo, whatever its owner is called now (repos can move)
+            home = str(rel.get("html_url") or "").split("/releases/")[0].lower()
             for a in rel.get("assets") or []:
                 url = str(a.get("browser_download_url") or "")
-                if _re.search(r"setup.*\.exe$", str(a.get("name") or ""), _re.I) and \
-                        url.startswith(f"https://github.com/{paths.UPDATE_REPO}/releases/download/"):
+                if _re.search(r"setup.*\.exe$", str(a.get("name") or ""), _re.I) and home.startswith("https://github.com/") and \
+                        url.lower().startswith(home + "/releases/download/"):
                     UPDATE.update(installer=url, size=int(a.get("size") or 0), can_install=installed_copy())
     except Exception:
         pass

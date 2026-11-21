@@ -39,7 +39,7 @@ export default {
     const url = new URL(req.url);
     try {
       if (url.pathname === "/" || url.pathname === "/v1") return json({ name: "Shelfrip disc database", version: 1,
-        docs: "https://github.com/VandykeConnor/ShelfRip/tree/main/server" });
+        docs: "https://github.com/Shelfrip/ShelfRip/tree/main/server" });
       if (url.pathname === "/v1/submit" && req.method === "POST") return await submit(req, env);
       if (url.pathname === "/v1/report" && req.method === "POST") return await report(req, env);
       if (url.pathname === "/v1/feedback" && req.method === "POST") return await feedback(req, env);

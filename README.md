@@ -41,7 +41,7 @@ server expects it.
    while in beta, but needs a key: copy the current one from the
    [MakeMKV forum](https://forum.makemkv.com/forum/viewtopic.php?t=1053) into MakeMKV under
    Help › Register. You can also buy a permanent licence.
-2. **Download Shelfrip Setup** from [Releases](https://github.com/VandykeConnor/ShelfRip/releases) and
+2. **Download Shelfrip Setup** from [Releases](https://github.com/Shelfrip/ShelfRip/releases) and
    run it. It doesn't need admin rights.
 
    Shelfrip isn't code-signed yet, so Windows may say **"Windows protected your PC"**. Click
@@ -136,13 +136,13 @@ set it to Skip.
 
 **Anything else.** Click **Feedback** at the top of the window. For a problem, Settings › Shelfrip ›
 **Make a problem report** saves a zip of the logs, with your keys removed, which you can attach to
-a [GitHub issue](https://github.com/VandykeConnor/ShelfRip/issues).
+a [GitHub issue](https://github.com/Shelfrip/ShelfRip/issues).
 
 ## Feedback
 
 The **Feedback** button at the top of the window sends your idea or problem straight to the people
 who make Shelfrip, with no account needed. Leave your email if you'd like a reply. You can also open
-an issue on [GitHub](https://github.com/VandykeConnor/ShelfRip/issues).
+an issue on [GitHub](https://github.com/Shelfrip/ShelfRip/issues).
 
 ## Support Shelfrip
 

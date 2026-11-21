@@ -1786,7 +1786,7 @@ function feedbackDialog(){
       if (f.v){ try { const v = await api("/api/version"); body += `\n\n---\nShelfrip ${v.current || "?"}${v.os ? ` on ${v.os}` : ""}`; } catch(e){} }
       const name = FB_KINDS.find(x => x[0] === FBKIND)[1];
       const title = f.t || f.m ? `${FBKIND === "problem" ? "Bug" : name}: ${f.t || f.m.split("\n")[0].slice(0, 80)}` : "";
-      window.open(`https://github.com/VandykeConnor/ShelfRip/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`, "_blank", "noopener");
+      window.open(`https://github.com/Shelfrip/ShelfRip/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`, "_blank", "noopener");
     };
     const wireGh = () => d.querySelectorAll("#fbgh, #fbgh2").forEach(a => a.onclick = github);
     wireGh();

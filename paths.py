@@ -22,12 +22,12 @@ import sys
 from pathlib import Path
 
 APP_NAME = "Shelfrip"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 # Shown to the web services the app talks to (MusicBrainz asks every app for one).
-APP_URL = "https://github.com/VandykeConnor/ShelfRip"
+APP_URL = "https://github.com/Shelfrip/ShelfRip"
 USER_AGENT = f"Shelfrip/{APP_VERSION} ( {APP_URL} )"
 # GitHub repository ("owner/name") whose Releases hold new versions. Empty = don't check for updates.
-UPDATE_REPO = "VandykeConnor/ShelfRip"
+UPDATE_REPO = "Shelfrip/ShelfRip"
 # Where the Donate button goes (empty hides it)
 DONATE_URL = "https://ko-fi.com/shelfrip"
 # The shared Shelfrip disc database (server/ in the repository). Empty = off. "community_url" in config.json overrides it.
