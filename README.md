@@ -158,7 +158,7 @@ an issue on [GitHub](https://github.com/Shelfrip/ShelfRip/issues/new/choose).
   These reports make the biggest difference.
 - **Questions, ideas, or your shelf to show off?** Post in [Discussions](https://github.com/Shelfrip/ShelfRip/discussions).
 - **Want to help?** See [CONTRIBUTING.md](CONTRIBUTING.md). You don't need to write code.
-- **News and new versions:** follow [@shelfrip.bsky.social](https://bsky.app/profile/shelfrip.bsky.social) on Bluesky.
+- **News and new versions:** follow [@shelfrip.com](https://bsky.app/profile/shelfrip.com) on Bluesky.
 
 ## Support Shelfrip
 
