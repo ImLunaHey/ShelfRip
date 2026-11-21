@@ -2,8 +2,9 @@
 
 If you find a security problem in Shelfrip or in the shared disc database server, please don't open
 a public issue. Report it privately from the
-[Security tab](https://github.com/Shelfrip/ShelfRip/security/advisories/new) instead, and we'll reply
-as soon as we can.
+[Security tab](https://github.com/Shelfrip/ShelfRip/security/advisories/new) instead, or email
+[support@shelfrip.com](mailto:support@shelfrip.com) with "Security" in the subject. We'll reply as soon
+as we can.
 
 Useful things to know:
 

@@ -150,7 +150,8 @@ a [GitHub issue](https://github.com/Shelfrip/ShelfRip/issues).
 ## Feedback
 
 The **Feedback** button at the top of the window sends your idea or problem straight to the people
-who make Shelfrip, with no account needed. Leave your email if you'd like a reply. You can also open
+who make Shelfrip, with no account needed. Leave your email if you'd like a reply. You can also email
+[support@shelfrip.com](mailto:support@shelfrip.com) or open
 an issue on [GitHub](https://github.com/Shelfrip/ShelfRip/issues/new/choose).
 
 - **A disc was named wrong?** [Tell us which one](https://github.com/Shelfrip/ShelfRip/issues/new?template=1-wrong-name.yml).
