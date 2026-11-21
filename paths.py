@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 
 APP_NAME = "Shelfrip"
-APP_VERSION = "0.9.0"
+APP_VERSION = "1.0.0"
 # Shown to the web services the app talks to (MusicBrainz asks every app for one).
 APP_URL = "https://github.com/VandykeConnor/ShelfRip"
 USER_AGENT = f"Shelfrip/{APP_VERSION} ( {APP_URL} )"
