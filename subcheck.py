@@ -50,7 +50,7 @@ from pathlib import Path
 
 HERE = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 NOWIN = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-SAMPLES = 60          # subtitle lines read per title or episode
+SAMPLES = 200         # subtitle lines read per title or episode (OCR is about 1 s per 60)
 EDGE = 90             # seconds skipped at the start and end of long titles (theme songs, credits)
 TESSERACT_URL = "https://github.com/UB-Mannheim/tesseract/wiki"
 
@@ -501,6 +501,7 @@ class Matcher:
     """Which of a list of words appear in the OCR text, allowing for OCR slips."""
 
     def __init__(self, text: str):
+        self.flat = " " + " ".join(re.findall(r"[a-z0-9]+", fold(text))) + " "
         self.words = set(words(text))
         self.by_first: dict[str, list[str]] = {}
         for w in self.words:
@@ -521,32 +522,81 @@ class Matcher:
         self.memo[w] = ok
         return ok
 
+    def phrase(self, seq: list[str]) -> bool:
+        return bool(seq) and f" {' '.join(seq)} " in self.flat
+
 
 def weigh(profiles: dict) -> dict[str, float]:
     """Rarer words count for more: a name every episode shares tells nothing apart."""
     n = len(profiles)
     df: dict[str, int] = {}
-    for words_ in profiles.values():
-        for w in set(words_):
+    for p in profiles.values():
+        for w in p["words"]:
             df[w] = df.get(w, 0) + 1
     return {w: math.log((n + 1) / (d + 0.5)) + 0.1 for w, d in df.items()}
 
 
-def score(m: Matcher, profile: set[str], weight: dict[str, float]) -> tuple[float, list[str]]:
-    hit = sorted((w for w in profile if m.has(w)), key=lambda w: -weight.get(w, 0))
-    total = sum(weight.get(w, 0) for w in profile) or 1
-    return sum(weight.get(w, 0) for w in hit) / math.sqrt(total), hit
+def common_on_disc(matchers: list, profiles: dict) -> dict[str, float]:
+    """Words heard in nearly every title on this disc ("lord", the hero's name) say little about
+    which episode a title is, so they count for less."""
+    if len(matchers) < 3:
+        return {}
+    out = {}
+    for w in {w for p in profiles.values() for w in p["words"]}:
+        if sum(m.has(w) for m in matchers) >= 0.75 * len(matchers):
+            out[w] = 0.3
+    return out
+
+
+def score(m: Matcher, prof: dict, weight: dict[str, float], damp: dict[str, float] | None = None
+          ) -> tuple[float, list[str]]:
+    damp = damp or {}
+    ws = prof["words"]
+    val = {w: weight.get(w, 0) * ws[w] * damp.get(w, 1.0) for w in ws if m.has(w)}
+    hit = sorted(val, key=lambda w: -val[w])
+    total = sum(weight.get(w, 0) * ws[w] for w in ws) or 1
+    sc = sum(val.values()) / math.sqrt(total)
+    if m.phrase(prof.get("phrase")):        # the episode's own title said out loud
+        sc += 1.0
+        hit.insert(0, '"' + " ".join(prof["phrase"]) + '"')
+    return sc, hit
 
 
 # --------------------------------------------------------------------------- TMDB profiles
+# A profile is {"name", "words": {word: how much it counts}, "phrase": title words, "raw": what TMDB said}.
+# Character names count most, other names in the summary next, ordinary summary words least.
+
+def proper_nouns(text: str) -> list[str]:
+    out = []
+    for sent in re.split(r"(?<=[.!?;:])\s+", text or ""):
+        for t in re.findall(r"[^\W\d_][\w'\u2019-]*", sent):   # sentence starters too: STOP drops "The", "When"...
+            if t[0].isupper():
+                out += words(t)
+    return out
+
+
+def make_profile(name: str, title: str, overview: str, chars: list[str]) -> dict:
+    ws: dict[str, float] = {}
+
+    def add(lst, mult):
+        for w in lst:
+            ws[w] = max(ws.get(w, 0.0), mult)
+    add(words(overview), 0.35)
+    add(words(title), 0.5)
+    add(proper_nouns(overview), 1.0)
+    add(character_words(chars), 1.2)
+    phrase = re.findall(r"[a-z0-9]+", fold(title))
+    return {"name": name, "words": ws, "phrase": phrase if len(phrase) >= 2 else [],
+            "raw": {"title": title, "overview": overview, "characters": [c for c in chars if c]}}
+
 
 def episode_profiles(tmdb, tid: str, season: int) -> dict[int, dict]:
     data = tmdb.season(int(tid), season)
     out = {}
     for e in data.get("episodes", []):
         chars = [g.get("character") for g in e.get("guest_stars") or []]
-        ws = set(words(e.get("name") or "")) | set(words(e.get("overview") or "")) | set(character_words(chars))
-        out[int(e["episode_number"])] = {"name": e.get("name") or "", "words": ws}
+        out[int(e["episode_number"])] = make_profile(e.get("name") or "", e.get("name") or "",
+                                                     e.get("overview") or "", chars)
     return out
 
 
@@ -556,10 +606,9 @@ def movie_profile(tmdb, mid) -> dict:
         cast = tmdb.get(f"/movie/{int(mid)}/credits").get("cast", [])[:40]
     except Exception:
         cast = []
-    ws = set(words(m.get("title") or "")) | set(words(m.get("overview") or "")) | set(words(m.get("tagline") or "")) \
-        | set(character_words([c.get("character") for c in cast]))
-    return {"name": f"{m.get('title')} ({(m.get('release_date') or '')[:4]})", "words": ws, "kind": "movie",
-            "id": str(mid)}
+    p = make_profile(f"{m.get('title')} ({(m.get('release_date') or '')[:4]})", m.get("title") or "",
+                     f"{m.get('overview') or ''} {m.get('tagline') or ''}", [c.get("character") for c in cast])
+    return dict(p, kind="movie", id=str(mid))
 
 
 def show_profile(tmdb, tid) -> dict:
@@ -569,8 +618,8 @@ def show_profile(tmdb, tid) -> dict:
         chars = [r.get("character") for c in cast for r in c.get("roles") or []]
     except Exception:
         chars = []
-    ws = set(words(s.get("name") or "")) | set(words(s.get("overview") or "")) | set(character_words(chars))
-    return {"name": f"{s.get('name')} (TV series)", "words": ws, "kind": "tv", "id": str(tid)}
+    p = make_profile(f"{s.get('name')} (TV series)", s.get("name") or "", s.get("overview") or "", chars)
+    return dict(p, kind="tv", id=str(tid))
 
 
 # --------------------------------------------------------------------------- timing checks
@@ -743,6 +792,7 @@ def check_folder(folder: Path, cfg: dict, tmdb, exe: str | None, langs: set[str]
                 row["status"] = "picture subtitles, Tesseract not installed"
             row["ocr_seconds"] = round(time.time() - t0, 1)
             row["sample"] = " / ".join(ln.strip() for ln in u["text"].splitlines() if ln.strip())[:300]
+            row["text"] = u["text"]   # the whole OCR result, kept while the scoring is being tuned
         # ---- timing: split points, and copies
         for it in plan.get("items", []):
             sp = it.get("split") if it.get("needs_split") else None
@@ -799,13 +849,17 @@ def _judge_tv(plan, todo, tmdb, report, log):
     if not profs:
         log("   TMDB has no episode list for this season")
         return
-    weight = weigh({k: v["words"] for k, v in profs.items()})
+    weight = weigh(profs)
+    report["tmdb"] = {str(k): v["raw"] for k, v in profs.items()}
     eps = [u for u in todo if u.get("text") and u["episode"] is not None]
     kept = [k for k, u in enumerate(eps) if u["item"].get("action") != "skip"]
+    for u in eps:
+        u["m"] = Matcher(u["text"])
+    damp = common_on_disc([eps[k]["m"] for k in kept], profs)
     table: dict[int, dict[int, tuple[float, list[str]]]] = {}
     for idx, u in enumerate(eps):
-        m = Matcher(u["text"])
-        table[idx] = {e: score(m, p["words"], weight) for e, p in profs.items()}
+        m = u["m"]
+        table[idx] = {e: score(m, p, weight, damp) for e, p in profs.items()}
         ranked = sorted(table[idx], key=lambda e: -table[idx][e][0])
         best = ranked[0]
         planned = u["episode"]
@@ -863,12 +917,13 @@ def _judge_movie(plan, todo, tmdb, report, log):
         shows = []
     for s in shows:
         cands["tv:" + str(s["id"])] = show_profile(tmdb, s["id"])
-    weight = weigh({k: v["words"] for k, v in cands.items()})
+    weight = weigh(cands)
+    report["tmdb"] = {v["name"]: v["raw"] for v in cands.values()}
     for u in todo:
         if not u.get("text"):
             continue
         m = Matcher(u["text"])
-        sc = {k: score(m, p["words"], weight) for k, p in cands.items()}
+        sc = {k: score(m, p, weight) for k, p in cands.items()}
         best = max(sc, key=lambda k: sc[k][0])
         mine = sc[str(plan["tmdb_id"])]
         row = u["row"]
