@@ -1,0 +1,65 @@
+"""
+test_library_dirs.py - the Movies and TV Shows folders inside the media library: chosen in
+Settings, or found whatever their case or spacing ("movies", "TVShows"), else the defaults.
+"""
+
+from __future__ import annotations
+
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import discs  # noqa: E402
+
+TMP = discs.setup_env({"tmdb_api_key": ""})
+import identify  # noqa: E402
+
+
+def lib(*folders: str) -> Path:
+    root = Path(tempfile.mkdtemp(dir=TMP))
+    for f in folders:
+        (root / f).mkdir(parents=True)
+    return root
+
+
+def dirs(root: Path, **cfg) -> dict:
+    return identify.library_dirs({"plex_library_root": str(root), **cfg})
+
+
+class LibraryDirs(unittest.TestCase):
+    def test_defaults_for_a_new_library(self):
+        self.assertEqual(dirs(lib()), {"movies": "Movies", "tv": "TV Shows"})
+        self.assertEqual(identify.library_dirs({"plex_library_root": ""}), {"movies": "Movies", "tv": "TV Shows"})
+
+    def test_existing_folders_any_case_or_spacing(self):
+        self.assertEqual(dirs(lib("movies", "TVShows")), {"movies": "movies", "tv": "TVShows"})
+        self.assertEqual(dirs(lib("Films", "tv_shows", "Music")), {"movies": "Films", "tv": "tv_shows"})
+        self.assertEqual(dirs(lib("Movies", "TV Shows", "TV")), {"movies": "Movies", "tv": "TV Shows"})
+
+    def test_chosen_folder_wins_and_matches_case_on_disk(self):
+        root = lib("Movies", "Kids Movies", "Series")
+        self.assertEqual(dirs(root, movies_folder="kids movies", tv_folder="")["movies"], "Kids Movies")
+        self.assertEqual(dirs(root, tv_folder="Video\\Shows")["tv"], "Video\\Shows")
+        self.assertEqual(dirs(root)["tv"], "Series")
+
+    def test_clean_lib_dir(self):
+        c = identify.clean_lib_dir
+        self.assertEqual(c("movies", ""), "movies")
+        self.assertEqual(c(" Video/Films/ ", ""), "Video\\Films")
+        self.assertEqual(c(r"n:\media library\TVShows", r"N:\Media Library"), "TVShows")
+        self.assertEqual(c(r"\\NAS\Media\Movies", r"\\nas\media"), "Movies")
+        self.assertEqual(c(r"D:\Elsewhere\Movies", r"N:\Media Library"), "")  # not inside the library
+        self.assertEqual(c(r"..\Movies", r"N:\Media Library"), "")
+        self.assertEqual(c("", r"N:\Media Library"), "")
+
+    def test_index_library_reads_the_chosen_folders(self):
+        root = lib("movies/Some Film (2001) {tmdb-1}", "TVShows/Some Show (2002) {tmdb-2}")
+        got = identify.index_library(root, {**identify.DEFAULTS, "plex_library_root": str(root)})
+        self.assertEqual([m["title"] for m in got["movies"]], ["Some Film"])
+        self.assertEqual([s["title"] for s in got["shows"]], ["Some Show"])
+
+
+if __name__ == "__main__":
+    unittest.main()

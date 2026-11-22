@@ -49,6 +49,8 @@ SECRETS = ("tmdb_api_key", "omdb_api_key", "plex_token")
 SETTINGS = [  # (key, label, kind)
     ("output_root", "Rip folder (where discs are ripped to before review)", "text"),
     ("plex_library_root", "Media library folder (holds your Movies and TV Shows folders)", "text"),
+    ("movies_folder", "Movies folder inside the media library (empty = find it, else Movies)", "text"),
+    ("tv_folder", "TV shows folder inside the media library (empty = find it, else TV Shows)", "text"),
     ("media_server", "Media server (decides how files are named)", "select"),
     ("format_folders", "Separate folders per format (Movies\\Blu-Ray\\..., Movies\\DVD\\...)", "bool"),
     ("use_dvdcompare", "Also look up extras names on DVDCompare (reads its web pages)", "bool"),
@@ -945,6 +947,15 @@ def settings_view() -> dict:
         if kind == "select":
             row["choices"] = CHOICES.get(key, [])
         out.append(row)
+    lib = str(merged.get("plex_library_root") or "").strip()
+    found = identify.library_dirs(merged)
+    for row in out:  # what an empty Movies/TV folder setting means right now
+        kind = {"movies_folder": "movies", "tv_folder": "tv"}.get(row["key"])
+        if kind:
+            name = found[kind]
+            there = bool(lib) and os.path.isdir(os.path.join(lib, *name.split("\\")))
+            row["placeholder"] = f"{name} ({'found in your library' if there else 'made when the first disc is filed'})"
+            row["value"] = identify.clean_lib_dir(row["value"], lib) or row["value"]
     return {"settings": out, "path": str(identify.CONFIG_PATH), "setup": setup_check(), "version": UPDATE,
             "first_run": not raw.get("setup_done") and not raw.get("migrated_from")}
 
@@ -977,6 +988,13 @@ def save_settings(values: dict) -> None:
                 continue
         else:
             v = str(v).strip()
+        if key in ("movies_folder", "tv_folder") and v:
+            lib = str(values.get("plex_library_root", raw.get("plex_library_root")) or "").strip()
+            rel = identify.clean_lib_dir(v, lib)
+            if not rel:
+                raise ValueError("Pick a folder inside your media library folder"
+                                 + (f" ({lib})" if lib else ", once you've chosen that") + ".")
+            v = rel
         raw[key] = v
     identify.CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = identify.CONFIG_PATH.with_suffix(".tmp")
