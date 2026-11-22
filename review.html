@@ -421,18 +421,20 @@ function epRange(p){
 
 const KIND = {"Featurettes":"Featurette","Behind the Scenes":"Behind the scenes","Deleted Scenes":"Deleted scene","Interviews":"Interview","Scenes":"Scene","Shorts":"Short","Trailers":"Trailer","Other":"Other"};
 const SUFFIX = {"Behind the Scenes":"behindthescenes","Deleted Scenes":"deleted","Featurettes":"featurette","Interviews":"interview","Scenes":"scene","Shorts":"short","Trailers":"trailer","Other":"other"};
+// a plan's folder in the library, or a full path for Movies/TV folders kept somewhere else
+const inLib = rel => /^([A-Za-z]:|[\\/]{2})/.test(rel || "") ? [rel] : [LIB, rel];
 function destOf(p, it){
   // TV extras can belong to the whole show, a season (default) or one episode (Plex's TV extras guide)
   const cat = it.category || "Other";
   const folder = SERVER === "kodi" ? "Extras" : cat;   // Kodi keeps all extras in one Extras folder
-  if (it.role === "extra" && p.kind === "tv" && it.attach === "show") return [LIB, p.library_dir, folder].join("\\") + "\\" + safe(it.name) + ".mkv";
+  if (it.role === "extra" && p.kind === "tv" && it.attach === "show") return [...inLib(p.library_dir), folder].join("\\") + "\\" + safe(it.name) + ".mkv";
   if (it.role === "extra" && p.kind === "tv" && it.attach === "episode" && SERVER !== "kodi"){
     if (!it.attach_to) return "pick the episode it belongs to";
     const same = p.items.filter(o => o.role === "extra" && o.action === "move" && o.attach === "episode" && o.attach_to === it.attach_to && (o.category || "Other") === cat);
     const k = same.findIndex(o => o === it || o.source === it.source);
-    return [LIB, it.dest_dir].join("\\") + "\\" + safe(`${it.attach_to}-${SUFFIX[cat] || "other"}${same.length > 1 ? k + 1 : ""}`) + ".mkv";
+    return inLib(it.dest_dir).join("\\") + "\\" + safe(`${it.attach_to}-${SUFFIX[cat] || "other"}${same.length > 1 ? k + 1 : ""}`) + ".mkv";
   }
-  const parts = [LIB, it.dest_dir];
+  const parts = inLib(it.dest_dir);
   if (it.role === "extra") parts.push(folder);
   return parts.join("\\") + "\\" + safe(it.name) + ".mkv";
 }
@@ -1534,10 +1536,12 @@ function wireWizard(el){
 const SET_GROUPS = [
   {id:"library", name:"Library and folders", icon:"M3 7h6l2 2h10v10H3z", intro:"Where discs are ripped to, and where finished files go.", items:[
     ["plex_library_root", "Media library folder", "The folder that holds (or will hold) your Movies and TV Shows folders.", {pick:"folder"}],
+    ["movies_folder", "Movies folder", "Can be anywhere, even another drive. Leave empty and Shelfrip uses the one already in your media library, whatever it's called (movies, Films…), or makes Movies there.", {pick:"folder", under:"plex_library_root"}],
+    ["tv_folder", "TV shows folder", "Can be anywhere, even another drive. Leave empty and Shelfrip uses the one already in your media library (tv, TVShows, TV_Shows…), or makes TV Shows there.", {pick:"folder", under:"plex_library_root"}],
     ["output_root", "Rip folder", "Discs are ripped here first, then moved into your library once you've checked the names. Needs room: about 50 GB per Blu-ray, 100 GB per 4K disc.", {pick:"folder"}],
     ["media_server", "Media server", "Files are named the way it expects."],
     ["format_folders", "Keep each format in its own folder", "Movies\\Blu-Ray\\…, Movies\\DVD\\… instead of one Movies folder."],
-    ["music_library_root", "Music library folder", "Leave empty to use a Music folder inside your media library.", {pick:"folder", adv:1}],
+    ["music_library_root", "Music folder", "Where ripped CDs go. It can be anywhere. Leave empty to use the music folder already in your media library (any case), or make Music there.", {pick:"folder"}],
   ]},
   {id:"ripping", name:"Ripping", icon:"M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0-18 0M12 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0", intro:"What happens when a disc goes in.", items:[
     ["auto_rip", "Start with auto-rip on", "Rip every disc as soon as it's inserted, from the moment Shelfrip opens."],
@@ -1606,9 +1610,9 @@ function setField(row, meta){
     ? `<span class="chip good">✓ saved</span><button data-change="${key}">Change</button><input type="password" id="${id}" data-k="${key}" class="hide" autocomplete="off" placeholder="paste the new one">`
     : `<input type="password" id="${id}" data-k="${key}" autocomplete="off" placeholder="paste it here">`;
   else if (row.kind === "select") ctl = `<select id="${id}" data-k="${key}">${(row.choices||[]).map(c => `<option value="${esc(c.value)}" ${c.value === v ? "selected" : ""}>${esc(c.label)}</option>`).join("")}</select>`;
-  else ctl = `<input id="${id}" data-k="${key}" type="${row.kind === "number" ? "number" : "text"}" ${row.kind === "number" ? 'min="0"' : ""} value="${esc(v)}" class="${o.unit || o.short ? "short" : ""}" ${key.endsWith("_root") || key.endsWith("_dir") || key.endsWith("_path") ? 'spellcheck="false"' : ""}>`
+  else ctl = `<input id="${id}" data-k="${key}" type="${row.kind === "number" ? "number" : "text"}" ${row.kind === "number" ? 'min="0"' : ""} value="${esc(v)}" ${row.placeholder ? `placeholder="${esc(row.placeholder)}"` : ""} class="${o.unit || o.short ? "short" : ""}" ${key.endsWith("_root") || key.endsWith("_dir") || key.endsWith("_folder") || key.endsWith("_path") ? 'spellcheck="false"' : ""}>`
     + (o.unit ? `<span class="unit">${esc(o.unit)}</span>` : "")
-    + (o.pick ? `<button data-pick="${key}" data-kind="${o.pick}">Browse…</button>` : "");
+    + (o.pick ? `<button data-pick="${key}" data-kind="${o.pick}" ${o.under ? `data-under="${o.under}"` : ""}>Browse…</button>` : "");
   return `<div class="srow"><div class="lbl"><label for="${id}">${esc(label)}</label> ${flag}${helpHtml}</div><div class="ctl">${ctl}<span class="saved" data-saved="${key}"></span></div></div>`;
 }
 function renderSettings(){
@@ -1658,7 +1662,11 @@ function renderSettings(){
     const i = $("#s_" + b.dataset.pick, el);
     b.disabled = true;
     try {
-      const r = await api("/api/pick", {kind: b.dataset.kind, start: i.value, title: i.closest(".srow").querySelector("label").textContent});
+      // a folder inside another one (Movies inside the media library): start the picker there
+      const base = b.dataset.under ? ((SETS.settings.find(r => r.key === b.dataset.under) || {}).value || "") : "";
+      const full = /^([A-Za-z]:|[\\/]{2})/.test(i.value);  // a folder kept outside the library
+      const start = base && !full ? (i.value ? base.replace(/[\\/]+$/, "") + "\\" + i.value : base) : i.value;
+      const r = await api("/api/pick", {kind: b.dataset.kind, start, title: i.closest(".srow").querySelector("label").textContent});
       if (r.available === false) { i.focus(); toast("Type the path", "There's no folder picker on this computer."); }
       else if (r.path) { i.value = r.path; await saveOne(i); }
     } finally { b.disabled = false; }
@@ -1677,7 +1685,8 @@ async function saveOne(i){
     if (i.type === "password" || k === "media_server" || SET_STATUS[k]) renderSettings();
     const m2 = $(`[data-saved="${k}"]`);
     if (m2){ m2.textContent = "✓ Saved"; m2.className = "saved on"; setTimeout(() => m2 && (m2.className = "saved"), 1800); }
-    if (["output_root","plex_library_root","media_server","format_folders"].includes(k)) load(false);
+    if (k === "movies_folder" || k === "tv_folder" || k === "music_library_root" || k === "plex_library_root") renderSettings();  // shows the folder as saved, and what empty finds
+    if (["output_root","plex_library_root","media_server","format_folders","movies_folder","tv_folder"].includes(k)) load(false);
     if (k === "job_total_discs") loadProgress(false);
     if (k === "sounds"){ SOUND = v; if (v) chime("file"); }
     if (k === "share_discs") SHARING = v;

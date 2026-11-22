@@ -124,6 +124,12 @@ TV shows go in `TV Shows\Show (Year)\Season 1\Show (Year) - s01e01 - Title.mkv`.
 recognises an existing library whichever style it uses. You can also keep each format in its own
 folder (`Movies\Blu-Ray\...`, `Movies\DVD\...`).
 
+Already have movie and TV folders with other names, like `movies`, `Films` or `TVShows`? Shelfrip
+finds them whatever their case or spacing and files into them. To pick them yourself, use
+**Settings › Library and folders › Movies folder / TV shows folder**. They can be anywhere, even on
+different drives. Music CDs work the same way: an
+existing `music` folder is found, or choose any folder under **Music folder**.
+
 ## Good to know
 
 - Shelfrip opens in its own window. Closing the window keeps it running as an icon by the clock, so

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import statistics
 import sys
@@ -44,6 +45,11 @@ DEFAULTS = {
     # folder for any server; the name is kept so older settings files still work.
     "output_root": "",
     "plex_library_root": "",
+    # The Movies and TV Shows folders inside it, as named in your library ("movies", "TVShows",
+    # "Video\\Films"...). Empty = use the folder that's already there (any case or spacing), else
+    # "Movies" / "TV Shows". See library_dirs().
+    "movies_folder": "",
+    "tv_folder": "",
     # plex, jellyfin, emby or kodi: how filed files are named (naming.py)
     "media_server": "plex",
     # Put each format in its own folder (Movies\Blu-Ray\Title ...)? Off: Movies\Title ...
@@ -256,14 +262,107 @@ TAG_RE = re.compile(r"^(?P<title>.+?)\s*(?:\((?P<year>\d{4})\))?\s*(?:" + naming
 EP_RE = re.compile(r"s(\d{1,2})e(\d{1,3})", re.I)
 
 
+# What existing top-level folders are recognised as, compared without case, spaces, dashes or underscores
+LIB_DIR_NAMES = {"movies": ("Movies", ("movies", "movie", "films", "film")),
+                 "tv": ("TV Shows", ("tvshows", "tvshow", "tv", "shows", "tvseries", "series", "television"))}
+
+
+def _squash(name: str) -> str:
+    return re.sub(r"[\s_\-.]+", "", name).lower()
+
+
+def _split_abs(v: str) -> tuple[str, list[str]]:
+    """A path as (root, folder names). The root is "D:\\", "\\\\NAS\\Media\\" or (off Windows) "/" for a
+    full path, and "" for a path inside the library."""
+    v = str(v or "").strip()
+    anchor, rest = "", v
+    m = re.match(r"^([A-Za-z]:)(?:[\\/]|$)", v)
+    u = re.match(r"^[\\/]{2}([^\\/]+)[\\/]+([^\\/]+)(?:[\\/]|$)", v)  # \\server\\share
+    if m:
+        anchor, rest = m.group(1) + "\\", v[m.end():]
+    elif u:
+        anchor, rest = f"\\\\{u.group(1)}\\{u.group(2)}\\", v[u.end():]
+    elif os.name != "nt" and v.startswith("/"):
+        anchor, rest = "/", v
+    return anchor, [x for x in re.split(r"[\\/]+", rest) if x.strip()]
+
+
+def clean_lib_dir(value: str, root: str = "") -> str:
+    """A Movies/TV folder setting, tidied ("" if it isn't a usable folder).
+
+    A name ("movies") or a path inside the library ("Video\\Films") stays relative to it, and so
+    does a full path inside the library folder (what the Browse button gives), case-insensitively.
+    A full path anywhere else ("D:\\Movies", "\\\\NAS\\TV") is kept as a full path."""
+    anchor, parts = _split_abs(value)
+    if (not anchor and not parts) or any(x.strip() in (".", "..") for x in parts):
+        return ""
+    if not anchor:
+        return "\\".join(parts)
+    ra, rparts = _split_abs(root)
+    if ra and ra.lower() == anchor.lower() and [x.lower() for x in parts[:len(rparts)]] == [x.lower() for x in rparts] \
+            and len(parts) > len(rparts):
+        return "\\".join(parts[len(rparts):])  # inside the library: keep it relative
+    full = anchor + ("/" if anchor == "/" else "\\").join(parts)
+    return full.rstrip("\\") if anchor.startswith("\\\\") else full
+
+
+def is_full_path(p: str) -> bool:
+    return bool(_split_abs(p)[0])
+
+
+def lib_path(root: Path, rel: str) -> Path:
+    """A library path from a plan ("Movies\\Title (Year)", or a full path for folders kept elsewhere),
+    with each folder name made safe for Windows."""
+    anchor, parts = _split_abs(rel)
+    parts = [fs_safe(x) for x in parts]
+    return Path(anchor).joinpath(*parts) if anchor else Path(root).joinpath(*parts)
+
+
+def library_dirs(cfg: dict, root: Path | None = None) -> dict:
+    """{"movies": ..., "tv": ...}: the Movies and TV Shows folders, as paths inside the library
+    (or full paths, for folders kept somewhere else).
+
+    A folder chosen in Settings wins. Otherwise an existing folder is used whatever its case or spacing
+    ("movies", "TVShows", "TV_Shows"), so files land next to what's already there, and a new library
+    gets "Movies" and "TV Shows"."""
+    lib = str(cfg.get("plex_library_root") or "").strip()
+    if root is None and lib:
+        root = Path(lib)
+    try:  # an unchosen or unreachable library has no folders yet
+        existing = [d.name for d in root.iterdir() if d.is_dir()] if root is not None and root.is_dir() else []
+    except OSError:
+        existing = []
+    out = {}
+    for kind, key in (("movies", "movies_folder"), ("tv", "tv_folder")):
+        default, names = LIB_DIR_NAMES[kind]
+        chosen = clean_lib_dir(cfg.get(key, ""), lib)
+        if chosen and is_full_path(chosen):
+            out[kind] = chosen
+            continue
+        if chosen:
+            # match the case of a folder that's already there, so "movies" typed for "Movies" still lines up
+            first = chosen.split("\\")[0]
+            same = next((d for d in existing if d.lower() == first.lower()), None)
+            out[kind] = (same + chosen[len(first):]) if same else chosen
+            continue
+        found = None
+        for want in names:
+            found = next((d for d in sorted(existing) if _squash(d) == want), None)
+            if found:
+                break
+        out[kind] = found or default
+    return out
+
+
 def index_library(root: Path, cfg: dict) -> dict:
     lib = {"movies": [], "shows": []}
     if not root.exists():
         print(f"  ! Plex library not reachable at {root}. Episode numbering will start at 1.")
         return lib
-    for kind, top, fmts in (("movies", "Movies", cfg["movie_format_folders"]),
-                            ("shows", "TV Shows", cfg["tv_format_folders"])):
-        base = root / top
+    tops = library_dirs(cfg, root)
+    for kind, top, fmts in (("movies", tops["movies"], cfg["movie_format_folders"]),
+                            ("shows", tops["tv"], cfg["tv_format_folders"])):
+        base = lib_path(root, top)
         if not base.exists():
             continue
         fmt_names = {v.lower() for v in fmts.values()} | {"4k blu-ray", "4k blu ray", "blu-ray", "bluray", "dvd", "4k"}
@@ -482,7 +581,11 @@ def mark_library_copies(plan: dict, lib: dict, cfg: dict) -> None:
         # the movie stays as it is in Plex; send this disc's extras to that movie's folder
         best = max(copies[main["source"]], key=lambda h: h["rank"])
         try:
-            rel = str(Path(best["path"]).parent.relative_to(Path(cfg["plex_library_root"]))).replace("/", "\\")
+            parent = Path(best["path"]).parent
+            try:
+                rel = str(parent.relative_to(Path(cfg["plex_library_root"]))).replace("/", "\\")
+            except ValueError:  # a Movies folder kept outside the media library
+                rel = str(parent)
             plan["library_dir"] = rel
             for it in plan["items"]:
                 it["dest_dir"] = rel
@@ -727,7 +830,8 @@ def plan_movie(folder: Path, disc: dict, titles: list[dict], label_info: dict,
     fmt_folder = cfg["movie_format_folders"][disc_format(disc)]
     base_name = fs_safe(f"{title} ({year})" if year else title)
     tag = (" " + naming.id_tag(cfg, tid)) if naming.id_tag(cfg, tid) else ""
-    movie_dir = (f"Movies\\{fmt_folder}\\" if cfg.get("format_folders") else "Movies\\") + f"{base_name}{tag}"
+    top = library_dirs(cfg)["movies"]
+    movie_dir = (f"{top}\\{fmt_folder}\\" if cfg.get("format_folders") else f"{top}\\") + f"{base_name}{tag}"
     for m in lib["movies"]:
         if tid and m["id"] == tid:
             warnings.append("Already in library: " + "\\".join(x for x in (m["format_folder"], m["folder_name"]) if x))
@@ -808,7 +912,8 @@ def plan_tv(folder: Path, rip_root: Path, disc: dict, titles: list[dict], label_
         source = "TMDB search"
 
     fmt_folder = cfg["tv_format_folders"][disc_format(disc)]
-    show_dir = (f"TV Shows\\{fmt_folder}\\" if cfg.get("format_folders") else "TV Shows\\") + show_dir_name
+    top = library_dirs(cfg)["tv"]
+    show_dir = (f"{top}\\{fmt_folder}\\" if cfg.get("format_folders") else f"{top}\\") + show_dir_name
     season_dir = f"{show_dir}\\Season {season}"
     file_prefix = fs_safe(f"{title} ({year})" if year else title)
     show_key = tid or norm(title)
