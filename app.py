@@ -51,6 +51,7 @@ SETTINGS = [  # (key, label, kind)
     ("plex_library_root", "Media library folder (holds your Movies and TV Shows folders)", "text"),
     ("movies_folder", "Movies folder inside the media library (empty = find it, else Movies)", "text"),
     ("tv_folder", "TV shows folder inside the media library (empty = find it, else TV Shows)", "text"),
+    ("music_library_root", "Music folder (empty = the music folder in the media library, else Music)", "text"),
     ("media_server", "Media server (decides how files are named)", "select"),
     ("format_folders", "Separate folders per format (Movies\\Blu-Ray\\..., Movies\\DVD\\...)", "bool"),
     ("use_dvdcompare", "Also look up extras names on DVDCompare (reads its web pages)", "bool"),
@@ -59,7 +60,6 @@ SETTINGS = [  # (key, label, kind)
     ("makemkvcon_path", "MakeMKV (makemkvcon64.exe)", "text"),
     ("mkvtoolnix_dir", "MKVToolNix folder", "text"),
     ("plex_url", "Plex address (Plex only, optional: lets the app check what Plex matched)", "text"),
-    ("music_library_root", "Music library folder (empty = Music inside the Plex library folder)", "text"),
     ("cyanrip_path", "cyanrip for music CDs (empty = tools\\cyanrip\\cyanrip.exe)", "text"),
     ("cd_offsets", "CD drive read offsets, e.g. D:6, E:667 (for AccurateRip)", "text"),
     ("music_lyrics", "Save lyrics next to music tracks (.lrc / .txt, from LRCLIB)", "bool"),
@@ -956,6 +956,10 @@ def settings_view() -> dict:
             there = bool(lib) and os.path.isdir(os.path.join(lib, *name.split("\\")))
             row["placeholder"] = f"{name} ({'found in your library' if there else 'made when the first disc is filed'})"
             row["value"] = identify.clean_lib_dir(row["value"], lib) or row["value"]
+        elif row["key"] == "music_library_root" and lib:
+            import music
+            mr = str(music.music_root(merged))
+            row["placeholder"] = f"{mr} ({'found in your library' if os.path.isdir(mr) else 'made when the first CD is filed'})"
     return {"settings": out, "path": str(identify.CONFIG_PATH), "setup": setup_check(), "version": UPDATE,
             "first_run": not raw.get("setup_done") and not raw.get("migrated_from")}
 

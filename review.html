@@ -1539,7 +1539,7 @@ const SET_GROUPS = [
     ["output_root", "Rip folder", "Discs are ripped here first, then moved into your library once you've checked the names. Needs room: about 50 GB per Blu-ray, 100 GB per 4K disc.", {pick:"folder"}],
     ["media_server", "Media server", "Files are named the way it expects."],
     ["format_folders", "Keep each format in its own folder", "Movies\\Blu-Ray\\…, Movies\\DVD\\… instead of one Movies folder."],
-    ["music_library_root", "Music library folder", "Leave empty to use a Music folder inside your media library.", {pick:"folder", adv:1}],
+    ["music_library_root", "Music folder", "Where ripped CDs go. It can be anywhere. Leave empty to use the music folder already in your media library (any case), or make Music there.", {pick:"folder"}],
   ]},
   {id:"ripping", name:"Ripping", icon:"M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0-18 0M12 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0", intro:"What happens when a disc goes in.", items:[
     ["auto_rip", "Start with auto-rip on", "Rip every disc as soon as it's inserted, from the moment Shelfrip opens."],
@@ -1682,7 +1682,7 @@ async function saveOne(i){
     if (i.type === "password" || k === "media_server" || SET_STATUS[k]) renderSettings();
     const m2 = $(`[data-saved="${k}"]`);
     if (m2){ m2.textContent = "✓ Saved"; m2.className = "saved on"; setTimeout(() => m2 && (m2.className = "saved"), 1800); }
-    if (k === "movies_folder" || k === "tv_folder" || k === "plex_library_root") renderSettings();  // shows the folder as saved, and what empty finds
+    if (k === "movies_folder" || k === "tv_folder" || k === "music_library_root" || k === "plex_library_root") renderSettings();  // shows the folder as saved, and what empty finds
     if (["output_root","plex_library_root","media_server","format_folders","movies_folder","tv_folder"].includes(k)) load(false);
     if (k === "job_total_discs") loadProgress(false);
     if (k === "sounds"){ SOUND = v; if (v) chime("file"); }

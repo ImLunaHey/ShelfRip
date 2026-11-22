@@ -60,6 +60,12 @@ class LibraryDirs(unittest.TestCase):
         self.assertEqual([m["title"] for m in got["movies"]], ["Some Film"])
         self.assertEqual([s["title"] for s in got["shows"]], ["Some Show"])
 
+    def test_music_folder(self):
+        import music
+        self.assertEqual(music.music_root({"plex_library_root": str(lib())}).name, "Music")
+        self.assertEqual(music.music_root({"plex_library_root": str(lib("music"))}).name, "music")
+        self.assertEqual(str(music.music_root({"plex_library_root": str(lib()), "music_library_root": r"M:\Audio"})), r"M:\Audio")
+
 
 if __name__ == "__main__":
     unittest.main()
