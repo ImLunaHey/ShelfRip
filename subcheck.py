@@ -940,6 +940,28 @@ def _judge_movie(plan, todo, tmdb, report, log):
                                       f"({', '.join(sc[best][1][:5])}).")
         else:
             row["verdict"] = "fits" if best == str(plan["tmdb_id"]) and mine[0] > 0 else "unsure"
+        u["fit"] = mine[0]
+    # Another cut of the movie hiding among the extras (theatrical vs extended), and a length
+    # warning that the dialogue settles.
+    mains = [u for u in todo if u["item"].get("role") == "main" and u.get("row", {}).get("verdict") == "fits"]
+    if not mains:
+        return
+    main = mains[0]
+    name = cands[str(plan["tmdb_id"])]["name"]
+    if any("wrong movie" in w or "Check it's the right movie" in w for w in plan.get("warnings") or []):
+        report["findings"].append(f"The dialogue confirms the main feature is {name}, so its unexpected length is "
+                                  f"most likely a different cut (extended, director's), not a different film.")
+    mlen = float(main["item"].get("duration_seconds") or 0)
+    for u in todo:
+        it = u["item"]
+        if u is main or it.get("role") == "main" or not u.get("fit"):
+            continue
+        if float(it.get("duration_seconds") or 0) >= 0.6 * mlen and u["fit"] >= 0.6 * main["fit"] \
+                and u["row"].get("verdict") == "fits":
+            what = "set to Skip" if it.get("action") == "skip" else f"filed as the extra \"{it.get('name')}\""
+            report["findings"].append(f"{u['label']} ({hms(it.get('duration_seconds') or 0)}) is {what}, but its "
+                                      f"dialogue is {name}'s. It's probably another cut of the movie "
+                                      f"(theatrical or extended) rather than an extra or a Play All.")
 
 
 # --------------------------------------------------------------------------- command line
