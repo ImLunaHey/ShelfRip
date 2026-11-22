@@ -1158,6 +1158,11 @@ def plan_folder(folder: Path, rip_root: Path, tmdb: TMDB | None, lib: dict, cfg:
         attach_audio(plan, folder, disc)
     except Exception as exc:
         print(f"    (couldn't read the audio tracks: {exc})")
+    if disc.get("skipped_duplicates"):
+        n = disc["skipped_duplicates"]
+        plan["warnings"].append(f"{n} extra cop{'y' if n == 1 else 'ies'} of the main feature {'was' if n == 1 else 'were'} "
+                                "left out before ripping (Settings, Ripping: Rip the main feature only once). "
+                                "Use Rip again with that setting off if something is missing.")
     if disc.get("read_errors") or disc.get("titles_failed"):
         bits = [f"{disc['read_errors']} read error(s)" if disc.get("read_errors") else "",
                 f"{disc['titles_failed']} title(s) failed" if disc.get("titles_failed") else ""]
