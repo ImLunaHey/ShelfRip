@@ -49,8 +49,8 @@ SECRETS = ("tmdb_api_key", "omdb_api_key", "plex_token")
 SETTINGS = [  # (key, label, kind)
     ("output_root", "Rip folder (where discs are ripped to before review)", "text"),
     ("plex_library_root", "Media library folder (holds your Movies and TV Shows folders)", "text"),
-    ("movies_folder", "Movies folder inside the media library (empty = find it, else Movies)", "text"),
-    ("tv_folder", "TV shows folder inside the media library (empty = find it, else TV Shows)", "text"),
+    ("movies_folder", "Movies folder (inside the media library or anywhere; empty = find it, else Movies)", "text"),
+    ("tv_folder", "TV shows folder (inside the media library or anywhere; empty = find it, else TV Shows)", "text"),
     ("music_library_root", "Music folder (empty = the music folder in the media library, else Music)", "text"),
     ("media_server", "Media server (decides how files are named)", "select"),
     ("format_folders", "Separate folders per format (Movies\\Blu-Ray\\..., Movies\\DVD\\...)", "bool"),
@@ -953,7 +953,7 @@ def settings_view() -> dict:
         kind = {"movies_folder": "movies", "tv_folder": "tv"}.get(row["key"])
         if kind:
             name = found[kind]
-            there = bool(lib) and os.path.isdir(os.path.join(lib, *name.split("\\")))
+            there = (bool(lib) or identify.is_full_path(name)) and identify.lib_path(Path(lib), name).is_dir()
             row["placeholder"] = f"{name} ({'found in your library' if there else 'made when the first disc is filed'})"
             row["value"] = identify.clean_lib_dir(row["value"], lib) or row["value"]
         elif row["key"] == "music_library_root" and lib:
@@ -996,8 +996,7 @@ def save_settings(values: dict) -> None:
             lib = str(values.get("plex_library_root", raw.get("plex_library_root")) or "").strip()
             rel = identify.clean_lib_dir(v, lib)
             if not rel:
-                raise ValueError("Pick a folder inside your media library folder"
-                                 + (f" ({lib})" if lib else ", once you've chosen that") + ".")
+                raise ValueError("That isn't a folder Shelfrip can use. Pick one with Browse.")
             v = rel
         raw[key] = v
     identify.CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)

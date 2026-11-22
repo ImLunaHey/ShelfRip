@@ -50,7 +50,9 @@ class LibraryDirs(unittest.TestCase):
         self.assertEqual(c(" Video/Films/ ", ""), "Video\\Films")
         self.assertEqual(c(r"n:\media library\TVShows", r"N:\Media Library"), "TVShows")
         self.assertEqual(c(r"\\NAS\Media\Movies", r"\\nas\media"), "Movies")
-        self.assertEqual(c(r"D:\Elsewhere\Movies", r"N:\Media Library"), "")  # not inside the library
+        self.assertEqual(c(r"d:/Elsewhere//Movies\\", r"N:\Media Library"), r"d:\Elsewhere\Movies")  # kept elsewhere
+        self.assertEqual(c(r"\\NAS\TV", r"N:\Media Library"), r"\\NAS\TV")
+        self.assertEqual(c(r"N:\Media Library", r"N:\Media Library"), r"N:\Media Library")
         self.assertEqual(c(r"..\Movies", r"N:\Media Library"), "")
         self.assertEqual(c("", r"N:\Media Library"), "")
 
@@ -59,6 +61,18 @@ class LibraryDirs(unittest.TestCase):
         got = identify.index_library(root, {**identify.DEFAULTS, "plex_library_root": str(root)})
         self.assertEqual([m["title"] for m in got["movies"]], ["Some Film"])
         self.assertEqual([s["title"] for s in got["shows"]], ["Some Show"])
+
+    def test_folders_somewhere_else(self):
+        root, other = lib("Movies"), lib("Films/Some Film (2001) {tmdb-1}")
+        tops = dirs(root, movies_folder=str(other / "Films"))
+        self.assertEqual(tops["movies"], str(other / "Films"))
+        self.assertEqual(tops["tv"], "TV Shows")
+        self.assertTrue(identify.is_full_path(tops["movies"]))
+        self.assertEqual(identify.lib_path(root, tops["movies"] + "\\X: Y"), other / "Films" / "X - Y")
+        self.assertEqual(identify.lib_path(root, "Movies\\X"), root / "Movies" / "X")
+        got = identify.index_library(root, {**identify.DEFAULTS, "plex_library_root": str(root),
+                                            "movies_folder": str(other / "Films")})
+        self.assertEqual([m["title"] for m in got["movies"]], ["Some Film"])
 
     def test_music_folder(self):
         import music

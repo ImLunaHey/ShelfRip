@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import statistics
 import sys
@@ -270,27 +271,56 @@ def _squash(name: str) -> str:
     return re.sub(r"[\s_\-.]+", "", name).lower()
 
 
-def clean_lib_dir(value: str, root: str = "") -> str:
-    """A Movies/TV folder setting as a path inside the library ("" if it can't be one).
+def _split_abs(v: str) -> tuple[str, list[str]]:
+    """A path as (root, folder names). The root is "D:\\", "\\\\NAS\\Media\\" or (off Windows) "/" for a
+    full path, and "" for a path inside the library."""
+    v = str(v or "").strip()
+    anchor, rest = "", v
+    m = re.match(r"^([A-Za-z]:)(?:[\\/]|$)", v)
+    u = re.match(r"^[\\/]{2}([^\\/]+)[\\/]+([^\\/]+)(?:[\\/]|$)", v)  # \\server\\share
+    if m:
+        anchor, rest = m.group(1) + "\\", v[m.end():]
+    elif u:
+        anchor, rest = f"\\\\{u.group(1)}\\{u.group(2)}\\", v[u.end():]
+    elif os.name != "nt" and v.startswith("/"):
+        anchor, rest = "/", v
+    return anchor, [x for x in re.split(r"[\\/]+", rest) if x.strip()]
 
-    Takes a name ("movies"), a relative path ("Video\\Films") or a full path inside the library
-    folder (what the Browse button gives), case-insensitively."""
-    v = str(value or "").strip().replace("/", "\\").strip("\\")
-    if not v:
+
+def clean_lib_dir(value: str, root: str = "") -> str:
+    """A Movies/TV folder setting, tidied ("" if it isn't a usable folder).
+
+    A name ("movies") or a path inside the library ("Video\\Films") stays relative to it, and so
+    does a full path inside the library folder (what the Browse button gives), case-insensitively.
+    A full path anywhere else ("D:\\Movies", "\\\\NAS\\TV") is kept as a full path."""
+    anchor, parts = _split_abs(value)
+    if (not anchor and not parts) or any(x.strip() in (".", "..") for x in parts):
         return ""
-    if re.match(r"^[A-Za-z]:", v) or str(value).strip().startswith(("\\\\", "//")):  # a full path
-        r = str(root or "").strip().replace("/", "\\").rstrip("\\")
-        full = str(value).strip().replace("/", "\\").rstrip("\\")
-        if not r or not full.lower().startswith(r.lower() + "\\"):
-            return ""
-        v = full[len(r) + 1:].strip("\\")
-    if any(p in ("", ".", "..") for p in v.split("\\")):
-        return ""
-    return v
+    if not anchor:
+        return "\\".join(parts)
+    ra, rparts = _split_abs(root)
+    if ra and ra.lower() == anchor.lower() and [x.lower() for x in parts[:len(rparts)]] == [x.lower() for x in rparts] \
+            and len(parts) > len(rparts):
+        return "\\".join(parts[len(rparts):])  # inside the library: keep it relative
+    full = anchor + ("/" if anchor == "/" else "\\").join(parts)
+    return full.rstrip("\\") if anchor.startswith("\\\\") else full
+
+
+def is_full_path(p: str) -> bool:
+    return bool(_split_abs(p)[0])
+
+
+def lib_path(root: Path, rel: str) -> Path:
+    """A library path from a plan ("Movies\\Title (Year)", or a full path for folders kept elsewhere),
+    with each folder name made safe for Windows."""
+    anchor, parts = _split_abs(rel)
+    parts = [fs_safe(x) for x in parts]
+    return Path(anchor).joinpath(*parts) if anchor else Path(root).joinpath(*parts)
 
 
 def library_dirs(cfg: dict, root: Path | None = None) -> dict:
-    """{"movies": ..., "tv": ...}: the Movies and TV Shows folders inside the library, as relative paths.
+    """{"movies": ..., "tv": ...}: the Movies and TV Shows folders, as paths inside the library
+    (or full paths, for folders kept somewhere else).
 
     A folder chosen in Settings wins. Otherwise an existing folder is used whatever its case or spacing
     ("movies", "TVShows", "TV_Shows"), so files land next to what's already there, and a new library
@@ -305,7 +335,10 @@ def library_dirs(cfg: dict, root: Path | None = None) -> dict:
     out = {}
     for kind, key in (("movies", "movies_folder"), ("tv", "tv_folder")):
         default, names = LIB_DIR_NAMES[kind]
-        chosen = clean_lib_dir(cfg.get(key, ""), str(cfg.get("plex_library_root") or ""))
+        chosen = clean_lib_dir(cfg.get(key, ""), lib)
+        if chosen and is_full_path(chosen):
+            out[kind] = chosen
+            continue
         if chosen:
             # match the case of a folder that's already there, so "movies" typed for "Movies" still lines up
             first = chosen.split("\\")[0]
@@ -329,7 +362,7 @@ def index_library(root: Path, cfg: dict) -> dict:
     tops = library_dirs(cfg, root)
     for kind, top, fmts in (("movies", tops["movies"], cfg["movie_format_folders"]),
                             ("shows", tops["tv"], cfg["tv_format_folders"])):
-        base = root.joinpath(*top.split("\\"))
+        base = lib_path(root, top)
         if not base.exists():
             continue
         fmt_names = {v.lower() for v in fmts.values()} | {"4k blu-ray", "4k blu ray", "blu-ray", "bluray", "dvd", "4k"}
@@ -548,7 +581,11 @@ def mark_library_copies(plan: dict, lib: dict, cfg: dict) -> None:
         # the movie stays as it is in Plex; send this disc's extras to that movie's folder
         best = max(copies[main["source"]], key=lambda h: h["rank"])
         try:
-            rel = str(Path(best["path"]).parent.relative_to(Path(cfg["plex_library_root"]))).replace("/", "\\")
+            parent = Path(best["path"]).parent
+            try:
+                rel = str(parent.relative_to(Path(cfg["plex_library_root"]))).replace("/", "\\")
+            except ValueError:  # a Movies folder kept outside the media library
+                rel = str(parent)
             plan["library_dir"] = rel
             for it in plan["items"]:
                 it["dest_dir"] = rel
