@@ -19,8 +19,26 @@ times differ. A copy is skipped only when Shelfrip can be sure it adds nothing:
      or were skipped before. That is how decoy playlists get dropped. If the database's pick can't
      be told apart from a decoy (same byte size and no playlist name to go by), nothing is skipped.
 
+The same setting also leaves out scene-by-scene titles: discs that offer every scene (or chapter)
+of the movie as a title of its own, next to the movie itself. Those are the movie a second time,
+cut into pieces, and make Review slow. A short title counts as a scene only when:
+
+  * Blu-ray: it is made only of the feature's own video clips (its segment map is inside the
+    feature's), at least SCENE_MIN_PIECES such titles exist, each is under SCENE_MAX_SECONDS and
+    shorter than half the feature, and the feature looks like a movie rather than a "Play All" of
+    featurettes (more clips than chapters, or one clip, or a disc database names it the feature).
+  * DVD (cell numbers aren't shared between titles): a run of at least four consecutive short titles
+    adds up to the feature's length and there are about as many as the feature has chapters; or at
+    least DVD_SAME_TRACKS_PIECES short titles carry exactly the feature's audio and subtitle tracks
+    (its dubs, commentary and subtitles: extras almost never do) and the feature has at least
+    DVD_MIN_TRACKS of them.
+
+TV discs are left alone (their long title is a "Play All" of the episodes). Titles a disc database
+names are always ripped. Nothing is lost: everything in a scene is in the feature that is ripped.
+
 Anything else is ripped as before. Skipped titles stay listed in disc_info.json with
-"skipped_duplicate_of" set, so the Review tab can say what was left out.
+"skipped_duplicate_of" set (and "skip_kind": "scene" for scenes), so the Review tab can say what
+was left out. scene_pieces() is also used by identify.py to set leftover scenes to Skip on Review.
 """
 
 from __future__ import annotations
@@ -29,6 +47,11 @@ from collections import Counter
 
 FEATURE_MIN_SECONDS = 60 * 60
 DURATION_SLACK = 2
+SCENE_MAX_SECONDS = 15 * 60
+SCENE_MIN_PIECES = 3
+DVD_MIN_PIECES = 4
+DVD_MIN_TRACKS = 4           # feature audio + subtitle tracks needed before matching tracks mean anything
+DVD_SAME_TRACKS_PIECES = 5   # short titles carrying exactly those tracks
 
 
 def _seg(t: dict) -> str:
@@ -114,6 +137,102 @@ def find(titles: list[dict], known: dict | None = None,
     return skip
 
 
+# --------------------------------------------------------------------------- scene-by-scene titles
+
+def _segset(t: dict) -> set[str] | None:
+    """The Blu-ray clips a title plays. None on DVDs, where segment numbers are per title and can't be compared."""
+    src = str(t.get("source_file") or "").split("(")[0].strip().lower()
+    if not src.endswith((".mpls", ".m2ts")):
+        return None
+    return {x for x in _seg(t).split(",") if x} or None
+
+
+def _movie_shaped(f: dict) -> bool:
+    """A "Play All" of featurettes has one clip per chapter; a movie has one clip, or many more clips than chapters."""
+    n = len(_segset(f) or ())
+    return n == 1 or n > int(f.get("chapters") or 0)
+
+
+def _dvd_run(others: list[dict], f: dict, stop: set[int]) -> list[dict]:
+    """Consecutive short titles (by title number) that add up to the feature, about one per chapter."""
+    ch, fd = int(f.get("chapters") or 0), f["duration_seconds"]
+    if ch < DVD_MIN_PIECES:
+        return []
+    for i in range(len(others)):
+        total = 0
+        for j in range(i, len(others)):
+            d = others[j].get("duration_seconds", 0)
+            if d >= SCENE_MAX_SECONDS or others[j]["title_id"] in stop or _segset(others[j]) is not None:
+                break
+            total += d
+            n = j - i + 1
+            slack = max(15, 0.01 * fd, 2 * n)
+            if total > fd + slack:
+                break
+            if n >= DVD_MIN_PIECES and ch - 2 <= n <= ch + 1 and abs(total - fd) <= slack:
+                return others[i:j + 1]
+    return []
+
+
+def scene_pieces(titles: list[dict], features: list[dict], trusted: set[int] | frozenset = frozenset(),
+                 keep: set[int] | frozenset = frozenset()) -> dict[int, tuple[int, str]]:
+    """{title_id: (feature title_id, reason)} for short titles that are scenes of one of `features`.
+
+    trusted: feature title_ids known to be the movie (a database or TMDB said so), which skips the
+    "looks like a movie" check. keep: title_ids never to report (named by a database)."""
+    out: dict[int, tuple[int, str]] = {}
+    fids = {f["title_id"] for f in features}
+    for f in sorted(features, key=lambda f: -f["duration_seconds"]):
+        fd = f["duration_seconds"]
+        others = sorted((t for t in titles if t["title_id"] not in fids), key=lambda t: t["title_id"])
+        fs = _segset(f)
+        if fs is not None:
+            if f["title_id"] not in trusted and not _movie_shaped(f):
+                continue
+            pieces = [t for t in others if t["title_id"] not in out and t["title_id"] not in keep
+                      and 0 < t.get("duration_seconds", 0) < min(SCENE_MAX_SECONDS, fd / 2)
+                      and (s := _segset(t)) is not None and s <= fs]
+            if len(pieces) < SCENE_MIN_PIECES:
+                continue
+            why = "only plays clips of the feature"
+        else:
+            pieces = _dvd_run(others, f, set(keep) | set(out))
+            why = "it and the titles next to it add up to the feature, chapter by chapter"
+            sig = _tracks(f)
+            if not pieces and sum(sig.values()) >= DVD_MIN_TRACKS:
+                pieces = [t for t in others if t["title_id"] not in out and t["title_id"] not in keep
+                          and 0 < t.get("duration_seconds", 0) < min(SCENE_MAX_SECONDS, fd / 2)
+                          and _segset(t) is None and _tracks(t) == sig]
+                if len(pieces) < DVD_SAME_TRACKS_PIECES:
+                    pieces = []
+                why = "it has exactly the feature's soundtracks and subtitles, like the other scenes"
+        for t in pieces:
+            out[t["title_id"]] = (f["title_id"], f"a scene of title {f['title_id']}: {why}")
+    return out
+
+
+def _tv_like(disc: dict, titles: list[dict]) -> bool:
+    try:
+        import identify
+        info = identify.parse_label(disc.get("disc_label") or disc.get("volume_label") or disc.get("name") or "")
+        return identify.looks_like_tv(titles, info, None)
+    except Exception:
+        return True  # can't tell: don't touch it
+
+
+def find_scenes(disc: dict, known: dict | None, skip: dict | None = None) -> dict[int, tuple[int, str]]:
+    """Scene-by-scene titles to leave out before ripping (movie discs only)."""
+    titles = [t for t in disc.get("titles", []) if t.get("output_file")]
+    skip = skip or {}
+    features = [t for t in titles if t.get("duration_seconds", 0) >= FEATURE_MIN_SECONDS and t["title_id"] not in skip]
+    if not features or (known and known.get("kind") == "tv") or _tv_like(disc, titles):
+        return {}
+    pairs = (known or {}).get("pairs") or {}
+    trusted = {t["title_id"] for t in features if t["output_file"] in pairs and _is_main(pairs[t["output_file"]])}
+    named = {t["title_id"] for t in titles if t["output_file"] in pairs and pairs[t["output_file"]].get("kept", True) is not False}
+    return scene_pieces(titles, features, trusted, keep=named)
+
+
 def lookup_known(disc: dict, cfg: dict, log=print) -> dict | None:
     """What the disc databases know about this disc, looked up before ripping (same order as identify.py)."""
     titles = [t for t in disc.get("titles", []) if t.get("output_file")]
@@ -141,15 +260,21 @@ def lookup_known(disc: dict, cfg: dict, log=print) -> dict | None:
 
 
 def plan(disc: dict, cfg: dict, log=print) -> dict[int, tuple[int, str]]:
-    """Mark extra feature copies in disc["titles"] (skipped_duplicate_of) and return them. Movie-ish discs only."""
+    """Mark extra feature copies and scene-by-scene titles in disc["titles"] (skipped_duplicate_of,
+    skip_reason, skip_kind) and return them all. Movie-ish discs only."""
     titles = disc.get("titles", [])
-    if len(_groups(titles, FEATURE_MIN_SECONDS)) == 0:
-        return {}  # nothing to compare: no lookup needed
+    if not _groups(titles, FEATURE_MIN_SECONDS) and not find_scenes(disc, None):
+        return {}  # nothing to leave out even before asking the databases: no lookup needed
     known = lookup_known(disc, cfg, log=log)
     if known and known.get("kind") == "tv":
         return {}
     skip = find(titles, known)
+    scenes = find_scenes(disc, known, skip)
     for t in titles:
         if t["title_id"] in skip:
             t["skipped_duplicate_of"], t["skip_reason"] = skip[t["title_id"]]
-    return skip
+            t["skip_kind"] = "copy"
+        elif t["title_id"] in scenes:
+            t["skipped_duplicate_of"], t["skip_reason"] = scenes[t["title_id"]]
+            t["skip_kind"] = "scene"
+    return {**skip, **scenes}
