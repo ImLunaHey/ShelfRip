@@ -202,7 +202,7 @@ class RipDisc(unittest.TestCase):
         disc = disc or {"titles": [title(0, 7200, "1,2,3"), title(1, 7200, "1,2,3"), title(2, 600, "7")]}
         calls = []
 
-        def fake(cfg, args, logfile=None, on_progress=None, device=""):
+        def fake(cfg, args, logfile=None, on_progress=None, device="", on_phase=None):
             calls.append(args)
             if args[1] == "info":
                 return 0, "info"
@@ -239,6 +239,24 @@ class RipDisc(unittest.TestCase):
         self.assertEqual(info["skipped_scenes"], 4)
         self.assertNotIn("skipped_duplicates", info)
         self.assertEqual(info["titles"][1]["skip_kind"], "scene")
+
+    def test_many_titles_small_scenes_one_pass(self):
+        # ten extras and a few small scene titles: one pass, then the scene titles are deleted
+        disc = {"titles": [title(0, 6900, ",".join(str(i) for i in range(1, 31)), chapters=16)]
+                + [{**title(i, 120, str(i), size=100_000_000, src=f"{i:05d}.m2ts")} for i in range(1, 5)]
+                + [title(10 + i, 600, str(100 + i), size=500_000_000) for i in range(10)]}
+        from collections import namedtuple
+        usage, old = namedtuple("u", "total used free")(10**13, 0, 10**13), rip_all.shutil.disk_usage
+        rip_all.shutil.disk_usage = lambda _: usage
+        try:
+            info, rips = self.run_rip(True, disc)
+        finally:
+            rip_all.shutil.disk_usage = old
+        self.assertEqual([c[3] for c in rips], ["all"])
+        self.assertEqual(info["skipped_scenes"], 4)
+        self.assertEqual([t["ripped"] for t in info["titles"][1:5]], [False] * 4)  # deleted afterwards
+        self.assertTrue(all(t["ripped"] for t in info["titles"][5:]) and info["titles"][0]["ripped"])
+        self.assertEqual(info["status"], "ok")
 
     def test_setting_off(self):
         info, rips = self.run_rip(False)

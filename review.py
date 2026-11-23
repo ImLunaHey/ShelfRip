@@ -472,7 +472,7 @@ def refile_tv(name: str, tmdb_id: str, season, shift=0, log=print) -> dict:
     try:
         for it, f, src, dst in moves:
             if dst != src:
-                dst.parent.mkdir(parents=True, exist_ok=True)
+                paths.make_folder(dst.parent, "the library folder")
                 os.rename(src, dst)
                 done.append((src, dst))
     except OSError as exc:
@@ -793,7 +793,7 @@ def verify_copy(src: Path, copy: Path) -> str:
 
 
 def copy_with_progress(src: Path, dst: Path, job: dict) -> None:
-    dst.parent.mkdir(parents=True, exist_ok=True)
+    paths.make_folder(dst.parent, "the library folder")
     if same_volume(src, dst.parent):
         os.replace(src, dst)
         job["done_bytes"] += src.stat().st_size if src.exists() else dst.stat().st_size

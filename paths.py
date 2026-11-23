@@ -203,3 +203,37 @@ try:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 except OSError:
     pass
+
+
+# --------------------------------------------------------------------------- folders
+
+def folder_problem(path, exc: BaseException, what: str = "the folder") -> str:
+    """A sentence saying which folder couldn't be made and why, in plain words."""
+    code = getattr(exc, "winerror", None) or getattr(exc, "errno", None)
+    if isinstance(exc, PermissionError) or code in (5, 13):
+        why = ("Windows refused access. If Windows Security showed \"Unauthorized changes blocked\", its Controlled folder "
+               "access is protecting that folder: allow Shelfrip (and MakeMKV) under Virus & threat protection > "
+               "Ransomware protection, or choose a folder outside Documents, Videos and Desktop")
+    elif code in (21,):
+        why = "the drive isn't ready (is it a disc drive, or a USB drive that was unplugged?)"
+    elif code in (53, 67, 64, 59, 1219, 1326):
+        why = "the network location can't be reached (is the NAS on, and are you signed in to it?)"
+    elif code in (3, 2) or isinstance(exc, FileNotFoundError):
+        why = "that drive or the folder above it doesn't exist"
+    elif code in (123, 161, 22):
+        why = "that isn't a valid folder path"
+    elif code in (112, 28):
+        why = "the drive is full"
+    else:
+        why = getattr(exc, "strerror", None) or str(exc)
+    return f"Couldn't create {what} {path}: {why}."
+
+
+def make_folder(path, what: str = "the folder") -> Path:
+    """mkdir -p, but a failure says which folder and why (OSError with a readable message)."""
+    p = Path(path)
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise OSError(folder_problem(p, exc, what)) from exc
+    return p

@@ -115,6 +115,12 @@ nav.tabs button.cur{background:var(--ink);color:var(--bg);font-weight:600}
 .drive .dev{color:var(--muted);font-size:12px;font-weight:600;letter-spacing:.06em}
 .drive .lab{font-family:var(--head);font-weight:600;font-size:18px;overflow-wrap:anywhere;line-height:1.2}
 .drive .st{color:var(--muted);font-size:13px}
+.drive details.titles{min-width:0}
+.drive details.titles summary{cursor:pointer;color:var(--muted);font-size:13px}
+.drive .tscroll{max-height:260px;overflow:auto;margin-top:8px}
+.drive .tscroll table{width:100%;border-collapse:collapse;font-size:12px}
+.drive .tscroll th,.drive .tscroll td{text-align:left;padding:3px 6px;border-bottom:1px solid var(--line);white-space:nowrap}
+.drive .tscroll tr.muted td{color:var(--muted)}
 .drive .st.live{color:var(--accent);font-weight:600} .drive .st.ready{color:var(--xp);font-weight:600}
 .drive .bar{flex:none}
 .queue{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;margin-bottom:26px}
@@ -1017,7 +1023,10 @@ const progText = a => a ? `${gb(a.done)} of ${gb(a.total)} · title ${Math.min(a
 const pctOf = d => d.progress ? Math.max(d.progress.pct, d.ripping ? d.pct||0 : 0) : d.pct||0;
 const stateText = d => {
   if (!d.loaded) return "Empty";
-  if (d.ripping) return d.state === "scanning" ? "Reading the disc…" : `Ripping ${pctOf(d)}%` + (d.progress ? ` · ${progText(d.progress)}` : d.message ? ` · ${d.message}` : "");
+  if (d.ripping && d.state === "scanning") return "Reading the disc…" + (d.phase ? ` (MakeMKV: ${d.phase})` : "");
+  // before saving, each MakeMKV run opens and analyses the disc again: say so instead of a stuck percentage
+  if (d.ripping && d.phase) return `Ripping ${pctOf(d)}% · MakeMKV is reading the disc first: ${d.phase}` + (d.progress ? ` · ${gb(d.progress.done)} of ${gb(d.progress.total)} saved` : "");
+  if (d.ripping) return `Ripping ${pctOf(d)}%` + (d.progress ? ` · ${progText(d.progress)}` : d.message ? ` · ${d.message}` : "");
   if (d.elsewhere) return d.progress ? `Ripping ${d.progress.pct}% (in another window) · ${progText(d.progress)}` : "Being ripped by another window";
   if (d.state === "done" && d.rip_label === d.label) return "Done · " + (d.message||"");
   if (["check","error","cancelled"].includes(d.state) && d.rip_label === d.label) return (d.state === "cancelled" ? "Cancelled" : "Problem: ") + (d.state === "cancelled" ? "" : d.message||"");
@@ -1126,9 +1135,26 @@ function showUpdate(v){
 }
 function damagedBox(st){
   const dmg = (st && st.damaged || []).map(r => `<div class="row" style="gap:8px"><span class="err">⚠</span><span>${esc(r.label)}</span>
-      <span style="color:var(--muted)">${esc(r.when)} · ${r.read_errors ? r.read_errors + " read error(s)" : ""}${r.read_errors && r.titles_failed ? ", " : ""}${r.titles_failed ? r.titles_failed + " title(s) failed" : ""}${(r.files||[]).length ? " · " + esc(r.files.slice(0,3).join(", ")) : ""}</span>
+      <span style="color:var(--muted)">${esc(r.when)} · ${r.read_errors ? r.read_errors + " read error(s)" : ""}${r.read_errors && r.titles_failed ? ", " : ""}${r.titles_failed ? r.titles_failed + " title(s) failed" : ""}${(r.files||[]).length ? " · " + esc(r.files.slice(0,3).join(", ")) : ""}${r.problem ? ` · MakeMKV said: ${esc(r.problem)}` : ""}</span>
       <span style="flex:1"></span><button data-dmg="${esc(r.label)}" title="Remove from this list">Done</button></div>`).join("");
-  return dmg ? `<details class="panel" style="margin-bottom:24px" open><summary>Discs with read errors (${st.damaged.length}): clean them and click Rip again, or replace them</summary>${dmg}</details>` : "";
+  const reads = (st && st.damaged || []).some(r => r.read_errors);
+  return dmg ? `<details class="panel" style="margin-bottom:24px" open><summary>${reads ? `Discs with read errors (${st.damaged.length}): clean them and click Rip again, or replace them`
+    : `Discs that didn't rip completely (${st.damaged.length}): see what MakeMKV said, then click Rip again`}</summary>${dmg}</details>` : "";
+}
+const OPENT = new Set();  // drive cards whose title list is open (kept open across refreshes)
+// What MakeMKV found on the disc: each title's length, size and tracks, and what's left out.
+function titleList(d){
+  const ts = d.titles || [];
+  if (!ts.length || d.rip_label !== d.label) return "";
+  const kept = ts.filter(t => !t.skip);
+  const row = t => `<tr class="${t.skip ? "muted" : ""}"><td>${t.id}</td><td>${esc(t.length)}</td><td>${t.size ? gb(t.size) : ""}</td>
+      <td>${t.chapters || ""}</td><td>${esc(t.video || "")}</td>
+      <td title="${esc((t.audio||[]).join("\n"))}">${(t.audio||[]).length ? esc((t.audio||[]).slice(0, 2).join(", ")) + ((t.audio||[]).length > 2 ? ` +${t.audio.length - 2}` : "") : ""}</td>
+      <td title="${esc((t.subtitles||[]).join(", "))}">${(t.subtitles||[]).length || ""}</td>
+      <td>${t.skip ? `left out: ${esc(t.skip)}` : esc(t.source || "")}</td></tr>`;
+  return `<details class="titles" data-tdev="${esc(d.device)}" ${OPENT.has(d.device) ? "open" : ""}><summary>What's on this disc: ${ts.length} title${ts.length === 1 ? "" : "s"}, ripping ${kept.length} (${gb(kept.reduce((a, t) => a + (t.size || 0), 0))})</summary>
+    <div class="tscroll"><table><thead><tr><th>#</th><th>Length</th><th>Size</th><th>Ch.</th><th>Video</th><th>Audio</th><th>Subs</th><th></th></tr></thead>
+    <tbody>${kept.map(row).join("")}${ts.filter(t => t.skip).map(row).join("")}</tbody></table></div></details>`;
 }
 function driveCard(d){
   const m = d.match, live = d.ripping || d.elsewhere, ready = d.already && !live;
@@ -1149,6 +1175,7 @@ function driveCard(d){
       </div>
     </div>
     ${live || d.progress ? `<div class="bar"><i style="width:${pctOf(d)}%"></i></div>` : ""}
+    ${titleList(d)}
     ${d.stuck && d.ripping ? `<div class="warn stuck"><b>This disc seems stuck.</b> ${esc(d.stuck)} Stop the rip, clean the disc, then click Rip again.</div>` : ""}
     ${d.loaded ? `<div class="row">
       ${ready && m && m.folder ? `<button class="gold" data-review="${esc(m.folder)}">Review now</button>` : ""}
@@ -1186,6 +1213,8 @@ function renderDrives(j){
   const logOpen = $("details.log", el) && $("details.log", el).open;
   el.innerHTML = `
     ${missing.length ? setupBox(missing, "Needs setting up:") : j.error ? `<div class="warn" style="margin-bottom:14px">${esc(j.error)}</div>` : ""}
+    ${j.makemkv_open ? `<div class="warn" style="margin-bottom:14px"><b>MakeMKV's window is open.</b> Close it while Shelfrip rips:
+      MakeMKV can hold on to the drives it shows, and two programs reading the same disc make rips much slower, or fail as if the disc were scratched.</div>` : ""}
     ${j.leftover_makemkv ? `<div class="warn" style="margin-bottom:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span style="flex:1 1 360px"><b>MakeMKV is still running from before Shelfrip started</b> (${j.leftover_makemkv} cop${j.leftover_makemkv === 1 ? "y" : "ies"}).
       It holds your drives, so new rips can get stuck on "scanning".</span><button data-act="stop_leftovers">Stop ${j.leftover_makemkv === 1 ? "it" : "them"}</button></div>` : ""}
     ${homePanels(j.stats)}
@@ -1215,6 +1244,7 @@ function renderDrives(j){
   const openCard = i => { showTab("review"); setTimeout(() => { const c = $("#c" + i); c && c.scrollIntoView({behavior:"smooth", block:"start"}); }, 50); };
   el.querySelectorAll("[data-open]").forEach(b => b.onclick = () => openCard(+b.dataset.open));
   el.querySelectorAll("[data-review]").forEach(b => b.onclick = () => openCard(discs.findIndex(p => p.folder === b.dataset.review)));
+  el.querySelectorAll("details[data-tdev]").forEach(x => x.ontoggle = () => x.open ? OPENT.add(x.dataset.tdev) : OPENT.delete(x.dataset.tdev));
   el.querySelectorAll("[data-notthis]").forEach(b => b.onclick = () => toast("Got it", "Once it's ripped, open it on the Review tab and click \"No, pick the right one\". Shelfrip learns from the fix."));
 }
 function setupBox(items, head){
@@ -1517,14 +1547,30 @@ function wizard(j){
 function wireWizard(el){
   const b = $("#wizsave", el);
   if (!b) return;
-  if ($("#wizall", el)) $("#wizall", el).onclick = () => renderSettings();
-  b.onclick = async () => {
+  const wizValues = () => {
     const values = {};
     el.querySelectorAll("[data-w]").forEach(i => {
       if (i.type === "checkbox") values[i.dataset.w] = i.checked;
       else if (i.type === "password") { if (i.value.trim()) values[i.dataset.w] = i.value.trim(); }
       else values[i.dataset.w] = i.value;
     });
+    return values;
+  };
+  // each answer is saved as soon as it changes, like on the Settings page: closing Shelfrip or
+  // opening all settings before "Save and check" no longer loses what was typed or unticked
+  el.querySelectorAll("[data-w]").forEach(i => i.onchange = async () => {
+    const values = wizValues(), k = i.dataset.w;
+    if (!(k in values)) return;
+    try { SETS = await api("/api/settings", {values: {[k]: values[k]}}); }
+    catch(e){ $("#wizmsg") && ($("#wizmsg").textContent = e.message); }
+  });
+  if ($("#wizall", el)) $("#wizall", el).onclick = async () => {
+    try { SETS = await api("/api/settings", {values: wizValues()}); }
+    catch(e){ $("#wizmsg") && ($("#wizmsg").textContent = e.message); return; }
+    renderSettings();
+  };
+  b.onclick = async () => {
+    const values = wizValues();
     try {
       const r = await api("/api/settings", {values});
       const left = (r.setup||[]).filter(x => !x.ok && x.required);
@@ -1672,7 +1718,7 @@ function renderSettings(){
       const full = /^([A-Za-z]:|[\\/]{2})/.test(i.value);  // a folder kept outside the library
       const start = base && !full ? (i.value ? base.replace(/[\\/]+$/, "") + "\\" + i.value : base) : i.value;
       const r = await api("/api/pick", {kind: b.dataset.kind, start, title: i.closest(".srow").querySelector("label").textContent});
-      if (r.available === false) { i.focus(); toast("Type the path", "There's no folder picker on this computer."); }
+      if (r.available === false) { i.focus(); toast("Type the path", r.error || "There's no folder picker on this computer."); }
       else if (r.path) { i.value = r.path; await saveOne(i); }
     } finally { b.disabled = false; }
   });

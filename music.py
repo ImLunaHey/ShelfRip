@@ -685,7 +685,7 @@ def write_flac(src: Path, dst: Path, tags: list[tuple[str, str]], cover: tuple[b
         if cover:
             keep.append((6, _picture(*cover)))
         keep.append((1, b"\0" * 4096))  # padding, so tags can be edited later without rewriting
-        dst.parent.mkdir(parents=True, exist_ok=True)
+        paths.make_folder(dst.parent, "the music folder")
         tmp = dst.with_name(dst.name + ".partial")
         with open(tmp, "wb") as fo:
             fo.write(b"fLaC")
