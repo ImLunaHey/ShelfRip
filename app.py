@@ -406,6 +406,11 @@ class Ripper:
                               "season": p.get("season"), "folder": p["folder"], "how": "named for review"}
             elif m and m.get("label") == d["label"]:
                 d["match"] = m
+            fs = review.filing_status(p) if p else None
+            if fs:
+                d["filing"] = fs
+            elif d["label"] and not p and d["already"] and review.filed_label(d["label"]):
+                d["filed"] = True  # filed, and the disc is still in the drive (eject after filing is off)
         try:
             setup = setup_check()
         except Exception:
@@ -1126,6 +1131,8 @@ class Handler(review.Handler):
                     rip_all.eject(dev)
                 elif act == "rip_again":  # rip anyway (already ripped, or already in Plex)
                     dev = str(b.get("device") or "")
+                    if any(d["device"] == dev and d.get("filing") for d in RIPPER.state()["drives"]):
+                        return self.send(200, {"error": "That disc is being filed. Wait until it's done.", **RIPPER.state()})
                     RIPPER.finished.pop(dev, None)
                     RIPPER.held.pop(dev, None)
                     RIPPER.force.add(dev)

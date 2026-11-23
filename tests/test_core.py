@@ -93,6 +93,24 @@ class Core(unittest.TestCase):
         self.assertEqual(rec["status"], "filed")
         self.assertNotIn("filing", rec)
 
+    def test_filing_status_for_drive_cards(self):
+        self.assertIsNone(review.filing_status({"folder": "X__1"}))
+        review.JOBS["X__1"] = {"state": "running", "done_bytes": 250, "total_bytes": 1000, "current": "1/2: a.mkv",
+                               "label": "X"}
+        self.assertEqual(review.filing_status({"folder": "X__1"}),
+                         {"state": "running", "pct": 25, "current": "1/2: a.mkv"})
+        self.assertFalse(review.filed_label("X"))
+        review.JOBS["X__1"].update(state="done")
+        self.assertTrue(review.filed_label("X"))
+        self.assertFalse(review.filed_label(""))
+        # cut off by Shelfrip closing: it picks up again, so the disc still counts as filing
+        self.assertEqual(review.filing_status({"folder": "Y__1", "filing": {"tries": 1}})["state"], "waiting")
+        # failed 3 times: back on the Review tab, so Rip again comes back
+        review.JOBS["Y__1"] = {"state": "error", "current": "library away"}
+        self.assertIsNone(review.filing_status({"folder": "Y__1", "filing": {"tries": 3}}))
+        self.assertEqual(review.filing_status({"folder": "Y__1", "filing": {"tries": 1}})["current"], "library away")
+        self.assertIsNone(review.filing_status({"folder": "Z__1", "filing": {"tries": 6}}))
+
     def test_moved_but_not_noted_counts_as_done(self):
         d = make_disc("NOTED__1", movie_items("Noted", tmdb="4")[:1], "Noted", tmdb="4",
                       filing={"started": "x", "tries": 1, "at": time.time()})

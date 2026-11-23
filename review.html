@@ -1017,6 +1017,9 @@ const progText = a => a ? `${gb(a.done)} of ${gb(a.total)} · title ${Math.min(a
 const pctOf = d => d.progress ? Math.max(d.progress.pct, d.ripping ? d.pct||0 : 0) : d.pct||0;
 const stateText = d => {
   if (!d.loaded) return "Empty";
+  if (d.filing) return d.filing.state === "running" ? `Filing into ${SERVER_NAME} ${d.filing.pct}%` + (d.filing.current ? ` · ${d.filing.current}` : "")
+    : "Filing was cut off · it picks up again by itself" + (d.filing.current ? ` (${d.filing.current})` : "");
+  if (d.filed) return `Filed into ${SERVER_NAME} · on your shelf`;
   if (d.ripping) return d.state === "scanning" ? "Reading the disc…" : `Ripping ${pctOf(d)}%` + (d.progress ? ` · ${progText(d.progress)}` : d.message ? ` · ${d.message}` : "");
   if (d.elsewhere) return d.progress ? `Ripping ${d.progress.pct}% (in another window) · ${progText(d.progress)}` : "Being ripped by another window";
   if (d.state === "done" && d.rip_label === d.label) return "Done · " + (d.message||"");
@@ -1131,13 +1134,15 @@ function damagedBox(st){
   return dmg ? `<details class="panel" style="margin-bottom:24px" open><summary>Discs with read errors (${st.damaged.length}): clean them and click Rip again, or replace them</summary>${dmg}</details>` : "";
 }
 function driveCard(d){
-  const m = d.match, live = d.ripping || d.elsewhere, ready = d.already && !live;
+  // fil: being filed into the library. Rip again, Review now and "Not this one?" make no sense then.
+  const m = d.match, fil = d.filing, live = d.ripping || d.elsewhere, busy = live || fil, ready = d.already && !busy && !d.filed;
+  const pc = fil ? fil.pct : pctOf(d);
   const name = m ? `${m.title}${m.kind === "tv" && m.season ? ` · Season ${m.season}` : m.year ? ` (${m.year})` : ""}` : d.loaded ? (d.label || "(no label)") : "Empty";
   const art = !d.loaded ? `<svg width="72" height="72" viewBox="0 0 72 72" aria-hidden="true"><circle cx="36" cy="36" r="30" fill="none" stroke="var(--line2)" stroke-width="2" stroke-dasharray="4 6"/><circle cx="36" cy="36" r="8" fill="none" stroke="var(--line2)" stroke-width="2"/></svg>`
-    : m ? poster(m.kind, m.tmdb_id, m.kind === "tv" ? m.season : null, m.title).replace('</div>', live ? `<span class="ring">${ring(pctOf(d), 40, 5, "var(--accent)")}</span></div>` : '</div>')
-    : `<svg width="72" height="72" viewBox="0 0 72 72" aria-hidden="true"><circle cx="36" cy="36" r="30" fill="var(--card2)"/>${live ? `<circle cx="36" cy="36" r="30" fill="none" stroke="var(--accent)" stroke-width="6" stroke-linecap="round" stroke-dasharray="${(188.5 * pctOf(d) / 100).toFixed(1)} 188.5" transform="rotate(-90 36 36)"/>` : ""}<circle cx="36" cy="36" r="8" fill="var(--bg)" stroke="var(--line2)" stroke-width="2"/></svg>`;
+    : m ? poster(m.kind, m.tmdb_id, m.kind === "tv" ? m.season : null, m.title).replace('</div>', busy ? `<span class="ring">${ring(pc, 40, 5, "var(--accent)")}</span></div>` : '</div>')
+    : `<svg width="72" height="72" viewBox="0 0 72 72" aria-hidden="true"><circle cx="36" cy="36" r="30" fill="var(--card2)"/>${busy ? `<circle cx="36" cy="36" r="30" fill="none" stroke="var(--accent)" stroke-width="6" stroke-linecap="round" stroke-dasharray="${(188.5 * pc / 100).toFixed(1)} 188.5" transform="rotate(-90 36 36)"/>` : ""}<circle cx="36" cy="36" r="8" fill="var(--bg)" stroke="var(--line2)" stroke-width="2"/></svg>`;
   const bad = ["check","error"].includes(d.state) && d.rip_label === d.label;
-  const cls = !d.loaded ? "idle" : live ? "busy" : ready ? "ready" : "";
+  const cls = !d.loaded ? "idle" : busy ? "busy" : ready ? "ready" : "";
   const st = !d.loaded ? "Feed me a disc" : stateText(d);
   return `<article class="drive ${cls}">
     <div class="top">${art}
@@ -1145,14 +1150,16 @@ function driveCard(d){
         <span class="dev">DRIVE ${esc(d.device)}</span>
         <span class="lab">${esc(name)}</span>
         ${m && d.loaded ? `<span style="color:var(--muted);font-size:12px">disc: ${esc(d.label)}${m.how ? ` · recognised from ${esc(m.how)}` : ""}</span>` : ""}
-        <span class="st ${bad ? "err" : live ? "live" : ready ? "ready" : d.state === "done" && d.rip_label === d.label ? "ok" : ""}">${esc(st)}</span>
+        <span class="st ${fil ? "live" : bad ? "err" : live ? "live" : ready ? "ready" : d.filed || d.state === "done" && d.rip_label === d.label ? "ok" : ""}">${esc(st)}</span>
       </div>
     </div>
-    ${live || d.progress ? `<div class="bar"><i style="width:${pctOf(d)}%"></i></div>` : ""}
+    ${busy || d.progress ? `<div class="bar"><i style="width:${pc}%"></i></div>` : ""}
     ${d.stuck && d.ripping ? `<div class="warn stuck"><b>This disc seems stuck.</b> ${esc(d.stuck)} Stop the rip, clean the disc, then click Rip again.</div>` : ""}
-    ${d.loaded ? `<div class="row">
+    ${d.loaded && fil ? `<div class="row">
+      ${m && m.folder ? `<button data-review="${esc(m.folder)}">See filing</button>` : ""}<button data-act="eject" data-dev="${esc(d.device)}" title="Filing works from the rip folder, so the disc can come out">Eject</button>
+    </div>` : d.loaded ? `<div class="row">
       ${ready && m && m.folder ? `<button class="gold" data-review="${esc(m.folder)}">Review now</button>` : ""}
-      ${m && !ready ? `<button data-notthis="1" title="The box art isn't what's in the drive? Fix it on the Review tab once it's ripped.">Not this one?</button>` : ""}
+      ${m && !ready && !d.filed ? `<button data-notthis="1" title="The box art isn't what's in the drive? Fix it on the Review tab once it's ripped.">Not this one?</button>` : ""}
       ${d.ripping ? `<button data-act="cancel" data-dev="${esc(d.device)}" ${d.stuck ? 'class="primary"' : ""}>${d.stuck ? "Stop this rip" : "Cancel rip"}</button>`
         : `${d.already ? `<button data-act="rip_again" data-dev="${esc(d.device)}">${d.state === "in_plex" && d.rip_label === d.label ? "Rip anyway" : "Rip again"}</button>` : ""}<button data-act="eject" data-dev="${esc(d.device)}">Eject</button>`}
     </div>` : ""}
@@ -1174,7 +1181,7 @@ function queueCards(){
       <span style="flex:1;display:grid;gap:4px;min-width:0">
         <b style="font-size:15px">${esc(t)}${p.kind === "tv" && p.season ? ` · Season ${p.season}` : p.year ? ` (${esc(p.year)})` : ""}</b>
         <span style="color:var(--muted)">${what}</span>
-        <span class="row">${confChip(p)}${auto ? `<span class="chip">files itself ${p.auto.at * 1000 <= Date.now() ? "in a moment" : "at " + new Date(p.auto.at * 1000).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})}</span>` : ""}</span>
+        <span class="row">${p.job && p.job.state === "running" ? `<span class="chip">Filing ${p.job.total_bytes ? Math.round(100 * p.job.done_bytes / p.job.total_bytes) : 0}%</span>` : confChip(p)}${auto ? `<span class="chip">files itself ${p.auto.at * 1000 <= Date.now() ? "in a moment" : "at " + new Date(p.auto.at * 1000).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})}</span>` : ""}</span>
       </span>
       <span class="chip xp">+${xpOf(p)} XP</span></button>`; }).join("")}</div>`;
 }
