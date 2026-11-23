@@ -1026,6 +1026,9 @@ const progText = a => a ? `${gb(a.done)} of ${gb(a.total)} · title ${Math.min(a
 const pctOf = d => d.progress ? Math.max(d.progress.pct, d.ripping ? d.pct||0 : 0) : d.pct||0;
 const stateText = d => {
   if (!d.loaded) return "Empty";
+  if (d.filing) return d.filing.state === "running" ? `Filing into ${SERVER_NAME} ${d.filing.pct}%` + (d.filing.current ? ` · ${d.filing.current}` : "")
+    : "Filing was cut off · it picks up again by itself" + (d.filing.current ? ` (${d.filing.current})` : "");
+  if (d.filed) return `Filed into ${SERVER_NAME} · on your shelf`;
   if (d.ripping) return d.state === "scanning" ? "Reading the disc…" : `Ripping ${pctOf(d)}%` + (d.progress ? ` · ${progText(d.progress)}` : d.message ? ` · ${d.message}` : "");
   if (d.elsewhere) return d.progress ? `Ripping ${d.progress.pct}% (in another window) · ${progText(d.progress)}` : "Being ripped by another window";
   if (d.state === "done" && d.rip_label === d.label) return "Done · " + (d.message||"");
@@ -1140,13 +1143,15 @@ function damagedBox(st){
   return dmg ? `<details class="panel" style="margin-bottom:24px" open><summary>Discs with read errors (${st.damaged.length}): clean them and click Rip again, or replace them</summary>${dmg}</details>` : "";
 }
 function driveCard(d){
-  const m = d.match, live = d.ripping || d.elsewhere, ready = d.already && !live;
+  // fil: being filed into the library. Rip again, Review now and "Not this one?" make no sense then.
+  const m = d.match, fil = d.filing, live = d.ripping || d.elsewhere, busy = live || fil, ready = d.already && !busy && !d.filed;
+  const pc = fil ? fil.pct : pctOf(d);
   const name = m ? `${m.title}${m.kind === "tv" && m.season ? ` · Season ${m.season}` : m.year ? ` (${m.year})` : ""}` : d.loaded ? (d.label || "(no label)") : "Empty";
   const art = !d.loaded ? `<svg width="72" height="72" viewBox="0 0 72 72" aria-hidden="true"><circle cx="36" cy="36" r="30" fill="none" stroke="var(--line2)" stroke-width="2" stroke-dasharray="4 6"/><circle cx="36" cy="36" r="8" fill="none" stroke="var(--line2)" stroke-width="2"/></svg>`
-    : m ? poster(m.kind, m.tmdb_id, m.kind === "tv" ? m.season : null, m.title).replace('</div>', live ? `<span class="ring">${ring(pctOf(d), 40, 5, "var(--accent)")}</span></div>` : '</div>')
-    : `<svg width="72" height="72" viewBox="0 0 72 72" aria-hidden="true"><circle cx="36" cy="36" r="30" fill="var(--card2)"/>${live ? `<circle cx="36" cy="36" r="30" fill="none" stroke="var(--accent)" stroke-width="6" stroke-linecap="round" stroke-dasharray="${(188.5 * pctOf(d) / 100).toFixed(1)} 188.5" transform="rotate(-90 36 36)"/>` : ""}<circle cx="36" cy="36" r="8" fill="var(--bg)" stroke="var(--line2)" stroke-width="2"/></svg>`;
+    : m ? poster(m.kind, m.tmdb_id, m.kind === "tv" ? m.season : null, m.title).replace('</div>', busy ? `<span class="ring">${ring(pc, 40, 5, "var(--accent)")}</span></div>` : '</div>')
+    : `<svg width="72" height="72" viewBox="0 0 72 72" aria-hidden="true"><circle cx="36" cy="36" r="30" fill="var(--card2)"/>${busy ? `<circle cx="36" cy="36" r="30" fill="none" stroke="var(--accent)" stroke-width="6" stroke-linecap="round" stroke-dasharray="${(188.5 * pc / 100).toFixed(1)} 188.5" transform="rotate(-90 36 36)"/>` : ""}<circle cx="36" cy="36" r="8" fill="var(--bg)" stroke="var(--line2)" stroke-width="2"/></svg>`;
   const bad = ["check","error"].includes(d.state) && d.rip_label === d.label;
-  const cls = !d.loaded ? "idle" : live ? "busy" : ready ? "ready" : "";
+  const cls = !d.loaded ? "idle" : busy ? "busy" : ready ? "ready" : "";
   const st = !d.loaded ? "Feed me a disc" : stateText(d);
   return `<article class="drive ${cls}">
     <div class="top">${art}
@@ -1154,14 +1159,16 @@ function driveCard(d){
         <span class="dev">DRIVE ${esc(d.device)}</span>
         <span class="lab">${esc(name)}</span>
         ${m && d.loaded ? `<span style="color:var(--muted);font-size:12px">disc: ${esc(d.label)}${m.how ? ` · recognised from ${esc(m.how)}` : ""}</span>` : ""}
-        <span class="st ${bad ? "err" : live ? "live" : ready ? "ready" : d.state === "done" && d.rip_label === d.label ? "ok" : ""}">${esc(st)}</span>
+        <span class="st ${fil ? "live" : bad ? "err" : live ? "live" : ready ? "ready" : d.filed || d.state === "done" && d.rip_label === d.label ? "ok" : ""}">${esc(st)}</span>
       </div>
     </div>
-    ${live || d.progress ? `<div class="bar"><i style="width:${pctOf(d)}%"></i></div>` : ""}
+    ${busy || d.progress ? `<div class="bar"><i style="width:${pc}%"></i></div>` : ""}
     ${d.stuck && d.ripping ? `<div class="warn stuck"><b>This disc seems stuck.</b> ${esc(d.stuck)} Stop the rip, clean the disc, then click Rip again.</div>` : ""}
-    ${d.loaded ? `<div class="row">
+    ${d.loaded && fil ? `<div class="row">
+      ${m && m.folder ? `<button data-review="${esc(m.folder)}">See filing</button>` : ""}<button data-act="eject" data-dev="${esc(d.device)}" title="Filing works from the rip folder, so the disc can come out">Eject</button>
+    </div>` : d.loaded ? `<div class="row">
       ${ready && m && m.folder ? `<button class="gold" data-review="${esc(m.folder)}">Review now</button>` : ""}
-      ${m && !ready ? `<button data-notthis="1" title="The box art isn't what's in the drive? Fix it on the Review tab once it's ripped.">Not this one?</button>` : ""}
+      ${m && !ready && !d.filed ? `<button data-notthis="1" title="The box art isn't what's in the drive? Fix it on the Review tab once it's ripped.">Not this one?</button>` : ""}
       ${d.ripping ? `<button data-act="cancel" data-dev="${esc(d.device)}" ${d.stuck ? 'class="primary"' : ""}>${d.stuck ? "Stop this rip" : "Cancel rip"}</button>`
         : `${d.already ? `<button data-act="rip_again" data-dev="${esc(d.device)}">${d.state === "in_plex" && d.rip_label === d.label ? "Rip anyway" : "Rip again"}</button>` : ""}<button data-act="eject" data-dev="${esc(d.device)}">Eject</button>`}
     </div>` : ""}
@@ -1183,7 +1190,7 @@ function queueCards(){
       <span style="flex:1;display:grid;gap:4px;min-width:0">
         <b style="font-size:15px">${esc(t)}${p.kind === "tv" && p.season ? ` · Season ${p.season}` : p.year ? ` (${esc(p.year)})` : ""}</b>
         <span style="color:var(--muted)">${what}</span>
-        <span class="row">${confChip(p)}${auto ? `<span class="chip">files itself ${p.auto.at * 1000 <= Date.now() ? "in a moment" : "at " + new Date(p.auto.at * 1000).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})}</span>` : ""}</span>
+        <span class="row">${p.job && p.job.state === "running" ? `<span class="chip">Filing ${p.job.total_bytes ? Math.round(100 * p.job.done_bytes / p.job.total_bytes) : 0}%</span>` : confChip(p)}${auto ? `<span class="chip">files itself ${p.auto.at * 1000 <= Date.now() ? "in a moment" : "at " + new Date(p.auto.at * 1000).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})}</span>` : ""}</span>
       </span>
       <span class="chip xp">+${xpOf(p)} XP</span></button>`; }).join("")}</div>`;
 }
@@ -1508,6 +1515,10 @@ function wizard(j){
         <div class="how">Sign up at <a href="https://www.themoviedb.org/signup" target="_blank" rel="noopener">themoviedb.org</a>, open
           <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">Settings › API</a>, request a key (choose Personal use),
           and copy the <b>API Key</b> (the short one).</div></li>
+      <li><label class="chk"><input type="checkbox" data-w="skip_duplicate_features" ${val("skip_duplicate_features") ? "checked" : ""}>
+        <span><b>Rip the main feature only once.</b> Some movie discs list the film several times, often as decoys, and ripping
+        every copy can add half an hour or more per disc. Copies that are the same video and tracks, or that a disc database says aren't
+        the real one, are left out. Different cuts and language versions are always ripped. You can change this any time in Settings.</span></label></li>
       <li><label class="chk"><input type="checkbox" data-w="share_discs" ${val("share_discs") !== false ? "checked" : ""}>
         <span><b>Help build the Shelfrip disc database.</b> When you file a disc, share what each title turned out to be, so the next person
         with the same disc gets it named right straight away. Only the disc's fingerprint, title lengths and sizes, and the names you chose are sent:
@@ -1556,6 +1567,7 @@ const SET_GROUPS = [
     ["auto_rip", "Start with auto-rip on", "Rip every disc as soon as it's inserted, from the moment Shelfrip opens."],
     ["check_plex_before_rip", "Skip discs you already have", "If your library already has it in the same or better quality, the disc isn't ripped. You can still click Rip anyway."],
     ["retry_failed_titles", "Retry titles that hit read errors", "Tries once more before giving up on a scratched section."],
+    ["skip_duplicate_features", "Rip the main feature only once", "Some discs list the movie several times (often as decoys), or every scene of it as a title of its own. Leaves out copies that are the same video and tracks, copies a disc database says aren't the real one, and scene-by-scene titles. Different cuts, language versions and named extras are still ripped."],
     ["eject_when_done", "Eject as soon as the rip finishes", "Normally the disc stays in until you file it, so you can check its extras."],
     ["min_length_seconds", "Ignore titles shorter than", "Menus, logos and warnings.", {unit:"seconds", adv:1}],
     ["min_free_gb_rips", "Keep this much space free in the rip folder", "A rip waits if there's less than this.", {unit:"GB", adv:1}],

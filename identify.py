@@ -101,7 +101,7 @@ NOISE_WORDS = {
 
 # --------------------------------------------------------------------------- utils
 
-PLANNER_VERSION = 8  # bump when naming improves, so untouched proposals get redone
+PLANNER_VERSION = 9  # bump when naming improves, so untouched proposals get redone
 
 
 # Settings you fill in yourself: added to config.json (empty) if they're missing, so you can see where they go
@@ -1162,6 +1162,40 @@ def skip_clutter(items: list[dict], title: str = "") -> None:
             it["note"] = "; ".join(x for x in (f"skipped: {why}. Set Keep to add it anyway", it.get("note")) if x)
 
 
+def skip_scenes(plan: dict, titles: list[dict]) -> None:
+    """Movie discs that also list every scene as its own title: set those unnamed scene titles to Skip.
+    Everything in them is in the feature being filed. Same rules as dupes.scene_pieces (used before ripping)."""
+    if plan.get("kind") != "movie":
+        return
+    import dupes
+    by_file = {t.get("output_file"): t for t in titles}
+    feats, trusted = [], set()
+    for it in plan["items"]:
+        t = by_file.get(it.get("source"))
+        if t is None or it.get("action") == "skip" or t.get("duration_seconds", 0) < dupes.FEATURE_MIN_SECONDS:
+            continue
+        feats.append(t)
+        if it.get("role") in ("main", "edition"):
+            trusted.add(t["title_id"])
+    if not feats:
+        return
+    open_extras = {it["source"]: it for it in plan["items"] if it.get("role") == "extra" and it.get("action") == "move"
+                   and PLACEHOLDER.match(str(it.get("name") or ""))}
+    # titles you'd keep under a real name are never scenes (and end a run of DVD scenes)
+    kept = {it["source"] for it in plan["items"] if it.get("action") != "skip" and it["source"] not in open_extras}
+    named = {t["title_id"] for t in titles if t.get("output_file") in kept}
+    pieces = dupes.scene_pieces(titles, feats, trusted, keep=named - {f["title_id"] for f in feats})
+    names = {t["title_id"]: next((it.get("name") for it in plan["items"] if it.get("source") == t["output_file"]), "")
+             for t in feats}
+    for tid, (fid, _why) in pieces.items():
+        it = open_extras.get(next((t["output_file"] for t in titles if t["title_id"] == tid), None))
+        if it is None:
+            continue
+        it["action"] = "skip"
+        it["note"] = "; ".join(x for x in (f"skipped: a scene from {names.get(fid) or f'title {fid}'}, which has all of it. "
+                                           "Set Keep to add it anyway", it.get("note")) if x)
+
+
 def plan_folder(folder: Path, rip_root: Path, tmdb: TMDB | None, lib: dict, cfg: dict,
                 override: dict | None = None) -> dict | None:
     """override (from the review page): {"kind": "movie"|"tv", "tmdb_id": "123", "season": 2}"""
@@ -1259,10 +1293,24 @@ def plan_folder(folder: Path, rip_root: Path, tmdb: TMDB | None, lib: dict, cfg:
             it["name"] = capital_case(it["name"])
     if cfg.get("skip_clutter", True):
         skip_clutter(plan["items"], plan.get("title") or "")
+        try:
+            skip_scenes(plan, titles)
+        except Exception as exc:
+            print(f"    (couldn't check for scene-by-scene titles: {exc})")
     try:
         attach_audio(plan, folder, disc)
     except Exception as exc:
         print(f"    (couldn't read the audio tracks: {exc})")
+    if disc.get("skipped_duplicates"):
+        n = disc["skipped_duplicates"]
+        plan["warnings"].append(f"{n} extra cop{'y' if n == 1 else 'ies'} of the main feature {'was' if n == 1 else 'were'} "
+                                "left out before ripping (Settings, Ripping: Rip the main feature only once). "
+                                "Use Rip again with that setting off if something is missing.")
+    if disc.get("skipped_scenes"):
+        n = disc["skipped_scenes"]
+        plan["warnings"].append(f"{n} scene-by-scene title{'' if n == 1 else 's'} (the movie cut into separate scenes) "
+                                f"{'was' if n == 1 else 'were'} left out before ripping, as the main feature has all of "
+                                "it (Settings, Ripping: Rip the main feature only once).")
     if disc.get("read_errors") or disc.get("titles_failed"):
         bits = [f"{disc['read_errors']} read error(s)" if disc.get("read_errors") else "",
                 f"{disc['titles_failed']} title(s) failed" if disc.get("titles_failed") else ""]
