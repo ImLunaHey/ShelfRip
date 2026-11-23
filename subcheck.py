@@ -50,7 +50,7 @@ from pathlib import Path
 
 HERE = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 NOWIN = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-SAMPLES = 200         # subtitle lines read per title or episode (OCR is about 1 s per 60)
+SAMPLES = 600         # subtitle lines read per title or episode (OCR is about 1 s per 60)
 EDGE = 90             # seconds skipped at the start and end of long titles (theme songs, credits)
 TESSERACT_URL = "https://github.com/UB-Mannheim/tesseract/wiki"
 
@@ -493,8 +493,17 @@ def character_words(chars: list[str]) -> list[str]:
     for c in chars:
         c = re.sub(r"\(.*?\)", " ", c or "")
         for part in re.split(r"[/,]", c):
-            out += words(part)
+            out += [w for w in words(part) if w not in ROLES]
     return out
+
+
+# Titles and job words in character names ("Knight of House Frey", "Pentoshi Servant", "Guard #2")
+ROLES = set("""
+lord lady ser sir king queen prince princess knight house maester septa grand master captain doctor dr mr mrs
+miss officer guard guards soldier soldiers man men woman women girl boy old young little big the servant
+waiter waitress driver nurse reporter student teacher priest agent detective sergeant lieutenant general
+commander chief judge cop police pilot clerk bartender customer passenger kid child baby mom dad wife husband
+""".split())
 
 
 class Matcher:
@@ -503,6 +512,9 @@ class Matcher:
     def __init__(self, text: str):
         self.flat = " " + " ".join(re.findall(r"[a-z0-9]+", fold(text))) + " "
         self.words = set(words(text))
+        # Names are written with a capital in subtitles; a word also seen in lower case is an
+        # ordinary word ("servant", "drunk") even when TMDB lists it as part of a character.
+        self.lower = {fold(t) for t in re.findall(r"[^\W\d_][\w']*", text) if t[0].islower()}
         self.by_first: dict[str, list[str]] = {}
         for w in self.words:
             self.by_first.setdefault(w[0], []).append(w)
@@ -552,9 +564,10 @@ def score(m: Matcher, prof: dict, weight: dict[str, float], damp: dict[str, floa
           ) -> tuple[float, list[str]]:
     damp = damp or {}
     ws = prof["words"]
-    val = {w: weight.get(w, 0) * ws[w] * damp.get(w, 1.0) for w in ws if m.has(w)}
+    mult = {w: min(ws[w], 0.35) if w in m.lower else ws[w] for w in ws}
+    val = {w: weight.get(w, 0) * mult[w] * damp.get(w, 1.0) for w in ws if m.has(w)}
     hit = sorted(val, key=lambda w: -val[w])
-    total = sum(weight.get(w, 0) * ws[w] for w in ws) or 1
+    total = sum(weight.get(w, 0) * mult[w] for w in ws) or 1
     sc = sum(val.values()) / math.sqrt(total)
     if m.phrase(prof.get("phrase")):        # the episode's own title said out loud
         sc += 1.0
@@ -781,7 +794,11 @@ def check_folder(folder: Path, cfg: dict, tmdb, exe: str | None, langs: set[str]
             row.update(track=f"{tr['kind']} {tr['lang']}", lines=len(tr["cues"]))
             sample = pick(tr["cues"], u["ranges"], samples, EDGE)
             t0 = time.time()
-            if tr["kind"] == "text":
+            twin = next((v for v in todo if v.get("text") and v["ranges"] == u["ranges"]
+                         and same_timing(tr["cues"], tracks[str(v["video"])].get("cues") or []) >= 0.95), None)
+            if twin:                      # an exact copy of a title already read: reuse its text
+                u["text"] = twin["text"]
+            elif tr["kind"] == "text":
                 u["text"] = "\n".join(c["text"] for c in sample)
             elif exe:
                 lang = TESS_LANG.get(tr["lang"], "eng")
@@ -868,7 +885,9 @@ def _judge_tv(plan, todo, tmdb, report, log):
         row = u["row"]
         row.update(planned_score=round(sp, 2), best_episode=best, best_score=round(sb, 2),
                    best_words=table[idx][best][1][:8], planned_words=table[idx].get(planned, (0, []))[1][:8])
-        if best == planned and sb > 0 and sb >= 1.3 * second:
+        if row.get("copy_of", {}).get("timing_match", 0) >= 0.5:
+            row["verdict"] = f"copy of {row['copy_of']['title']}"
+        elif best == planned and sb > 0 and sb >= 1.3 * second:
             row["verdict"] = "fits"
         elif best != planned and sb >= 1.5 * max(sp, 0.01) and len(table[idx][best][1]) >= 2:
             row["verdict"] = f"looks like e{best:02d}"
