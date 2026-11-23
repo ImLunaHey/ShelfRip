@@ -1499,6 +1499,10 @@ function wizard(j){
         <div class="how">Sign up at <a href="https://www.themoviedb.org/signup" target="_blank" rel="noopener">themoviedb.org</a>, open
           <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">Settings › API</a>, request a key (choose Personal use),
           and copy the <b>API Key</b> (the short one).</div></li>
+      <li><label class="chk"><input type="checkbox" data-w="skip_duplicate_features" ${val("skip_duplicate_features") ? "checked" : ""}>
+        <span><b>Rip the main feature only once.</b> Some movie discs list the film several times, often as decoys, and ripping
+        every copy can add half an hour or more per disc. Copies that are the same video and tracks, or that a disc database says aren't
+        the real one, are left out. Different cuts and language versions are always ripped. You can change this any time in Settings.</span></label></li>
       <li><label class="chk"><input type="checkbox" data-w="share_discs" ${val("share_discs") !== false ? "checked" : ""}>
         <span><b>Help build the Shelfrip disc database.</b> When you file a disc, share what each title turned out to be, so the next person
         with the same disc gets it named right straight away. Only the disc's fingerprint, title lengths and sizes, and the names you chose are sent:
