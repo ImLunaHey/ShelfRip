@@ -44,7 +44,7 @@ import rip_all
 JOB_DEFAULTS = {"auto_file": True, "auto_file_minutes": 15, "audio_language": "eng", "subtitle_language": "",
                 "forced_subtitles": True, "retry_failed_titles": True, "job_total_discs": 0,
                 "min_free_gb_rips": 60, "app_window": True, "tray_icon": True, "sounds": True,
-                "skip_clutter": True}
+                "skip_clutter": True, "skip_duplicate_features": False}
 SECRETS = ("tmdb_api_key", "omdb_api_key", "plex_token")
 SETTINGS = [  # (key, label, kind)
     ("output_root", "Rip folder (where discs are ripped to before review)", "text"),
@@ -79,6 +79,7 @@ SETTINGS = [  # (key, label, kind)
     ("subtitle_language", "Turn on full subtitles in this language (empty = off)", "text"),
     ("forced_subtitles", "Show forced subtitles (foreign-dialogue lines) automatically", "bool"),
     ("retry_failed_titles", "Retry titles that hit read errors once", "bool"),
+    ("skip_duplicate_features", "Rip only one copy when a movie disc lists the same feature several times", "bool"),
     ("job_total_discs", "Discs you plan to rip, for a progress bar (0 = no goal)", "number"),
     ("min_free_gb_rips", "Don't start a rip with less than this free in the rip folder (GB)", "number"),
     ("tmdb_api_key", "TMDB key", "secret"),
