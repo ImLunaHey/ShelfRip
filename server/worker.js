@@ -1,9 +1,13 @@
 // Shelfrip community disc database: a Cloudflare Worker with a D1 database.
 //
 // Each time someone files a disc (and has sharing on), the app sends what they filed: the disc's
-// fingerprint and, per title, its playlist, length and size and what it turned out to be (the movie,
-// episode s01e03, the featurette "Making Of", a skipped clip). When someone else rips the same disc,
-// the app asks here first and gets the answer most people agreed on.
+// fingerprint and, per title, its playlist, length and size, its tracks (video, audio languages and
+// commentary names, subtitle languages) and what it turned out to be (the movie, episode s01e03, the
+// featurette "Making Of", a skipped clip). When someone else rips the same disc, the app asks here
+// first and gets the answer most people agreed on, with a confidence for each title.
+//
+// Votes are weighted: a title someone filed exactly as this database's answer was shown to them
+// ("accepted") counts as ACCEPTED_WEIGHT of a vote, so clicking through can't confirm an answer alone.
 //
 //   POST /v1/submit           one filed disc               (rate limited per install and per IP)
 //   POST /v1/report           "this disc is not <answer>"  (counts against that answer)
@@ -22,13 +26,15 @@
 // Nothing personal is stored: install ids and IPs are only kept as salted hashes (SALT secret),
 // IPs only inside daily rate-limit counters.
 
-const MAX_BODY = 128 * 1024;
+const MAX_BODY = 256 * 1024;
 const MAX_TITLES = 300;
 const PER_INSTALL_PER_DAY = 200;
 const PER_IP_PER_DAY = 400;
 const PER_INSTALL_FEEDBACK = 20;
 const PER_IP_FEEDBACK = 40;
-const CONFIRM = 2;              // independent installs that must agree before an answer counts as confirmed
+const CONFIRM = 2;              // weighted votes that must agree before an answer counts as confirmed
+const ACCEPTED_WEIGHT = 0.5;    // a title filed exactly as our answer showed it (1 for anything else)
+const MAX_AUDIO = 24, MAX_SUBS = 48;
 const ROLES = new Set(["main", "edition", "episode", "extra", "play_all"]);
 const CATEGORIES = new Set(["Featurettes", "Behind the Scenes", "Deleted Scenes", "Interviews", "Scenes",
   "Shorts", "Trailers", "Other"]);
@@ -95,7 +101,34 @@ function cleanTitle(t) {
   }
   if (role === "edition") out.name = str(t.name, 60);  // just the edition, e.g. "Extended"
   if (t.split) out.split = str(t.split, 200);          // how a multi-episode title was cut
+  if (t.accepted === true) out.accepted = 1;           // filed just as our answer showed it
+  const tracks = cleanTracks(t.tracks);
+  if (tracks) out.tracks = tracks;
   return out;
+}
+
+const lang = v => { const l = str(v, 10).toLowerCase(); return /^[a-z]{2,3}$/.test(l) ? l : ""; };
+const label = (v, n) => str(v, n).replace(/[\u0000-\u001f]/g, "");
+
+// A title's tracks: {video: {codec, res}, audio: [{lang, codec, ch, commentary?, name?, core?}], subs: [{lang, forced?}]}
+function cleanTracks(x) {
+  if (!x || typeof x !== "object") return null;
+  const out = {};
+  if (x.video && typeof x.video === "object") {
+    const v = { codec: label(x.video.codec, 20), res: label(x.video.res, 20) };
+    if (v.codec || v.res) out.video = v;
+  }
+  out.audio = (Array.isArray(x.audio) ? x.audio : []).slice(0, MAX_AUDIO).filter(a => a && typeof a === "object").map(a => {
+    const o = { lang: lang(a.lang), codec: label(a.codec, 20), ch: Math.max(0, Math.min(16, int(a.ch) || 0)) };
+    if (a.commentary) { o.commentary = 1; const n = label(a.name, 150); if (n) o.name = n; }
+    if (a.core) o.core = 1;
+    return o;
+  });
+  out.subs = (Array.isArray(x.subs) ? x.subs : []).slice(0, MAX_SUBS).filter(t => t && typeof t === "object")
+    .map(t => t.forced ? { lang: lang(t.lang), forced: 1 } : { lang: lang(t.lang) });
+  if (!out.audio.length) delete out.audio;
+  if (!out.subs.length) delete out.subs;
+  return Object.keys(out).length ? out : null;
 }
 
 async function bump(env, key, limit) {
@@ -140,6 +173,8 @@ async function submit(req, env) {
   if (tmdb && !/^\d+$/.test(tmdb)) throw new Refusal("bad tmdb_id");
   const titles = (Array.isArray(b.titles) ? b.titles : []).slice(0, MAX_TITLES).map(cleanTitle).filter(Boolean);
   if (!titles.length) throw new Refusal("no titles");
+  // the whole disc filed just as our answer showed it: its say on what the disc is counts less too
+  const accepted = titles.every(t => t.accepted) ? 1 : 0;
 
   const ip = req.headers.get("CF-Connecting-IP") || "";
   await bump(env, await sha(env.SALT + "|ip|" + ip), PER_IP_PER_DAY);
@@ -150,15 +185,16 @@ async function submit(req, env) {
     .bind(discKey, install, kind, tmdb, kind === "tv" ? (int(m.season) ?? -1) : -1).run();
   await env.DB.prepare(
     `INSERT INTO submissions (disc_key, alt_key, install, created, app_version, format, disc_label, disc_name,
-       kind, title, year, tmdb_id, imdb_id, season, titles)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       kind, title, year, tmdb_id, imdb_id, season, titles, accepted)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(disc_key, install) DO UPDATE SET alt_key=excluded.alt_key, created=excluded.created,
        app_version=excluded.app_version, format=excluded.format, disc_label=excluded.disc_label,
        disc_name=excluded.disc_name, kind=excluded.kind, title=excluded.title, year=excluded.year,
-       tmdb_id=excluded.tmdb_id, imdb_id=excluded.imdb_id, season=excluded.season, titles=excluded.titles`
+       tmdb_id=excluded.tmdb_id, imdb_id=excluded.imdb_id, season=excluded.season, titles=excluded.titles,
+       accepted=excluded.accepted`
   ).bind(discKey, altKey, install, now(), str(b.app_version, 20), str(d.format, 20), str(d.label, 100),
     str(d.name, 200), kind, str(m.title, 200), str(m.year, 4), tmdb, str(m.imdb_id, 20),
-    kind === "tv" ? int(m.season) : null, JSON.stringify(titles)).run();
+    kind === "tv" ? int(m.season) : null, JSON.stringify(titles), accepted).run();
   return json({ ok: true, disc_key: discKey });
 }
 
@@ -213,21 +249,58 @@ const titleKey = t => t.source_file ? `${t.source_file}|${Math.round((t.duration
 
 const idKey = r => `${r.kind}|${r.tmdb_id}|${r.kind === "tv" ? r.season ?? "" : ""}`;
 
+const weightOf = x => x.accepted ? ACCEPTED_WEIGHT : 1;
+const round1 = n => Math.round(n * 10) / 10;
+// How sure we are, 0-100, from the weighted votes ahead of everything else: half a vote ahead is 29,
+// one is 50, two (e.g. two people who checked it) is 75, three 88, four 94.
+const confidence = margin => margin > 0 ? Math.round(100 * (1 - Math.pow(0.5, margin))) : 0;
+
+// The tracks most of a title's voters saw (by layout: languages, codecs, channels), with the
+// commentary names they used most.
+function commonTracks(list) {
+  const layouts = new Map();
+  for (const tr of list) {
+    if (!tr) continue;
+    const k = JSON.stringify({ v: tr.video || null, a: (tr.audio || []).map(a => [a.lang, a.codec, a.ch, a.core || 0]),
+      s: (tr.subs || []).map(t => [t.lang, t.forced || 0]) });
+    if (!layouts.has(k)) layouts.set(k, []);
+    layouts.get(k).push(tr);
+  }
+  if (!layouts.size) return null;
+  const same = [...layouts.values()].sort((a, b) => b.length - a.length)[0];
+  const out = JSON.parse(JSON.stringify(same[0]));
+  (out.audio || []).forEach((a, i) => {
+    const said = new Map();
+    for (const tr of same) {
+      const x = (tr.audio || [])[i] || {};
+      const k = x.commentary ? "c|" + (x.name || "") : "-";
+      said.set(k, (said.get(k) || 0) + 1);
+    }
+    const best = [...said.entries()].sort((p, q) => q[1] - p[1] || (q[0].length - p[0].length))[0][0];
+    delete a.commentary; delete a.name;
+    if (best.startsWith("c|")) { a.commentary = 1; if (best.length > 2) a.name = best.slice(2); }
+  });
+  return out;
+}
+
 function consensus(rows, reports = []) {
   if (!rows.length) return null;
-  // 1. what the disc is: most installs win, less one for each install that said it's wrong
+  // 1. what the disc is: the most (weighted) installs win, less one for each install that said it's wrong
   const ids = new Map(), against = new Map();
   for (const r of rows) ids.set(idKey(r), [...(ids.get(idKey(r)) || []), r]);
   for (const r of reports) {
     const mine = ids.get(idKey(r)) || [];
     if (!mine.some(x => x.install === r.install)) against.set(idKey(r), (against.get(idKey(r)) || 0) + 1);
   }
-  const score = list => list.length - (against.get(idKey(list[0])) || 0);
+  const weight = list => list.reduce((s, r) => s + weightOf(r), 0);
+  const score = list => weight(list) - (against.get(idKey(list[0])) || 0);
   const ranked = [...ids.values()].sort((a, b) => score(b) - score(a) || b.length - a.length);
   const agree = ranked[0], first = agree[0];
   const reported = against.get(idKey(first)) || 0;
   if (score(agree) <= 0) return { disputed: true, kind: first.kind, title: first.title, tmdb_id: first.tmdb_id,
-    season: first.season, submitters: rows.length, agree: agree.length, reported };
+    season: first.season, submitters: rows.length, agree: agree.length, reported, confidence: 0 };
+  const runnerUp = ranked[1] ? Math.max(0, score(ranked[1])) : 0;
+  const discMargin = score(agree) - runnerUp;
   // 2. what each title is, among those who agree on the disc
   const per = new Map();
   for (const r of agree) {
@@ -235,36 +308,46 @@ function consensus(rows, reports = []) {
       const k = titleKey(t);
       if (!per.has(k)) per.set(k, new Map());
       const votes = per.get(k), a = answerKey(t);
-      if (!votes.has(a)) votes.set(a, { title: t, n: 0, names: new Map() });
+      if (!votes.has(a)) votes.set(a, { title: t, n: 0, w: 0, names: new Map(), tracks: [] });
       const v = votes.get(a);
       v.n += 1;
+      v.w += weightOf(t);
       if (t.name) v.names.set(t.name, (v.names.get(t.name) || 0) + 1);  // the most-used spelling wins
+      if (t.tracks) v.tracks.push(t.tracks);
     }
   }
   const titles = [];
   for (const votes of per.values()) {
-    const list = [...votes.values()].sort((a, b) => b.n - a.n);
-    const best = list[0], second = list[1] ? list[1].n : 0;
+    const list = [...votes.values()].sort((a, b) => b.w - a.w || b.n - a.n);
+    const best = list[0], second = list[1] ? list[1].w : 0;
+    const others = list.slice(1).reduce((s, x) => s + x.w, 0);
     const t = { ...best.title };
+    delete t.accepted; delete t.tracks;
     if (best.names.size) t.name = [...best.names.entries()].sort((a, b) => b[1] - a[1])[0][0];
-    t.votes = best.n;
+    const tracks = commonTracks(best.tracks);
+    if (tracks) t.tracks = tracks;
+    t.votes = best.n;                                  // installs (what 1.0.x reads)
+    t.weight = round1(best.w);                         // weighted votes
     t.total = list.reduce((s, x) => s + x.n, 0);
-    t.confirmed = best.n >= CONFIRM && best.n > second;
+    t.confirmed = best.w >= CONFIRM && best.w > second && discMargin > 0;
+    // a title is no surer than the disc it's on: other answers for it and reports against the disc count
+    t.confidence = Math.min(confidence(best.w - others - reported), confidence(discMargin));
     titles.push(t);
   }
   titles.sort((a, b) => (b.duration_s || 0) - (a.duration_s || 0));
   return {
     kind: first.kind, title: first.title, year: first.year, tmdb_id: first.tmdb_id, imdb_id: first.imdb_id,
     season: first.season, format: first.format, disc_name: first.disc_name, disc_label: first.disc_label,
-    submitters: rows.length, agree: agree.length, reported,
-    confirmed: score(agree) >= CONFIRM && score(agree) > (ranked[1] ? score(ranked[1]) : 0),
+    submitters: rows.length, agree: agree.length, weight: round1(weight(agree)), reported,
+    confirmed: score(agree) >= CONFIRM && score(agree) > runnerUp,
+    confidence: confidence(discMargin),
     titles,
   };
 }
 
 async function answerFor(env, key) {
   const lock = await env.DB.prepare("SELECT answer FROM locks WHERE disc_key = ?").bind(key).first();
-  if (lock) return { ...JSON.parse(lock.answer), locked: true };
+  if (lock) return { ...JSON.parse(lock.answer), locked: true, confidence: 100 };
   const { results } = await env.DB.prepare(
     `SELECT * FROM submissions WHERE (disc_key = ?1 OR alt_key = ?1) AND hidden = 0
        AND install NOT IN (SELECT install FROM blocked) ORDER BY created DESC LIMIT 500`).bind(key).all();
@@ -317,7 +400,7 @@ async function admin(req, url, env) {
     const limit = Math.min(200, int(url.searchParams.get("limit")) || 50);
     const { results } = await env.DB.prepare(
       `SELECT id, disc_key, substr(install, 1, 12) install, created, app_version, format, disc_label, kind, title,
-         year, tmdb_id, season, hidden, titles FROM submissions ORDER BY created DESC LIMIT ?`).bind(limit).all();
+         year, tmdb_id, season, hidden, accepted, titles FROM submissions ORDER BY created DESC LIMIT ?`).bind(limit).all();
     return json({ submissions: results.map(r => ({ ...r, titles: JSON.parse(r.titles) })) });
   }
   if (p === "reports" && req.method === "GET") {

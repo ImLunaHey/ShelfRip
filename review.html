@@ -534,6 +534,14 @@ function splitRow(p, it, j){
     <div class="note" style="color:var(--muted)">Use ▶ to watch the video and check where episodes begin. Nothing is re-encoded; cuts land on chapter marks.</div>
   </div></td></tr>`;
 }
+// how sure the shared disc database is about this title (weighted votes, less disagreement and reports)
+function sharedLine(it){
+  const c = it.shared_confidence;
+  if (c === undefined || c === null) return "";
+  const cls = c >= 75 ? "good" : c < 50 ? "warnc" : "";
+  const what = c >= 75 ? "checked by several people" : c >= 50 ? "worth a quick check" : "check this one";
+  return `<div style="margin-top:4px"><span class="chip ${cls}" title="How sure the Shelfrip disc database is about this title, from how many people filed it this way (titles filed without changes count half), less anyone who disagreed">Shared answer: ${c}% sure · ${what}</span></div>`;
+}
 // audio tracks: all are kept; click one to mark it as a commentary and give it a name
 function audioLine(it, j){
   if (!it.audio || !it.audio.length || it.action === "skip") return "";
@@ -620,6 +628,7 @@ function card(p, i){
         <div class="dest">${it.action==="skip" ? "not filed" : (it.needs_split && it.split) ? `cut into ${it.split.starts.length} episodes (below)` : esc(destOf(p, it))}</div>
         ${attachLine(p, it, j)}
         ${it.note ? `<div class="note">${esc(it.note)}</div>` : ""}
+        ${sharedLine(it)}
         ${audioLine(it, j)}</td>
       <td class="src">${esc(it.source)}</td></tr>` + (it.needs_split && it.split ? splitRow(p, it, j) : "");
   }).join("");

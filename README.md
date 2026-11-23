@@ -183,7 +183,12 @@ on. An answer that only one person has given yet is still used, but the review p
 disc waits for you instead of being filed automatically. If you file a disc as something other than
 the shared answer, that counts against the answer, so a wrong entry gets corrected.
 
-Only the disc's fingerprint, its label, the title lengths and sizes, and the names chosen are sent.
+Each title on the review page shows how sure the database is about it. Filing a title exactly as the
+shared answer showed it counts as half a vote, so people clicking through without checking can't
+confirm an answer on their own; anything you changed or identified yourself counts fully.
+
+Only the disc's fingerprint, its label, the title lengths and sizes, each title's tracks (video
+format, audio and subtitle languages, commentary names) and the names chosen are sent.
 Nothing about you, your files or your library is sent. Your install is identified by a random id,
 which is stored only as a salted hash. The whole database can be downloaded (CC0) from `/v1/export`.
 The server code, and how answers are decided, are in [server/](server/).

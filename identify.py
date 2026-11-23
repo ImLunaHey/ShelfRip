@@ -1268,6 +1268,9 @@ def plan_folder(folder: Path, rip_root: Path, tmdb: TMDB | None, lib: dict, cfg:
                 f"{disc['titles_failed']} title(s) failed" if disc.get("titles_failed") else ""]
         plan["warnings"].append("The disc had " + " and ".join(b for b in bits if b) +
                                 " (scratched or dirty?). Play the files to check them before filing.")
+    if plan.get("community_answer"):
+        import community
+        community.note_shown(plan, disc)  # so filing it unchanged counts as half a vote
     return plan
 
 
@@ -1370,6 +1373,7 @@ def attach_audio(plan: dict, folder: Path, disc: dict) -> None:
             pass
     names = list(plan.get("commentaries") or [])
     for it in plan["items"]:
+        shared = it.pop("shared_audio", None) or []  # from the Shelfrip disc database (apply_discdb)
         if it.get("role") not in ("main", "edition", "episode"):
             continue
         streams = [s for s in (by_file.get(it["source"]) or {}).get("streams", []) if s.get("type") == "Audio"]
@@ -1393,15 +1397,27 @@ def attach_audio(plan: dict, folder: Path, disc: dict) -> None:
                         and 0 < a["channels"] <= 2):
                     a.update(commentary=True, guessed=True)
                     have += 1
+        same_layout = len(shared) == len(audio) and all(
+            str(x.get("lang") or "") == a["lang"] and int(x.get("ch") or 0) == a["channels"] for x, a in zip(shared, audio))
         n = 0
         for a in audio:
             if a["commentary"]:
                 a["name"] = names[n] if n < len(names) else ("Commentary" if have == 1 else f"Commentary {n + 1}")
                 n += 1
+        from_db = False
+        if same_layout:  # the same tracks as people who filed this disc: go with what they said
+            for x, a in zip(shared, audio):
+                if x.get("commentary") and x.get("name"):
+                    a.update(commentary=True, guessed=False, name=str(x["name"]))
+                    from_db = True
+                elif not x.get("commentary") and a["guessed"]:
+                    a.update(commentary=False, guessed=False, name="")
+            n = sum(a["commentary"] for a in audio)
         it["audio"] = audio
         if n:
             g = any(a["guessed"] for a in audio)
-            note = f"{n} commentary track(s) will be named" + (" (guessed from DVDCompare: check under Audio)" if g else "")
+            note = f"{n} commentary track(s) will be named" + (" (guessed from DVDCompare: check under Audio)" if g else
+                                                               " (names from the Shelfrip disc database)" if from_db else "")
             it["note"] = "; ".join(x for x in (it.get("note"), note) if x)
 
 
@@ -1433,6 +1449,11 @@ def apply_discdb(plan: dict, known: dict, tmdb: TMDB | None) -> None:
         r = pairs.get(it["source"])
         if not r:
             continue
+        if known.get("community"):
+            if r.get("confidence") is not None:
+                it["shared_confidence"] = int(r["confidence"])  # shown on the review page
+            if isinstance(r.get("tracks"), dict):
+                it["shared_audio"] = r["tracks"].get("audio") or []  # commentary names, used by attach_audio
         t = typ(it)
         desc = (r.get("description") or "").strip()
         if plan["kind"] == "tv" and t == "episode" and str(r.get("season")).isdigit() and str(r.get("episode")).isdigit():
