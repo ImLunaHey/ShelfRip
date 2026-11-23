@@ -183,11 +183,12 @@ def scan_and_check(cfg: dict, plan: dict, status: dict, wait_s: int = 300, log=p
     if not px:
         status.update(state="off", summary="Plex check is off (add plex_url and plex_token to config.json)")
         return
+    import identify
     try:
         sections = px.sections()
         lib = cfg.get("plex_library_root") or ""
         folder = plan.get("library_dir") or ""
-        local = (lib.rstrip("\\/") + "\\" + folder) if lib else folder
+        local = (lib.rstrip("\\/") + "\\" + folder) if lib and not identify.is_full_path(folder) else folder
         mapped = map_folder(sections, local, plan.get("kind") or "movie")
         if not mapped:
             status.update(state="error", summary="Plex has no library that holds " + local)

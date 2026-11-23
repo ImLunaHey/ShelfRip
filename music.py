@@ -497,7 +497,12 @@ def music_root(cfg: dict) -> Path:
         return Path(cfg["music_library_root"])
     if not str(cfg.get("plex_library_root") or "").strip():
         return Path(paths.DATA_DIR) / "(folder not chosen yet)"
-    return Path(cfg["plex_library_root"]) / "Music"
+    lib = Path(cfg["plex_library_root"])
+    try:  # an existing music folder, whatever its case or spacing ("music", "My Music" is not matched)
+        found = next((d.name for d in sorted(lib.iterdir()) if d.is_dir() and d.name.replace(" ", "").lower() == "music"), None)
+    except OSError:
+        found = None
+    return lib / (found or "Music")
 
 
 def plan_folder(folder: Path, cfg: dict, version: int = 1) -> dict | None:
