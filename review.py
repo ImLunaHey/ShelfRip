@@ -256,13 +256,36 @@ def start_filing(folder: Path, plan: dict) -> list[str]:
     with LOCK:
         if JOBS.get(folder.name, {}).get("state") == "running":
             return ["Already filing this disc."]
-        JOBS[folder.name] = {"state": "running", "done_bytes": 0, "total_bytes": 0, "current": "starting"}
+        JOBS[folder.name] = {"state": "running", "done_bytes": 0, "total_bytes": 0, "current": "starting",
+                             "label": plan.get("disc_label") or ""}
     f = plan.get("filing") or {}
     plan["filing"] = {"started": f.get("started") or time.strftime("%Y-%m-%dT%H:%M:%S"),
                       "tries": int(f.get("tries") or 0) + 1, "at": time.time()}
     save_plan(folder, plan)  # marks it as being filed, so an interrupted filing is finished next time
     threading.Thread(target=file_job, args=(folder, plan), daemon=True).start()
     return []
+
+
+def filing_status(plan: dict) -> dict | None:
+    """Is this disc being filed (or about to pick up a filing that was cut off)? For the drive cards
+    on the home page, which hide "Rip again" and the like until it's done. None = not filing."""
+    job = JOBS.get(plan.get("folder") or "") or {}
+    if job.get("state") == "running":
+        total = job.get("total_bytes") or 0
+        return {"state": "running", "pct": min(100, round(100 * job.get("done_bytes", 0) / total)) if total else 0,
+                "current": job.get("current") or "starting"}
+    f = plan.get("filing")
+    if not f:
+        return None
+    tries = int(f.get("tries") or 0)
+    if tries >= 6 or (job.get("state") == "error" and tries >= 3):
+        return None  # resume_tick won't try again: it's back on the Review tab for you
+    return {"state": "waiting", "pct": 0, "current": job.get("current") if job.get("state") == "error" else ""}
+
+
+def filed_label(label: str) -> bool:
+    """Was the disc with this label filed in this session? (Its plan is gone from the rip folder.)"""
+    return bool(label) and any(j.get("label") == label and j.get("state") == "done" for j in JOBS.values())
 
 
 def resume_tick(log=print) -> list[str]:
