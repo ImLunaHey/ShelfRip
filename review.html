@@ -1551,7 +1551,7 @@ const SET_GROUPS = [
     ["auto_rip", "Start with auto-rip on", "Rip every disc as soon as it's inserted, from the moment Shelfrip opens."],
     ["check_plex_before_rip", "Skip discs you already have", "If your library already has it in the same or better quality, the disc isn't ripped. You can still click Rip anyway."],
     ["retry_failed_titles", "Retry titles that hit read errors", "Tries once more before giving up on a scratched section."],
-    ["skip_duplicate_features", "Rip the main feature only once", "Some discs list the movie several times (often as decoys). Leaves out copies that are the same video and tracks, or that a disc database says aren't the real one. Different cuts and language versions are still ripped."],
+    ["skip_duplicate_features", "Rip the main feature only once", "Some discs list the movie several times (often as decoys), or every scene of it as a title of its own. Leaves out copies that are the same video and tracks, copies a disc database says aren't the real one, and scene-by-scene titles. Different cuts, language versions and named extras are still ripped."],
     ["eject_when_done", "Eject as soon as the rip finishes", "Normally the disc stays in until you file it, so you can check its extras."],
     ["min_length_seconds", "Ignore titles shorter than", "Menus, logos and warnings.", {unit:"seconds", adv:1}],
     ["min_free_gb_rips", "Keep this much space free in the rip folder", "A rip waits if there's less than this.", {unit:"GB", adv:1}],
