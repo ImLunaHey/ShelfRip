@@ -9,7 +9,8 @@ MakeMKV's command-line tool (makemkvcon). For each disc it:
              makemkv_info.txt (raw MakeMKV scan, kept for troubleshooting)
              rip.log          (raw MakeMKV rip output)
   * rips     every title at least `min_length_seconds` long to .mkv (no transcoding);
-             with "skip_duplicate_features" on, extra copies of the main feature are left out (dupes.py)
+             with "skip_duplicate_features" on, extra copies of the main feature and scene-by-scene
+             titles (the movie cut into pieces) are left out (dupes.py)
   * ejects   the disc when it's finished
   * appends  a line to <output_root>\rip_history.csv
 
@@ -580,14 +581,23 @@ def rip_disc(cfg: dict, drive: dict) -> dict:
             for t in disc["titles"]:
                 t.pop("skipped_duplicate_of", None)
                 t.pop("skip_reason", None)
+        kinds = {t["title_id"]: t.get("skip_kind") for t in disc["titles"]}
         for tid, (keep, why) in sorted(skipped.items()):
-            log(f"{device} [{label}] not ripping title {tid}: a copy of title {keep} ({why})")
+            log(f"{device} [{label}] not ripping title {tid}: "
+                + (why if kinds.get(tid) == "scene" else f"a copy of title {keep} ({why})"))
         if skipped:
             saved_min = sum(t.get("duration_seconds", 0) for t in disc["titles"] if t["title_id"] in skipped) // 60
-            disc["skipped_duplicates"] = len(skipped)
-            st["message"] = f"{n_titles - len(skipped)} titles to rip ({len(skipped)} duplicate copies left out)"
-            log(f"{device} [{label}] {len(skipped)} duplicate feature cop{'y' if len(skipped) == 1 else 'ies'} "
-                f"left out ({saved_min} min of video)")
+            n_scenes = sum(1 for tid in skipped if kinds.get(tid) == "scene")
+            n_copies = len(skipped) - n_scenes
+            if n_copies:
+                disc["skipped_duplicates"] = n_copies
+            if n_scenes:
+                disc["skipped_scenes"] = n_scenes
+            bits = [f"{n_copies} duplicate cop{'y' if n_copies == 1 else 'ies'}" if n_copies else "",
+                    f"{n_scenes} scene-by-scene title{'' if n_scenes == 1 else 's'}" if n_scenes else ""]
+            what = " and ".join(b for b in bits if b)
+            st["message"] = f"{n_titles - len(skipped)} titles to rip ({what} left out)"
+            log(f"{device} [{label}] {what} of the feature left out ({saved_min} min of video)")
 
     # 2. rip all titles
     last_pct = [-10]
