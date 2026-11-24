@@ -1,5 +1,6 @@
 -- Shelfrip community disc database (Cloudflare D1).
 -- Apply with: npx wrangler d1 execute shelfrip --remote --file=schema.sql
+-- then each file in migrations/ (Deploy Database.bat does both; a migration that's already in is skipped).
 
 -- One row per disc per install: what that person filed. Filing the same disc again replaces it.
 CREATE TABLE IF NOT EXISTS submissions (
@@ -18,8 +19,9 @@ CREATE TABLE IF NOT EXISTS submissions (
   tmdb_id     TEXT,
   imdb_id     TEXT,
   season      INTEGER,
-  titles      TEXT NOT NULL,     -- JSON list of titles (see worker.js: cleanTitle)
+  titles      TEXT NOT NULL,     -- JSON list of titles, with their tracks (see worker.js: cleanTitle)
   hidden      INTEGER NOT NULL DEFAULT 0,
+  accepted    INTEGER NOT NULL DEFAULT 0,  -- 1: every title filed just as our answer showed it (half a vote)
   UNIQUE (disc_key, install)
 );
 CREATE INDEX IF NOT EXISTS submissions_alt ON submissions(alt_key);

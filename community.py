@@ -3,14 +3,23 @@ community.py - the shared Shelfrip disc database.
 
 When you file a disc (and "share_discs" is on), what you filed is sent to the database:
 the disc's fingerprint, and for each title its playlist, length, size and what it turned out
-to be (the movie, s01e03, the featurette "Making Of", a clip you skipped). Nothing else: no
-file paths, no folder names, no library details, no keys, no names of people. Your install
-is identified only by a random id (install_id in config.json), so repeat filings of the
-same disc replace each other instead of counting twice.
+to be (the movie, s01e03, the featurette "Making Of", a clip you skipped). For the titles that
+matter (kept ones, and every movie or episode candidate) its tracks go too: the video codec and
+size, each audio track's language, codec, channels and commentary name, and each subtitle's
+language and whether it's forced. Nothing else: no file paths, no folder names, no library
+details, no keys, no names of people using Shelfrip. Your install is identified only by a random
+id (install_id in config.json), so repeat filings of the same disc replace each other instead of
+counting twice.
 
 When anyone rips a disc, identify.py asks the database before TheDiscDB, and uses the answer
 most people agreed on. Answers only one person has given yet are used too, but the review
 page says so and the disc isn't filed automatically.
+
+If the review page showed you the database's answer and you filed a title exactly as it was
+shown, that title is marked "accepted": the database counts it as half a vote, so clicking
+through can't confirm an answer on its own. Anything you changed, or identified without the
+database, counts fully. Each title's answer comes back with a confidence (0-100) built from
+those weighted votes, less any disagreement and "this disc is wrong" reports.
 
 The server is in server/ (a Cloudflare Worker); its address is paths.COMMUNITY_URL, or
 "community_url" in config.json.
@@ -31,7 +40,10 @@ import paths
 
 TIMEOUT = 8
 PLACEHOLDER = re.compile(r"^(Extra \d+ \(|Unused clip)", re.I)
+GENERIC_COMMENTARY = re.compile(r"^commentary( \d+)?$", re.I)
 SOURCE = "the Shelfrip disc database"
+MAX_AUDIO, MAX_SUBS = 24, 48            # per title; the server keeps no more than this either
+FORCED_SUBS, DERIVED = 4096, 2048        # MakeMKV stream flags
 
 
 def base_url(cfg: dict) -> str:
@@ -113,6 +125,9 @@ def lookup(disc: dict, titles: list[dict], cfg: dict, log=print) -> dict | None:
                     "size_bytes": r.get("size_bytes"), "duration_s": r.get("duration_s")})
                 row["votes"], row["confirmed"] = r.get("votes", 0), bool(r.get("confirmed"))
                 row["episode_last"] = str(r["episode_last"]) if r.get("episode_last") else ""
+                row["confidence"] = 100 if ans.get("locked") else r.get("confidence")  # 0-100
+                if isinstance(r.get("tracks"), dict):
+                    row["tracks"] = r["tracks"]
                 pairs[t["output_file"]] = row
                 used.add(i)
                 break
@@ -126,40 +141,124 @@ def lookup(disc: dict, titles: list[dict], cfg: dict, log=print) -> dict | None:
         "tmdb_id": str(ans.get("tmdb_id") or ""), "imdb_id": ans.get("imdb_id") or "", "release": "",
         "disc_name": ans.get("disc_name") or "", "how": "community", "pairs": pairs, "local": False,
         "community": True, "confirmed": bool(ans.get("confirmed") or ans.get("locked")),
-        "season": ans.get("season"),
+        "season": ans.get("season"), "confidence": 100 if ans.get("locked") else ans.get("confidence"),
         "source": f"{SOURCE} ({ans.get('title')}; {who})", "src_name": "the Shelfrip disc database",
     }
 
 
 # --------------------------------------------------------------------------- share
 
+def _title_row(it: dict, t: dict) -> dict | None:
+    """One title as the database stores it (without tracks), or None if it can't be described."""
+    import naming
+    role = it.get("role")
+    row = {"source_file": t.get("source_file") or "", "duration_s": int(it.get("duration_seconds") or
+                                                                          t.get("duration_seconds") or 0),
+           "size_bytes": t.get("size_bytes"), "chapters": t.get("chapters"), "role": role,
+           "kept": it.get("action") == "move"}
+    if role == "episode":
+        eps = it.get("episodes") or ([it["episode"]] if it.get("episode") else [])
+        if not eps:
+            return None
+        row.update(season=it.get("season") or 0, episode=eps[0], episode_last=eps[-1] if len(eps) > 1 else None)
+        sp = it.get("split") if it.get("needs_split") else None
+        if sp and sp.get("starts"):
+            row["split"] = "chapters " + ",".join(str(x + 1) for x in sp["starts"])
+    elif role == "extra":
+        name = str(it.get("name") or "")
+        row.update(category=it.get("category") or "Other", name="" if PLACEHOLDER.match(name) else name)
+    elif role == "edition":
+        row["name"] = naming.edition_of(str(it.get("name") or ""))
+    return row
+
+
+def answer_key(row: dict) -> str:
+    """What one title "is", as the server compares it (server/worker.js: answerKey)."""
+    n = re.sub(r"\s+", " ", str(row.get("name") or "").lower()).strip()
+    kept = 1 if row.get("kept") else 0
+    role = row.get("role")
+    if role == "episode":
+        last = row.get("episode_last") or ""
+        return f"episode|{row.get('season')}|{row.get('episode')}|{last}|{kept}"
+    if role == "extra":
+        return f"extra|{row.get('category')}|{n}|{kept}"
+    if role == "edition":
+        return f"edition|{n}|{kept}"
+    return f"{role}|{kept}"
+
+
+def note_shown(plan: dict, disc: dict) -> None:
+    """Remember what the review page is about to show for a disc the database identified, so filing
+    it unchanged can be told apart from filing it after a change (see the top of this file)."""
+    ca = plan.get("community_answer")
+    if not ca:
+        return
+    by_file = {t.get("output_file"): t for t in disc.get("titles", [])}
+    shown = {}
+    for it in plan.get("items", []):
+        row = _title_row(it, by_file.get(it.get("source"), {}))
+        if row and it.get("source"):
+            shown[it["source"]] = answer_key(row)
+    ca["shown"] = shown
+
+
+def tracks(t: dict, it: dict) -> dict | None:
+    """A title's video, audio and subtitle tracks, compactly. Commentary names come from the
+    review page (it["audio"]); "Commentary" or "Commentary 2" on its own isn't worth sending."""
+    streams = t.get("streams") or []
+    if not streams:
+        return None
+    named = {a.get("i"): a for a in it.get("audio") or [] if isinstance(a, dict)}
+    out: dict = {"audio": [], "subs": []}
+    k = 0
+    for st in streams:
+        typ = str(st.get("type") or "")
+        flags = int(st.get("flags") or 0)
+        if typ == "Video" and "video" not in out:
+            out["video"] = {"codec": str(st.get("codec") or "")[:20], "res": str(st.get("resolution") or "")[:20]}
+        elif typ == "Audio":
+            k += 1
+            if len(out["audio"]) >= MAX_AUDIO:
+                continue
+            mine = named.get(k) or {}
+            com = bool(mine.get("commentary")) if mine else bool(flags & 3)
+            name = str(mine.get("name") or "").strip() if com else ""
+            a = {"lang": str(st.get("lang3") or st.get("lang") or "")[:3], "codec": str(st.get("codec") or "")[:20],
+                 "ch": int(st.get("channels") or 0)}
+            if com:
+                a["commentary"] = 1
+                if name and not GENERIC_COMMENTARY.match(name):
+                    a["name"] = name[:150]
+            if flags & DERIVED:
+                a["core"] = 1      # e.g. the AC3 core inside a TrueHD track
+            out["audio"].append(a)
+        elif typ == "Subtitles" and len(out["subs"]) < MAX_SUBS:
+            sub = {"lang": str(st.get("lang3") or st.get("lang") or "")[:3]}
+            if flags & FORCED_SUBS:
+                sub["forced"] = 1
+            out["subs"].append(sub)
+    return out if out["audio"] or out["subs"] or out.get("video") else None
+
+
 def submission(plan: dict, disc: dict, cfg: dict) -> dict | None:
     """What gets sent for one filed disc (see the top of this file), or None if there's nothing useful."""
     if plan.get("kind") not in ("movie", "tv") or not plan.get("tmdb_id"):
         return None
-    import naming
     by_file = {t.get("output_file"): t for t in disc.get("titles", [])}
+    ca = plan.get("community_answer") or {}
+    shown = ca.get("shown") if isinstance(ca.get("shown"), dict) and _ident(ca) == _ident(plan) else {}
     out = []
     for it in plan.get("items", []):
         t = by_file.get(it.get("source"), {})
-        role = it.get("role")
-        row = {"source_file": t.get("source_file") or "", "duration_s": int(it.get("duration_seconds") or
-                                                                              t.get("duration_seconds") or 0),
-               "size_bytes": t.get("size_bytes"), "chapters": t.get("chapters"), "role": role,
-               "kept": it.get("action") == "move"}
-        if role == "episode":
-            eps = it.get("episodes") or ([it["episode"]] if it.get("episode") else [])
-            if not eps:
-                continue
-            row.update(season=it.get("season") or 0, episode=eps[0], episode_last=eps[-1] if len(eps) > 1 else None)
-            sp = it.get("split") if it.get("needs_split") else None
-            if sp and sp.get("starts"):
-                row["split"] = "chapters " + ",".join(str(x + 1) for x in sp["starts"])
-        elif role == "extra":
-            name = str(it.get("name") or "")
-            row.update(category=it.get("category") or "Other", name="" if PLACEHOLDER.match(name) else name)
-        elif role == "edition":
-            row["name"] = naming.edition_of(str(it.get("name") or ""))
+        row = _title_row(it, t)
+        if not row:
+            continue
+        if row["kept"] or row["role"] in ("main", "edition", "episode"):
+            tr = tracks(t, it)
+            if tr:
+                row["tracks"] = tr
+        if shown.get(it.get("source")) == answer_key(row):
+            row["accepted"] = True   # filed just as the database's answer was shown: counts as half a vote
         out.append(row)
     if not out:
         return None
