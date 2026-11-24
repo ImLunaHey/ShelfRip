@@ -903,6 +903,15 @@ def file_music_job(folder: Path, plan: dict) -> None:
         traceback.print_exc()
         save_plan(folder, plan)
         job.update(state="error", current=str(exc))
+        _offer_report("Filing didn't finish", folder.name.rsplit("__", 1)[0], str(exc))
+
+
+def _offer_report(what: str, label: str, error: str) -> None:
+    try:
+        import trouble
+        trouble.record(what, label, error, with_trace=True)
+    except Exception:
+        pass
 
 
 def file_job(folder: Path, plan: dict) -> None:
@@ -1012,6 +1021,7 @@ def file_job(folder: Path, plan: dict) -> None:
         traceback.print_exc()
         save_plan(folder, plan)
         job.update(state="error", current=str(exc))
+        _offer_report("Filing didn't finish", folder.name.rsplit("__", 1)[0], str(exc))
 
 
 # --------------------------------------------------------------------------- http

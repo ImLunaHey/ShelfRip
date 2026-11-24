@@ -160,6 +160,7 @@ pre.log{background:var(--card);border:1px solid var(--line);border-radius:14px;p
 .toast{background:var(--card);border:1px solid var(--line2);border-radius:14px;padding:14px 16px;box-shadow:0 12px 32px rgba(0,0,0,.4);
   display:flex;gap:12px;align-items:center;animation:pop .35s ease-out}
 .toast b{font-family:var(--head)}
+.toast.trouble{max-width:360px}
 @keyframes pop{from{transform:translateY(16px);opacity:0}to{transform:none;opacity:1}}
 @media (prefers-reduced-motion: reduce){.spine.new,.case.new,.case.new::after,.toast{animation:none}.case{transition:none}.bar>i{transition:none}}
 .set{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:20px;display:grid;gap:14px;max-width:780px}
@@ -385,6 +386,31 @@ function toast(title, text, color){
   t.innerHTML = `<svg width="34" height="34" viewBox="0 0 40 40" aria-hidden="true"><path d="M20 3l14 8v18l-14 8-14-8V11z" fill="${color || "var(--xp)"}"/></svg><div><b>${esc(title)}</b><div style="color:var(--muted);font-size:13px">${esc(text)}</div></div>`;
   $("#toasts").appendChild(t);
   setTimeout(() => t.remove(), 7000);
+}
+// When something fails (a rip, a filing), ask once whether to send an error report.
+// Nothing is sent until you click Send in the feedback window, where you can read and edit it.
+const TROUBLE_SEEN = new Set();
+function troublePrompt(list){
+  (list || []).forEach(f => {
+    if (TROUBLE_SEEN.has(f.id)) return;
+    TROUBLE_SEEN.add(f.id);
+    const t = document.createElement("div");
+    t.className = "toast trouble";
+    t.setAttribute("role", "alert");
+    t.innerHTML = `<svg width="34" height="34" viewBox="0 0 40 40" aria-hidden="true"><path d="M20 3l17 32H3z" fill="var(--bad, #d9534f)"/></svg>
+      <div style="display:grid;gap:6px"><b>${esc(f.what)}${f.label ? `: ${esc(f.label)}` : ""}</b>
+      <div style="color:var(--muted);font-size:13px">${esc(f.error)}</div>
+      <div style="font-size:13px">Send an error report so it can be fixed? You'll see exactly what's sent first.</div>
+      <div class="row" style="gap:8px"><button class="primary" data-tsend>Send a report…</button><button data-tno>Not now</button></div></div>`;
+    $("#toasts").appendChild(t);
+    $("[data-tno]", t).onclick = () => { api("/api/trouble", {id: f.id, action: "dismiss"}); t.remove(); };
+    $("[data-tsend]", t).onclick = () => {
+      t.remove();
+      FBKIND = "problem";
+      feedbackDialog({t: `Error report: ${f.what}${f.label ? ` (${f.label})` : ""}`.slice(0, 200),
+                      m: `What I was doing: \n\n---\n${f.preview}`.slice(0, 5000), trouble: f.id});
+    };
+  });
 }
 const ring = (pct, size, stroke, color, inner) => { const r = (size - stroke) / 2, c = 2 * Math.PI * r;
   return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true"><circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="var(--line)" stroke-width="${stroke}"/>
@@ -1268,6 +1294,7 @@ async function pollDrives(){
   clearTimeout(drivesTimer);
   try {
     const j = await api("/api/drives");
+    troublePrompt(j.failures);
     $("#nwait").textContent = j.waiting; $("#nwait").classList.toggle("zero", !j.waiting);
     if (TAB === "drives") renderDrives(j);
     const sig = j.waiting + "/" + (j.filing||0);
@@ -1649,6 +1676,7 @@ const SET_GROUPS = [
     ["app_window", "Open in its own window", "Instead of a browser tab."],
     ["tray_icon", "Keep running by the clock when the window is closed", "Quit from the icon's menu."],
     ["check_updates", "Tell me when a new version is out", ""],
+    ["offer_error_reports", "Offer to send an error report when something fails", "Shows what went wrong and asks first. Nothing is sent unless you click Send."],
     ["sounds", "Play sounds", "A chime when a disc is filed, and a fanfare when you level up."],
   ]},
 ];
@@ -1817,12 +1845,13 @@ async function loadInbox(el){
 // Feedback: sent to the Shelfrip disc database's server (no account needed), or posted on GitHub
 const FB_KINDS = [["idea","Idea"],["problem","Something's wrong"],["other","Other"]];
 let FBKIND = "idea";
-function feedbackDialog(){
+function feedbackDialog(pre){
+  pre = pre && pre.trouble ? pre : null;  // (a click event when opened from the Feedback button)
   let d = $("#fbdlg");
   if (!d){ d = document.createElement("dialog"); d.id = "fbdlg"; d.className = "disc"; document.body.appendChild(d);
     d.addEventListener("click", e => { if (e.target === d) d.close(); }); }
   const draw = () => {
-    const keep = {t: $("#fbt", d)?.value || "", m: $("#fbm", d)?.value || "", c: $("#fbc", d)?.value || ""};
+    const keep = pre && !$("#fbt", d) ? {t: pre.t, m: pre.m, c: ""} : {t: $("#fbt", d)?.value || "", m: $("#fbm", d)?.value || "", c: $("#fbc", d)?.value || ""};
     d.innerHTML = `<div class="fb">
       <h2>Send feedback</h2>
       <span style="color:var(--muted);font-size:13px">Ideas, bugs, wrong names, anything. It goes straight to the people who make Shelfrip.</span>
@@ -1864,14 +1893,16 @@ function feedbackDialog(){
       $("#fbgo", d).disabled = true; $("#fbmsg", d).textContent = "Sending…";
       const r = await api("/api/feedback", {kind: FBKIND, title: f.t, body: f.m, contact: f.c, versions: f.v});
       if (r.error){ $("#fbgo", d).disabled = false; $("#fbmsg", d).innerHTML = `<span class="err">${esc(r.error)}</span>`; return; }
+      if (pre) api("/api/trouble", {id: pre.trouble, action: "dismiss"});  // sent: don't offer it again
       d.close(); $("#fbt", d).value = ""; $("#fbm", d).value = "";
       d.innerHTML = "";
       toast("Thanks for the feedback!", f.c ? "We'll reply by email if we have questions." : "");
     };
   };
+  if (pre) d.innerHTML = "";  // start from the report, not a half-written message
   draw();
   d.showModal();
-  $("#fbt", d).focus();
+  if (pre){ const m = $("#fbm", d); m.focus(); m.setSelectionRange(18, 18); } else $("#fbt", d).focus();
 }
 $("#fbbtn").onclick = feedbackDialog;
 $("#scan").onclick = async () => { $("#scan").disabled = true; const j = await api("/api/scan", {}); $("#scan").disabled = false; await load(false); $("#sub").textContent += ` · ${j.planned} new`; };

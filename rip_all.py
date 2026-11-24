@@ -890,6 +890,7 @@ def already_ripped(cfg: dict, label: str) -> str:
 
 
 ON_LOW_SPACE: list = []   # app.py: alert when a rip is held back for space
+ON_ERROR: list = []       # app.py: a rip that crashed, (device, label, error), to offer an error report
 
 
 def low_space(cfg: dict, d: dict) -> str:
@@ -962,6 +963,11 @@ def rip_loaded(cfg: dict, busy: set[str], finished: dict[str, str],
                 import traceback
                 log(f"{drive['device']} ERROR: {exc}\n" + traceback.format_exc())
                 STATUS.setdefault(drive["device"], {}).update(state="error", message=str(exc))
+                for cb in ON_ERROR:
+                    try:
+                        cb(drive["device"], drive["disc_label"], str(exc))
+                    except Exception:
+                        pass
             finally:
                 stop.set()
                 try:
