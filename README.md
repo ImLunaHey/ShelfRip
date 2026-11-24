@@ -30,6 +30,14 @@ server expects it.
   Deleted Scenes, Behind the Scenes and so on.
 - **Skips the clutter.** Menus, copyright warnings, promos, trailers for other films and "Play All"
   titles are set to Skip for you.
+- **Rips the main feature only once (optional).** Some discs list the movie several times, often as
+  decoy playlists, or offer every scene of it as a separate title. Turn on "Rip the main feature only
+  once" in Settings and copies that are the same video and tracks, copies a disc database says aren't
+  the real one, and scene-by-scene titles are left out before ripping. Different cuts, language
+  versions and named extras are always ripped.
+- **Sets scene-by-scene titles to Skip.** Even with that setting off, unnamed titles that are just
+  scenes of the movie (made only of its video, or carrying exactly its soundtracks and subtitles)
+  start as Skip on the Review tab.
 - **Splits TV discs** where several episodes were mastered as one long video, by chapter.
 - **Keeps every audio and subtitle track**, names commentary tracks, and makes your language the
   default.
@@ -124,6 +132,12 @@ TV shows go in `TV Shows\Show (Year)\Season 1\Show (Year) - s01e01 - Title.mkv`.
 recognises an existing library whichever style it uses. You can also keep each format in its own
 folder (`Movies\Blu-Ray\...`, `Movies\DVD\...`).
 
+Already have movie and TV folders with other names, like `movies`, `Films` or `TVShows`? Shelfrip
+finds them whatever their case or spacing and files into them. To pick them yourself, use
+**Settings › Library and folders › Movies folder / TV shows folder**. They can be anywhere, even on
+different drives. Music CDs work the same way: an
+existing `music` folder is found, or choose any folder under **Music folder**.
+
 ## Good to know
 
 - Shelfrip opens in its own window. Closing the window keeps it running as an icon by the clock, so
@@ -158,7 +172,7 @@ an issue on [GitHub](https://github.com/Shelfrip/ShelfRip/issues/new/choose).
   These reports make the biggest difference.
 - **Questions, ideas, or your shelf to show off?** Post in [Discussions](https://github.com/Shelfrip/ShelfRip/discussions).
 - **Want to help?** See [CONTRIBUTING.md](CONTRIBUTING.md). You don't need to write code.
-- **News and new versions:** follow [@shelfrip.bsky.social](https://bsky.app/profile/shelfrip.bsky.social) on Bluesky.
+- **News and new versions:** follow [@shelfrip.com](https://bsky.app/profile/shelfrip.com) on Bluesky.
 
 ## Support Shelfrip
 
@@ -177,7 +191,12 @@ on. An answer that only one person has given yet is still used, but the review p
 disc waits for you instead of being filed automatically. If you file a disc as something other than
 the shared answer, that counts against the answer, so a wrong entry gets corrected.
 
-Only the disc's fingerprint, its label, the title lengths and sizes, and the names chosen are sent.
+Each title on the review page shows how sure the database is about it. Filing a title exactly as the
+shared answer showed it counts as half a vote, so people clicking through without checking can't
+confirm an answer on their own; anything you changed or identified yourself counts fully.
+
+Only the disc's fingerprint, its label, the title lengths and sizes, each title's tracks (video
+format, audio and subtitle languages, commentary names) and the names chosen are sent.
 Nothing about you, your files or your library is sent. Your install is identified by a random id,
 which is stored only as a salted hash. The whole database can be downloaded (CC0) from `/v1/export`.
 The server code, and how answers are decided, are in [server/](server/).

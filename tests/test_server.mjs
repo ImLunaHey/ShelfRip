@@ -1,0 +1,197 @@
+// test_server.mjs - the disc database (server/worker.js) against an in-memory SQLite stand-in for D1.
+// Run: node tests/test_server.mjs   (needs Node 22.5 or later; tests/run_all.py runs it when Node is there)
+
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+let DatabaseSync;
+try { ({ DatabaseSync } = await import("node:sqlite")); }
+catch { console.log("skipped: this Node has no node:sqlite (needs 22.5 or later)"); process.exit(0); }
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const worker = (await import(pathToFileURL(path.join(ROOT, "server", "worker.js")).href)).default;
+
+// just enough of D1: prepare().bind().first()/all()/run()
+function d1(db) {
+  const wrap = (sql, args = []) => ({
+    bind: (...a) => wrap(sql, a),
+    first: async () => db.prepare(sql).get(...args) ?? null,
+    all: async () => ({ results: db.prepare(sql).all(...args) }),
+    run: async () => db.prepare(sql).run(...args),
+  });
+  return { prepare: sql => wrap(sql) };
+}
+
+function freshEnv({ oldSchema = false } = {}) {
+  const db = new DatabaseSync(":memory:");
+  let schema = fs.readFileSync(path.join(ROOT, "server", "schema.sql"), "utf8");
+  if (oldSchema) schema = schema.replace(/\n\s*accepted\s+INTEGER[^\n]*/, "");
+  db.exec(schema);
+  for (const f of fs.readdirSync(path.join(ROOT, "server", "migrations")).sort()) {
+    try { db.exec(fs.readFileSync(path.join(ROOT, "server", "migrations", f), "utf8")); }
+    catch (e) { assert.match(String(e.message), /duplicate column/); }  // fresh tables already have it
+  }
+  return { DB: d1(db), SALT: "test", ADMIN_TOKEN: "admin" };
+}
+
+let ip = 0;
+async function call(env, method, p, body) {
+  const req = new Request("http://db.test" + p, {
+    method, body: body ? JSON.stringify(body) : undefined,
+    headers: { "Content-Type": "application/json", "CF-Connecting-IP": `10.0.0.${++ip}` } });
+  const res = await worker.fetch(req, env, { waitUntil() {} });
+  return { status: res.status, body: await res.json() };
+}
+
+const HASH = "ab".repeat(16);
+const install = n => `0000000${n}-aaaa-bbbb-cccc-dddddddddddd`;
+const tracks = (comName = "") => ({
+  video: { codec: "MPEG2", res: "720x480" },
+  audio: [{ lang: "eng", codec: "AC3", ch: 6 }, { lang: "eng", codec: "AC3", ch: 2, commentary: 1, ...(comName ? { name: comName } : {}) }],
+  subs: [{ lang: "eng" }, { lang: "fra", forced: 1 }],
+});
+function filing(n, { accepted = false, extraName = "Making Of", comName = "", tmdb = "603" } = {}) {
+  const acc = accepted ? { accepted: true } : {};
+  return {
+    install_id: install(n), app_version: "1.1.0",
+    disc: { content_hash: HASH, signature: "", format: "DVD", label: "MATRIX", name: "The Matrix" },
+    media: { kind: "movie", title: "The Matrix", year: "1999", tmdb_id: tmdb, imdb_id: "tt0133093" },
+    titles: [
+      { source_file: "00001.mpls", duration_s: 8160, size_bytes: 7e9, chapters: 32, role: "main", kept: true,
+        tracks: tracks(comName), ...acc },
+      { source_file: "00002.mpls", duration_s: 1200, size_bytes: 5e8, chapters: 4, role: "extra", kept: true,
+        category: "Featurettes", name: extraName, ...acc },
+    ],
+  };
+}
+const look = env => call(env, "GET", `/v1/disc?h=${HASH}`);
+const main = ans => ans.titles.find(t => t.role === "main");
+
+const tests = {
+  async "one person who checked it: 50% sure, not confirmed"() {
+    const env = freshEnv();
+    assert.equal((await call(env, "POST", "/v1/submit", filing(1))).status, 200);
+    const { body } = await look(env);
+    assert.equal(body.found, true);
+    assert.equal(body.confirmed, false);
+    assert.equal(body.confidence, 50);
+    assert.equal(main(body).confidence, 50);
+    assert.equal(main(body).votes, 1);
+  },
+
+  async "clicking through counts half: one check plus one accept isn't confirmed"() {
+    const env = freshEnv();
+    await call(env, "POST", "/v1/submit", filing(1));
+    await call(env, "POST", "/v1/submit", filing(2, { accepted: true }));
+    const { body } = await look(env);
+    assert.equal(body.agree, 2);
+    assert.equal(body.weight, 1.5);
+    assert.equal(body.confirmed, false);
+    assert.equal(main(body).confirmed, false);
+    assert.equal(main(body).weight, 1.5);
+    assert.equal(main(body).confidence, 65);
+    assert.equal(main(body).accepted, undefined);
+  },
+
+  async "two people who checked it confirm it (75%)"() {
+    const env = freshEnv();
+    await call(env, "POST", "/v1/submit", filing(1));
+    await call(env, "POST", "/v1/submit", filing(2));
+    const { body } = await look(env);
+    assert.equal(body.confirmed, true);
+    assert.equal(main(body).confirmed, true);
+    assert.equal(main(body).confidence, 75);
+  },
+
+  async "a changed title counts fully even when the rest was accepted"() {
+    const env = freshEnv();
+    await call(env, "POST", "/v1/submit", filing(1, { extraName: "" }));
+    const f = filing(2, { accepted: true, extraName: "Making Of" });
+    delete f.titles[1].accepted;  // renamed the extra: that title was checked
+    await call(env, "POST", "/v1/submit", f);
+    await call(env, "POST", "/v1/submit", filing(3, { extraName: "Making Of" }));
+    const { body } = await look(env);
+    const extra = body.titles.find(t => t.role === "extra");
+    assert.equal(extra.name, "Making Of");
+    assert.equal(extra.weight, 2);
+    assert.equal(extra.confidence, 50);  // 2 for, 1 against
+    assert.equal(body.weight, 3);        // not every title was accepted, so the disc vote is full
+  },
+
+  async "reports lower confidence"() {
+    const env = freshEnv();
+    await call(env, "POST", "/v1/submit", filing(1));
+    await call(env, "POST", "/v1/submit", filing(2));
+    await call(env, "POST", "/v1/report", { install_id: install(3), disc: { content_hash: HASH },
+      wrong: { kind: "movie", tmdb_id: "603" }, instead: { kind: "movie", tmdb_id: "604" } });
+    const { body } = await look(env);
+    assert.equal(body.reported, 1);
+    assert.equal(body.confirmed, false);
+    assert.equal(body.confidence, 50);
+    assert.equal(main(body).confidence, 50);
+  },
+
+  async "tracks are kept, cleaned, and commentary names agreed on"() {
+    const env = freshEnv();
+    await call(env, "POST", "/v1/submit", filing(1, { comName: "Commentary with the Cast" }));
+    await call(env, "POST", "/v1/submit", filing(2, { comName: "Commentary with the Cast" }));
+    const junk = filing(3);
+    junk.titles[0].tracks.audio[0].lang = "english!!";
+    await call(env, "POST", "/v1/submit", junk);
+    const { body } = await look(env);
+    const tr = main(body).tracks;
+    assert.deepEqual(tr.video, { codec: "MPEG2", res: "720x480" });
+    assert.equal(tr.audio.length, 2);
+    assert.equal(tr.audio[1].commentary, 1);
+    assert.equal(tr.audio[1].name, "Commentary with the Cast");
+    assert.deepEqual(tr.subs, [{ lang: "eng" }, { lang: "fra", forced: 1 }]);
+    const recent = await worker.fetch(new Request("http://db.test/v1/admin/recent", {
+      headers: { Authorization: "Bearer admin" } }), env, {});
+    const rows = (await recent.json()).submissions;
+    const odd = rows.find(r => r.titles[0].tracks.audio[0].lang === "");
+    assert.ok(odd, "a bad language code is dropped");
+  },
+
+  async "1.0.1 filings (no tracks, no accepted) still count fully"() {
+    const env = freshEnv();
+    for (const n of [1, 2]) {
+      const f = filing(n);
+      f.app_version = "1.0.1";
+      for (const t of f.titles) delete t.tracks;
+      await call(env, "POST", "/v1/submit", f);
+    }
+    const { body } = await look(env);
+    assert.equal(body.confirmed, true);
+    assert.equal(main(body).votes, 2);
+    assert.equal(main(body).tracks, undefined);
+  },
+
+  async "a migrated old database works"() {
+    const env = freshEnv({ oldSchema: true });
+    await call(env, "POST", "/v1/submit", filing(1, { accepted: true }));
+    const { body } = await look(env);
+    assert.equal(body.weight, 0.5);
+    assert.equal(body.confidence, 29);
+  },
+
+  async "a locked answer is 100% sure"() {
+    const env = freshEnv();
+    await worker.fetch(new Request("http://db.test/v1/admin/lock", { method: "POST",
+      headers: { Authorization: "Bearer admin", "Content-Type": "application/json" },
+      body: JSON.stringify({ disc_key: "h:" + HASH, answer: { kind: "movie", title: "The Matrix", tmdb_id: "603", titles: [] } }) }),
+      env, {});
+    const { body } = await look(env);
+    assert.equal(body.locked, true);
+    assert.equal(body.confidence, 100);
+  },
+};
+
+let failed = 0;
+for (const [name, fn] of Object.entries(tests)) {
+  try { await fn(); console.log("ok   " + name); }
+  catch (e) { failed++; console.log("FAIL " + name + "\n     " + (e.stack || e).split("\n").slice(0, 3).join("\n     ")); }
+}
+console.log(failed ? `${failed} failed` : "All server tests passed.");
+process.exit(failed ? 1 : 0);

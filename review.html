@@ -421,18 +421,20 @@ function epRange(p){
 
 const KIND = {"Featurettes":"Featurette","Behind the Scenes":"Behind the scenes","Deleted Scenes":"Deleted scene","Interviews":"Interview","Scenes":"Scene","Shorts":"Short","Trailers":"Trailer","Other":"Other"};
 const SUFFIX = {"Behind the Scenes":"behindthescenes","Deleted Scenes":"deleted","Featurettes":"featurette","Interviews":"interview","Scenes":"scene","Shorts":"short","Trailers":"trailer","Other":"other"};
+// a plan's folder in the library, or a full path for Movies/TV folders kept somewhere else
+const inLib = rel => /^([A-Za-z]:|[\\/]{2})/.test(rel || "") ? [rel] : [LIB, rel];
 function destOf(p, it){
   // TV extras can belong to the whole show, a season (default) or one episode (Plex's TV extras guide)
   const cat = it.category || "Other";
   const folder = SERVER === "kodi" ? "Extras" : cat;   // Kodi keeps all extras in one Extras folder
-  if (it.role === "extra" && p.kind === "tv" && it.attach === "show") return [LIB, p.library_dir, folder].join("\\") + "\\" + safe(it.name) + ".mkv";
+  if (it.role === "extra" && p.kind === "tv" && it.attach === "show") return [...inLib(p.library_dir), folder].join("\\") + "\\" + safe(it.name) + ".mkv";
   if (it.role === "extra" && p.kind === "tv" && it.attach === "episode" && SERVER !== "kodi"){
     if (!it.attach_to) return "pick the episode it belongs to";
     const same = p.items.filter(o => o.role === "extra" && o.action === "move" && o.attach === "episode" && o.attach_to === it.attach_to && (o.category || "Other") === cat);
     const k = same.findIndex(o => o === it || o.source === it.source);
-    return [LIB, it.dest_dir].join("\\") + "\\" + safe(`${it.attach_to}-${SUFFIX[cat] || "other"}${same.length > 1 ? k + 1 : ""}`) + ".mkv";
+    return inLib(it.dest_dir).join("\\") + "\\" + safe(`${it.attach_to}-${SUFFIX[cat] || "other"}${same.length > 1 ? k + 1 : ""}`) + ".mkv";
   }
-  const parts = [LIB, it.dest_dir];
+  const parts = inLib(it.dest_dir);
   if (it.role === "extra") parts.push(folder);
   return parts.join("\\") + "\\" + safe(it.name) + ".mkv";
 }
@@ -532,6 +534,14 @@ function splitRow(p, it, j){
     <div class="note" style="color:var(--muted)">Use ▶ to watch the video and check where episodes begin. Nothing is re-encoded; cuts land on chapter marks.</div>
   </div></td></tr>`;
 }
+// how sure the shared disc database is about this title (weighted votes, less disagreement and reports)
+function sharedLine(it){
+  const c = it.shared_confidence;
+  if (c === undefined || c === null) return "";
+  const cls = c >= 75 ? "good" : c < 50 ? "warnc" : "";
+  const what = c >= 75 ? "checked by several people" : c >= 50 ? "worth a quick check" : "check this one";
+  return `<div style="margin-top:4px"><span class="chip ${cls}" title="How sure the Shelfrip disc database is about this title, from how many people filed it this way (titles filed without changes count half), less anyone who disagreed">Shared answer: ${c}% sure · ${what}</span></div>`;
+}
 // audio tracks: all are kept; click one to mark it as a commentary and give it a name
 function audioLine(it, j){
   if (!it.audio || !it.audio.length || it.action === "skip") return "";
@@ -618,6 +628,7 @@ function card(p, i){
         <div class="dest">${it.action==="skip" ? "not filed" : (it.needs_split && it.split) ? `cut into ${it.split.starts.length} episodes (below)` : esc(destOf(p, it))}</div>
         ${attachLine(p, it, j)}
         ${it.note ? `<div class="note">${esc(it.note)}</div>` : ""}
+        ${sharedLine(it)}
         ${audioLine(it, j)}</td>
       <td class="src">${esc(it.source)}</td></tr>` + (it.needs_split && it.split ? splitRow(p, it, j) : "");
   }).join("");
@@ -1015,6 +1026,9 @@ const progText = a => a ? `${gb(a.done)} of ${gb(a.total)} · title ${Math.min(a
 const pctOf = d => d.progress ? Math.max(d.progress.pct, d.ripping ? d.pct||0 : 0) : d.pct||0;
 const stateText = d => {
   if (!d.loaded) return "Empty";
+  if (d.filing) return d.filing.state === "running" ? `Filing into ${SERVER_NAME} ${d.filing.pct}%` + (d.filing.current ? ` · ${d.filing.current}` : "")
+    : "Filing was cut off · it picks up again by itself" + (d.filing.current ? ` (${d.filing.current})` : "");
+  if (d.filed) return `Filed into ${SERVER_NAME} · on your shelf`;
   if (d.ripping) return d.state === "scanning" ? "Reading the disc…" : `Ripping ${pctOf(d)}%` + (d.progress ? ` · ${progText(d.progress)}` : d.message ? ` · ${d.message}` : "");
   if (d.elsewhere) return d.progress ? `Ripping ${d.progress.pct}% (in another window) · ${progText(d.progress)}` : "Being ripped by another window";
   if (d.state === "done" && d.rip_label === d.label) return "Done · " + (d.message||"");
@@ -1129,13 +1143,15 @@ function damagedBox(st){
   return dmg ? `<details class="panel" style="margin-bottom:24px" open><summary>Discs with read errors (${st.damaged.length}): clean them and click Rip again, or replace them</summary>${dmg}</details>` : "";
 }
 function driveCard(d){
-  const m = d.match, live = d.ripping || d.elsewhere, ready = d.already && !live;
+  // fil: being filed into the library. Rip again, Review now and "Not this one?" make no sense then.
+  const m = d.match, fil = d.filing, live = d.ripping || d.elsewhere, busy = live || fil, ready = d.already && !busy && !d.filed;
+  const pc = fil ? fil.pct : pctOf(d);
   const name = m ? `${m.title}${m.kind === "tv" && m.season ? ` · Season ${m.season}` : m.year ? ` (${m.year})` : ""}` : d.loaded ? (d.label || "(no label)") : "Empty";
   const art = !d.loaded ? `<svg width="72" height="72" viewBox="0 0 72 72" aria-hidden="true"><circle cx="36" cy="36" r="30" fill="none" stroke="var(--line2)" stroke-width="2" stroke-dasharray="4 6"/><circle cx="36" cy="36" r="8" fill="none" stroke="var(--line2)" stroke-width="2"/></svg>`
-    : m ? poster(m.kind, m.tmdb_id, m.kind === "tv" ? m.season : null, m.title).replace('</div>', live ? `<span class="ring">${ring(pctOf(d), 40, 5, "var(--accent)")}</span></div>` : '</div>')
-    : `<svg width="72" height="72" viewBox="0 0 72 72" aria-hidden="true"><circle cx="36" cy="36" r="30" fill="var(--card2)"/>${live ? `<circle cx="36" cy="36" r="30" fill="none" stroke="var(--accent)" stroke-width="6" stroke-linecap="round" stroke-dasharray="${(188.5 * pctOf(d) / 100).toFixed(1)} 188.5" transform="rotate(-90 36 36)"/>` : ""}<circle cx="36" cy="36" r="8" fill="var(--bg)" stroke="var(--line2)" stroke-width="2"/></svg>`;
+    : m ? poster(m.kind, m.tmdb_id, m.kind === "tv" ? m.season : null, m.title).replace('</div>', busy ? `<span class="ring">${ring(pc, 40, 5, "var(--accent)")}</span></div>` : '</div>')
+    : `<svg width="72" height="72" viewBox="0 0 72 72" aria-hidden="true"><circle cx="36" cy="36" r="30" fill="var(--card2)"/>${busy ? `<circle cx="36" cy="36" r="30" fill="none" stroke="var(--accent)" stroke-width="6" stroke-linecap="round" stroke-dasharray="${(188.5 * pc / 100).toFixed(1)} 188.5" transform="rotate(-90 36 36)"/>` : ""}<circle cx="36" cy="36" r="8" fill="var(--bg)" stroke="var(--line2)" stroke-width="2"/></svg>`;
   const bad = ["check","error"].includes(d.state) && d.rip_label === d.label;
-  const cls = !d.loaded ? "idle" : live ? "busy" : ready ? "ready" : "";
+  const cls = !d.loaded ? "idle" : busy ? "busy" : ready ? "ready" : "";
   const st = !d.loaded ? "Feed me a disc" : stateText(d);
   return `<article class="drive ${cls}">
     <div class="top">${art}
@@ -1143,14 +1159,16 @@ function driveCard(d){
         <span class="dev">DRIVE ${esc(d.device)}</span>
         <span class="lab">${esc(name)}</span>
         ${m && d.loaded ? `<span style="color:var(--muted);font-size:12px">disc: ${esc(d.label)}${m.how ? ` · recognised from ${esc(m.how)}` : ""}</span>` : ""}
-        <span class="st ${bad ? "err" : live ? "live" : ready ? "ready" : d.state === "done" && d.rip_label === d.label ? "ok" : ""}">${esc(st)}</span>
+        <span class="st ${fil ? "live" : bad ? "err" : live ? "live" : ready ? "ready" : d.filed || d.state === "done" && d.rip_label === d.label ? "ok" : ""}">${esc(st)}</span>
       </div>
     </div>
-    ${live || d.progress ? `<div class="bar"><i style="width:${pctOf(d)}%"></i></div>` : ""}
+    ${busy || d.progress ? `<div class="bar"><i style="width:${pc}%"></i></div>` : ""}
     ${d.stuck && d.ripping ? `<div class="warn stuck"><b>This disc seems stuck.</b> ${esc(d.stuck)} Stop the rip, clean the disc, then click Rip again.</div>` : ""}
-    ${d.loaded ? `<div class="row">
+    ${d.loaded && fil ? `<div class="row">
+      ${m && m.folder ? `<button data-review="${esc(m.folder)}">See filing</button>` : ""}<button data-act="eject" data-dev="${esc(d.device)}" title="Filing works from the rip folder, so the disc can come out">Eject</button>
+    </div>` : d.loaded ? `<div class="row">
       ${ready && m && m.folder ? `<button class="gold" data-review="${esc(m.folder)}">Review now</button>` : ""}
-      ${m && !ready ? `<button data-notthis="1" title="The box art isn't what's in the drive? Fix it on the Review tab once it's ripped.">Not this one?</button>` : ""}
+      ${m && !ready && !d.filed ? `<button data-notthis="1" title="The box art isn't what's in the drive? Fix it on the Review tab once it's ripped.">Not this one?</button>` : ""}
       ${d.ripping ? `<button data-act="cancel" data-dev="${esc(d.device)}" ${d.stuck ? 'class="primary"' : ""}>${d.stuck ? "Stop this rip" : "Cancel rip"}</button>`
         : `${d.already ? `<button data-act="rip_again" data-dev="${esc(d.device)}">${d.state === "in_plex" && d.rip_label === d.label ? "Rip anyway" : "Rip again"}</button>` : ""}<button data-act="eject" data-dev="${esc(d.device)}">Eject</button>`}
     </div>` : ""}
@@ -1172,7 +1190,7 @@ function queueCards(){
       <span style="flex:1;display:grid;gap:4px;min-width:0">
         <b style="font-size:15px">${esc(t)}${p.kind === "tv" && p.season ? ` · Season ${p.season}` : p.year ? ` (${esc(p.year)})` : ""}</b>
         <span style="color:var(--muted)">${what}</span>
-        <span class="row">${confChip(p)}${auto ? `<span class="chip">files itself ${p.auto.at * 1000 <= Date.now() ? "in a moment" : "at " + new Date(p.auto.at * 1000).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})}</span>` : ""}</span>
+        <span class="row">${p.job && p.job.state === "running" ? `<span class="chip">Filing ${p.job.total_bytes ? Math.round(100 * p.job.done_bytes / p.job.total_bytes) : 0}%</span>` : confChip(p)}${auto ? `<span class="chip">files itself ${p.auto.at * 1000 <= Date.now() ? "in a moment" : "at " + new Date(p.auto.at * 1000).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})}</span>` : ""}</span>
       </span>
       <span class="chip xp">+${xpOf(p)} XP</span></button>`; }).join("")}</div>`;
 }
@@ -1497,6 +1515,10 @@ function wizard(j){
         <div class="how">Sign up at <a href="https://www.themoviedb.org/signup" target="_blank" rel="noopener">themoviedb.org</a>, open
           <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">Settings › API</a>, request a key (choose Personal use),
           and copy the <b>API Key</b> (the short one).</div></li>
+      <li><label class="chk"><input type="checkbox" data-w="skip_duplicate_features" ${val("skip_duplicate_features") ? "checked" : ""}>
+        <span><b>Rip the main feature only once.</b> Some movie discs list the film several times, often as decoys, and ripping
+        every copy can add half an hour or more per disc. Copies that are the same video and tracks, or that a disc database says aren't
+        the real one, are left out. Different cuts and language versions are always ripped. You can change this any time in Settings.</span></label></li>
       <li><label class="chk"><input type="checkbox" data-w="share_discs" ${val("share_discs") !== false ? "checked" : ""}>
         <span><b>Help build the Shelfrip disc database.</b> When you file a disc, share what each title turned out to be, so the next person
         with the same disc gets it named right straight away. Only the disc's fingerprint, title lengths and sizes, and the names you chose are sent:
@@ -1534,15 +1556,18 @@ function wireWizard(el){
 const SET_GROUPS = [
   {id:"library", name:"Library and folders", icon:"M3 7h6l2 2h10v10H3z", intro:"Where discs are ripped to, and where finished files go.", items:[
     ["plex_library_root", "Media library folder", "The folder that holds (or will hold) your Movies and TV Shows folders.", {pick:"folder"}],
+    ["movies_folder", "Movies folder", "Can be anywhere, even another drive. Leave empty and Shelfrip uses the one already in your media library, whatever it's called (movies, Films…), or makes Movies there.", {pick:"folder", under:"plex_library_root"}],
+    ["tv_folder", "TV shows folder", "Can be anywhere, even another drive. Leave empty and Shelfrip uses the one already in your media library (tv, TVShows, TV_Shows…), or makes TV Shows there.", {pick:"folder", under:"plex_library_root"}],
     ["output_root", "Rip folder", "Discs are ripped here first, then moved into your library once you've checked the names. Needs room: about 50 GB per Blu-ray, 100 GB per 4K disc.", {pick:"folder"}],
     ["media_server", "Media server", "Files are named the way it expects."],
     ["format_folders", "Keep each format in its own folder", "Movies\\Blu-Ray\\…, Movies\\DVD\\… instead of one Movies folder."],
-    ["music_library_root", "Music library folder", "Leave empty to use a Music folder inside your media library.", {pick:"folder", adv:1}],
+    ["music_library_root", "Music folder", "Where ripped CDs go. It can be anywhere. Leave empty to use the music folder already in your media library (any case), or make Music there.", {pick:"folder"}],
   ]},
   {id:"ripping", name:"Ripping", icon:"M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0-18 0M12 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0", intro:"What happens when a disc goes in.", items:[
     ["auto_rip", "Start with auto-rip on", "Rip every disc as soon as it's inserted, from the moment Shelfrip opens."],
     ["check_plex_before_rip", "Skip discs you already have", "If your library already has it in the same or better quality, the disc isn't ripped. You can still click Rip anyway."],
     ["retry_failed_titles", "Retry titles that hit read errors", "Tries once more before giving up on a scratched section."],
+    ["skip_duplicate_features", "Rip the main feature only once", "Some discs list the movie several times (often as decoys), or every scene of it as a title of its own. Leaves out copies that are the same video and tracks, copies a disc database says aren't the real one, and scene-by-scene titles. Different cuts, language versions and named extras are still ripped."],
     ["eject_when_done", "Eject as soon as the rip finishes", "Normally the disc stays in until you file it, so you can check its extras."],
     ["min_length_seconds", "Ignore titles shorter than", "Menus, logos and warnings.", {unit:"seconds", adv:1}],
     ["min_free_gb_rips", "Keep this much space free in the rip folder", "A rip waits if there's less than this.", {unit:"GB", adv:1}],
@@ -1606,9 +1631,9 @@ function setField(row, meta){
     ? `<span class="chip good">✓ saved</span><button data-change="${key}">Change</button><input type="password" id="${id}" data-k="${key}" class="hide" autocomplete="off" placeholder="paste the new one">`
     : `<input type="password" id="${id}" data-k="${key}" autocomplete="off" placeholder="paste it here">`;
   else if (row.kind === "select") ctl = `<select id="${id}" data-k="${key}">${(row.choices||[]).map(c => `<option value="${esc(c.value)}" ${c.value === v ? "selected" : ""}>${esc(c.label)}</option>`).join("")}</select>`;
-  else ctl = `<input id="${id}" data-k="${key}" type="${row.kind === "number" ? "number" : "text"}" ${row.kind === "number" ? 'min="0"' : ""} value="${esc(v)}" class="${o.unit || o.short ? "short" : ""}" ${key.endsWith("_root") || key.endsWith("_dir") || key.endsWith("_path") ? 'spellcheck="false"' : ""}>`
+  else ctl = `<input id="${id}" data-k="${key}" type="${row.kind === "number" ? "number" : "text"}" ${row.kind === "number" ? 'min="0"' : ""} value="${esc(v)}" ${row.placeholder ? `placeholder="${esc(row.placeholder)}"` : ""} class="${o.unit || o.short ? "short" : ""}" ${key.endsWith("_root") || key.endsWith("_dir") || key.endsWith("_folder") || key.endsWith("_path") ? 'spellcheck="false"' : ""}>`
     + (o.unit ? `<span class="unit">${esc(o.unit)}</span>` : "")
-    + (o.pick ? `<button data-pick="${key}" data-kind="${o.pick}">Browse…</button>` : "");
+    + (o.pick ? `<button data-pick="${key}" data-kind="${o.pick}" ${o.under ? `data-under="${o.under}"` : ""}>Browse…</button>` : "");
   return `<div class="srow"><div class="lbl"><label for="${id}">${esc(label)}</label> ${flag}${helpHtml}</div><div class="ctl">${ctl}<span class="saved" data-saved="${key}"></span></div></div>`;
 }
 function renderSettings(){
@@ -1658,7 +1683,11 @@ function renderSettings(){
     const i = $("#s_" + b.dataset.pick, el);
     b.disabled = true;
     try {
-      const r = await api("/api/pick", {kind: b.dataset.kind, start: i.value, title: i.closest(".srow").querySelector("label").textContent});
+      // a folder inside another one (Movies inside the media library): start the picker there
+      const base = b.dataset.under ? ((SETS.settings.find(r => r.key === b.dataset.under) || {}).value || "") : "";
+      const full = /^([A-Za-z]:|[\\/]{2})/.test(i.value);  // a folder kept outside the library
+      const start = base && !full ? (i.value ? base.replace(/[\\/]+$/, "") + "\\" + i.value : base) : i.value;
+      const r = await api("/api/pick", {kind: b.dataset.kind, start, title: i.closest(".srow").querySelector("label").textContent});
       if (r.available === false) { i.focus(); toast("Type the path", "There's no folder picker on this computer."); }
       else if (r.path) { i.value = r.path; await saveOne(i); }
     } finally { b.disabled = false; }
@@ -1677,7 +1706,8 @@ async function saveOne(i){
     if (i.type === "password" || k === "media_server" || SET_STATUS[k]) renderSettings();
     const m2 = $(`[data-saved="${k}"]`);
     if (m2){ m2.textContent = "✓ Saved"; m2.className = "saved on"; setTimeout(() => m2 && (m2.className = "saved"), 1800); }
-    if (["output_root","plex_library_root","media_server","format_folders"].includes(k)) load(false);
+    if (k === "movies_folder" || k === "tv_folder" || k === "music_library_root" || k === "plex_library_root") renderSettings();  // shows the folder as saved, and what empty finds
+    if (["output_root","plex_library_root","media_server","format_folders","movies_folder","tv_folder"].includes(k)) load(false);
     if (k === "job_total_discs") loadProgress(false);
     if (k === "sounds"){ SOUND = v; if (v) chime("file"); }
     if (k === "share_discs") SHARING = v;

@@ -8,7 +8,9 @@ MakeMKV's command-line tool (makemkvcon). For each disc it:
   * saves    disc_info.json   (titles, run times, chapters, sizes, source playlists)
              makemkv_info.txt (raw MakeMKV scan, kept for troubleshooting)
              rip.log          (raw MakeMKV rip output)
-  * rips     every title at least `min_length_seconds` long to .mkv (no transcoding)
+  * rips     every title at least `min_length_seconds` long to .mkv (no transcoding);
+             with "skip_duplicate_features" on, extra copies of the main feature and scene-by-scene
+             titles (the movie cut into pieces) are left out (dupes.py)
   * ejects   the disc when it's finished
   * appends  a line to <output_root>\rip_history.csv
 
@@ -566,6 +568,37 @@ def rip_disc(cfg: dict, drive: dict) -> dict:
     log(f"{device} [{label}] {n_titles} titles, {total_min} min total. Ripping...")
     st.update(state="ripping", message=f"{n_titles} titles, {total_min} min")
 
+    # 1b. optional: rip only one copy of a feature the disc lists several times (dupes.py)
+    skipped: dict = {}
+    if cfg.get("skip_duplicate_features") and not st.get("cancel"):
+        try:
+            import dupes
+            st["message"] = "Checking for extra copies of the feature"
+            skipped = dupes.plan(disc, cfg, log=log)
+        except Exception as exc:
+            log(f"{device} [{label}] couldn't check for duplicate features ({exc}), ripping everything")
+            skipped = {}
+            for t in disc["titles"]:
+                t.pop("skipped_duplicate_of", None)
+                t.pop("skip_reason", None)
+        kinds = {t["title_id"]: t.get("skip_kind") for t in disc["titles"]}
+        for tid, (keep, why) in sorted(skipped.items()):
+            log(f"{device} [{label}] not ripping title {tid}: "
+                + (why if kinds.get(tid) == "scene" else f"a copy of title {keep} ({why})"))
+        if skipped:
+            saved_min = sum(t.get("duration_seconds", 0) for t in disc["titles"] if t["title_id"] in skipped) // 60
+            n_scenes = sum(1 for tid in skipped if kinds.get(tid) == "scene")
+            n_copies = len(skipped) - n_scenes
+            if n_copies:
+                disc["skipped_duplicates"] = n_copies
+            if n_scenes:
+                disc["skipped_scenes"] = n_scenes
+            bits = [f"{n_copies} duplicate cop{'y' if n_copies == 1 else 'ies'}" if n_copies else "",
+                    f"{n_scenes} scene-by-scene title{'' if n_scenes == 1 else 's'}" if n_scenes else ""]
+            what = " and ".join(b for b in bits if b)
+            st["message"] = f"{n_titles - len(skipped)} titles to rip ({what} left out)"
+            log(f"{device} [{label}] {what} of the feature left out ({saved_min} min of video)")
+
     # 2. rip all titles
     last_pct = [-10]
 
@@ -577,14 +610,15 @@ def rip_disc(cfg: dict, drive: dict) -> dict:
             log(f"{device} [{label}] {last_pct[0]}%")
 
     # titles already ripped completely by an earlier, interrupted rip are kept, not ripped again
-    todo = [t for t in disc["titles"] if t.get("output_file")]
+    wanted = [t for t in disc["titles"] if t.get("output_file") and "skipped_duplicate_of" not in t]
+    todo = list(wanted)
     if resume:
         done = [t for t in todo if title_complete(cfg, out_dir / t["output_file"], t)]
         todo = [t for t in todo if t not in done]
         log(f"{device} [{label}] continuing an unfinished rip: {len(done)} title(s) already done, "
             f"{len(todo)} to rip")
         st["message"] = f"continuing: {len(done)} done, {len(todo)} to rip"
-    if not resume or len(todo) == len([t for t in disc["titles"] if t.get("output_file")]):
+    if len(todo) == len([t for t in disc["titles"] if t.get("output_file")]):
         rc, rip_out = run_makemkv(
             cfg, [f"--minlength={min_len}", "mkv", src, "all", str(out_dir)],
             logfile=out_dir / "rip.log", on_progress=progress, device=device,
@@ -609,8 +643,7 @@ def rip_disc(cfg: dict, drive: dict) -> dict:
 
     # 2b. a scratched or dirty disc: rip the titles that didn't come out whole once more
     if not cancelled and cfg.get("retry_failed_titles", True):
-        bad = [t for t in disc["titles"] if t.get("output_file")
-               and not title_complete(cfg, out_dir / t["output_file"], t)]
+        bad = [t for t in wanted if not title_complete(cfg, out_dir / t["output_file"], t)]
         if bad:
             log(f"{device} [{label}] {len(bad)} title(s) didn't rip cleanly, trying them once more")
             st["message"] = f"retrying {len(bad)} title(s) that had read errors"
@@ -637,7 +670,7 @@ def rip_disc(cfg: dict, drive: dict) -> dict:
         t["ripped"] = bool(name and name in mkvs)
     m = re.search(r"(\d+) titles? saved(?:, (\d+) failed)?", rip_out)
     saved = int(m.group(1)) if m else len(mkvs)
-    failed = int(m.group(2) or 0) if m else max(0, n_titles - len(mkvs))
+    failed = int(m.group(2) or 0) if m else max(0, n_titles - len(skipped) - len(mkvs))
     status = "cancelled" if cancelled else "ok" if rc == 0 and failed == 0 and mkvs else "check"
     disc.update({"status": status, "titles_saved": saved, "titles_failed": failed,
                  "finished_at": dt.datetime.now().isoformat(timespec="seconds")})

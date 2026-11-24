@@ -44,11 +44,14 @@ import rip_all
 JOB_DEFAULTS = {"auto_file": True, "auto_file_minutes": 15, "audio_language": "eng", "subtitle_language": "",
                 "forced_subtitles": True, "retry_failed_titles": True, "job_total_discs": 0,
                 "min_free_gb_rips": 60, "app_window": True, "tray_icon": True, "sounds": True,
-                "skip_clutter": True}
+                "skip_clutter": True, "skip_duplicate_features": False}
 SECRETS = ("tmdb_api_key", "omdb_api_key", "plex_token")
 SETTINGS = [  # (key, label, kind)
     ("output_root", "Rip folder (where discs are ripped to before review)", "text"),
     ("plex_library_root", "Media library folder (holds your Movies and TV Shows folders)", "text"),
+    ("movies_folder", "Movies folder (inside the media library or anywhere; empty = find it, else Movies)", "text"),
+    ("tv_folder", "TV shows folder (inside the media library or anywhere; empty = find it, else TV Shows)", "text"),
+    ("music_library_root", "Music folder (empty = the music folder in the media library, else Music)", "text"),
     ("media_server", "Media server (decides how files are named)", "select"),
     ("format_folders", "Separate folders per format (Movies\\Blu-Ray\\..., Movies\\DVD\\...)", "bool"),
     ("use_dvdcompare", "Also look up extras names on DVDCompare (reads its web pages)", "bool"),
@@ -57,7 +60,6 @@ SETTINGS = [  # (key, label, kind)
     ("makemkvcon_path", "MakeMKV (makemkvcon64.exe)", "text"),
     ("mkvtoolnix_dir", "MKVToolNix folder", "text"),
     ("plex_url", "Plex address (Plex only, optional: lets the app check what Plex matched)", "text"),
-    ("music_library_root", "Music library folder (empty = Music inside the Plex library folder)", "text"),
     ("cyanrip_path", "cyanrip for music CDs (empty = tools\\cyanrip\\cyanrip.exe)", "text"),
     ("cd_offsets", "CD drive read offsets, e.g. D:6, E:667 (for AccurateRip)", "text"),
     ("music_lyrics", "Save lyrics next to music tracks (.lrc / .txt, from LRCLIB)", "bool"),
@@ -77,6 +79,7 @@ SETTINGS = [  # (key, label, kind)
     ("subtitle_language", "Turn on full subtitles in this language (empty = off)", "text"),
     ("forced_subtitles", "Show forced subtitles (foreign-dialogue lines) automatically", "bool"),
     ("retry_failed_titles", "Retry titles that hit read errors once", "bool"),
+    ("skip_duplicate_features", "Rip only one copy of a movie disc's feature (no duplicate copies, no scene-by-scene titles)", "bool"),
     ("job_total_discs", "Discs you plan to rip, for a progress bar (0 = no goal)", "number"),
     ("min_free_gb_rips", "Don't start a rip with less than this free in the rip folder (GB)", "number"),
     ("tmdb_api_key", "TMDB key", "secret"),
@@ -403,6 +406,11 @@ class Ripper:
                               "season": p.get("season"), "folder": p["folder"], "how": "named for review"}
             elif m and m.get("label") == d["label"]:
                 d["match"] = m
+            fs = review.filing_status(p) if p else None
+            if fs:
+                d["filing"] = fs
+            elif d["label"] and not p and d["already"] and review.filed_label(d["label"]):
+                d["filed"] = True  # filed, and the disc is still in the drive (eject after filing is off)
         try:
             setup = setup_check()
         except Exception:
@@ -945,6 +953,19 @@ def settings_view() -> dict:
         if kind == "select":
             row["choices"] = CHOICES.get(key, [])
         out.append(row)
+    lib = str(merged.get("plex_library_root") or "").strip()
+    found = identify.library_dirs(merged)
+    for row in out:  # what an empty Movies/TV folder setting means right now
+        kind = {"movies_folder": "movies", "tv_folder": "tv"}.get(row["key"])
+        if kind:
+            name = found[kind]
+            there = (bool(lib) or identify.is_full_path(name)) and identify.lib_path(Path(lib), name).is_dir()
+            row["placeholder"] = f"{name} ({'found in your library' if there else 'made when the first disc is filed'})"
+            row["value"] = identify.clean_lib_dir(row["value"], lib) or row["value"]
+        elif row["key"] == "music_library_root" and lib:
+            import music
+            mr = str(music.music_root(merged))
+            row["placeholder"] = f"{mr} ({'found in your library' if os.path.isdir(mr) else 'made when the first CD is filed'})"
     return {"settings": out, "path": str(identify.CONFIG_PATH), "setup": setup_check(), "version": UPDATE,
             "first_run": not raw.get("setup_done") and not raw.get("migrated_from")}
 
@@ -977,6 +998,12 @@ def save_settings(values: dict) -> None:
                 continue
         else:
             v = str(v).strip()
+        if key in ("movies_folder", "tv_folder") and v:
+            lib = str(values.get("plex_library_root", raw.get("plex_library_root")) or "").strip()
+            rel = identify.clean_lib_dir(v, lib)
+            if not rel:
+                raise ValueError("That isn't a folder Shelfrip can use. Pick one with Browse.")
+            v = rel
         raw[key] = v
     identify.CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = identify.CONFIG_PATH.with_suffix(".tmp")
@@ -1104,6 +1131,8 @@ class Handler(review.Handler):
                     rip_all.eject(dev)
                 elif act == "rip_again":  # rip anyway (already ripped, or already in Plex)
                     dev = str(b.get("device") or "")
+                    if any(d["device"] == dev and d.get("filing") for d in RIPPER.state()["drives"]):
+                        return self.send(200, {"error": "That disc is being filed. Wait until it's done.", **RIPPER.state()})
                     RIPPER.finished.pop(dev, None)
                     RIPPER.held.pop(dev, None)
                     RIPPER.force.add(dev)

@@ -185,8 +185,7 @@ def list_plans() -> list[dict]:
 def season_files(plan: dict) -> list[str]:
     """Names (without .mkv) of the episode files already in this season's library folder."""
     try:
-        d = LIB_ROOT.joinpath(*[identify.fs_safe(x) for x in
-                                f"{plan['library_dir']}\\Season {plan.get('season')}".split("\\") if x.strip()])
+        d = identify.lib_path(LIB_ROOT, f"{plan['library_dir']}\\Season {plan.get('season')}")
         return sorted(f.stem for f in d.glob("*.mkv") if re.search(r" - s\d+e\d+", f.stem, re.I)
                       and not re.search(r"-(?:" + "|".join(EXTRA_SUFFIX.values()) + r")\d*$", f.stem))
     except (OSError, KeyError):
@@ -257,13 +256,36 @@ def start_filing(folder: Path, plan: dict) -> list[str]:
     with LOCK:
         if JOBS.get(folder.name, {}).get("state") == "running":
             return ["Already filing this disc."]
-        JOBS[folder.name] = {"state": "running", "done_bytes": 0, "total_bytes": 0, "current": "starting"}
+        JOBS[folder.name] = {"state": "running", "done_bytes": 0, "total_bytes": 0, "current": "starting",
+                             "label": plan.get("disc_label") or ""}
     f = plan.get("filing") or {}
     plan["filing"] = {"started": f.get("started") or time.strftime("%Y-%m-%dT%H:%M:%S"),
                       "tries": int(f.get("tries") or 0) + 1, "at": time.time()}
     save_plan(folder, plan)  # marks it as being filed, so an interrupted filing is finished next time
     threading.Thread(target=file_job, args=(folder, plan), daemon=True).start()
     return []
+
+
+def filing_status(plan: dict) -> dict | None:
+    """Is this disc being filed (or about to pick up a filing that was cut off)? For the drive cards
+    on the home page, which hide "Rip again" and the like until it's done. None = not filing."""
+    job = JOBS.get(plan.get("folder") or "") or {}
+    if job.get("state") == "running":
+        total = job.get("total_bytes") or 0
+        return {"state": "running", "pct": min(100, round(100 * job.get("done_bytes", 0) / total)) if total else 0,
+                "current": job.get("current") or "starting"}
+    f = plan.get("filing")
+    if not f:
+        return None
+    tries = int(f.get("tries") or 0)
+    if tries >= 6 or (job.get("state") == "error" and tries >= 3):
+        return None  # resume_tick won't try again: it's back on the Review tab for you
+    return {"state": "waiting", "pct": 0, "current": job.get("current") if job.get("state") == "error" else ""}
+
+
+def filed_label(label: str) -> bool:
+    """Was the disc with this label filed in this session? (Its plan is gone from the rip folder.)"""
+    return bool(label) and any(j.get("label") == label and j.get("state") == "done" for j in JOBS.values())
 
 
 def resume_tick(log=print) -> list[str]:
@@ -328,7 +350,7 @@ def refile_movie(name: str, tmdb_id: str, log=print) -> dict:
     new_rel = old_rel[: len(old_rel) - len(old_base)] + new_base
 
     def where(rel):
-        return LIB_ROOT.joinpath(*[identify.fs_safe(x) for x in rel.replace("/", "\\").split("\\") if x.strip()])
+        return identify.lib_path(LIB_ROOT, rel)
     old_dir, new_dir = where(old_rel), where(new_rel)
     if new_dir.exists():
         return {"error": f"{new_dir} already exists. Is that movie already in your library?"}
@@ -422,7 +444,7 @@ def refile_tv(name: str, tmdb_id: str, season, shift=0, log=print) -> dict:
         return {"error": "That would number an episode below 1."}
 
     def where(rel):
-        return LIB_ROOT.joinpath(*[identify.fs_safe(x) for x in rel.replace("/", "\\").split("\\") if x.strip()])
+        return identify.lib_path(LIB_ROOT, rel)
     old_show, new_show = where(old_rel), where(new_rel)
     sdir = "Specials" if season == 0 else f"Season {season}"
 
@@ -577,9 +599,7 @@ def dest_for(item: dict, plan: dict | None = None) -> Path:
             name = f"{item['attach_to']}-{EXTRA_SUFFIX.get(cat, 'other')}{idx}"
         else:
             parts.append(folder)
-    rel = "\\".join(parts).replace("/", "\\")
-    sub = [identify.fs_safe(x) for x in rel.split("\\") if x.strip()]
-    return LIB_ROOT.joinpath(*sub, identify.fs_safe(name) + ".mkv")
+    return identify.lib_path(LIB_ROOT, "\\".join(parts)) / (identify.fs_safe(name) + ".mkv")
 
 
 def split_ok(it: dict) -> str:
@@ -653,9 +673,12 @@ def check_plan(folder: Path, plan: dict) -> list[str]:
     try:  # room in the library for it?
         need = sum((folder / it["source"]).stat().st_size for it in plan["items"]
                    if it.get("action") == "move" and not item_done(it) and (folder / it["source"]).exists())
-        free = shutil.disk_usage(LIB_ROOT).free
+        where = identify.lib_path(LIB_ROOT, plan.get("library_dir") or "")  # Movies/TV can be on another drive
+        while not where.exists() and where.parent != where:
+            where = where.parent
+        free = shutil.disk_usage(where).free
         if need + 2e9 > free:
-            problems.append(f"Not enough space in {LIB_ROOT}: needs {need / 1e9:.1f} GB, {free / 1e9:.1f} GB free.")
+            problems.append(f"Not enough space in {where}: needs {need / 1e9:.1f} GB, {free / 1e9:.1f} GB free.")
     except OSError:
         pass
     for it in plan["items"]:

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import statistics
 import sys
@@ -44,6 +45,11 @@ DEFAULTS = {
     # folder for any server; the name is kept so older settings files still work.
     "output_root": "",
     "plex_library_root": "",
+    # The Movies and TV Shows folders inside it, as named in your library ("movies", "TVShows",
+    # "Video\\Films"...). Empty = use the folder that's already there (any case or spacing), else
+    # "Movies" / "TV Shows". See library_dirs().
+    "movies_folder": "",
+    "tv_folder": "",
     # plex, jellyfin, emby or kodi: how filed files are named (naming.py)
     "media_server": "plex",
     # Put each format in its own folder (Movies\Blu-Ray\Title ...)? Off: Movies\Title ...
@@ -95,7 +101,7 @@ NOISE_WORDS = {
 
 # --------------------------------------------------------------------------- utils
 
-PLANNER_VERSION = 8  # bump when naming improves, so untouched proposals get redone
+PLANNER_VERSION = 9  # bump when naming improves, so untouched proposals get redone
 
 
 # Settings you fill in yourself: added to config.json (empty) if they're missing, so you can see where they go
@@ -256,14 +262,107 @@ TAG_RE = re.compile(r"^(?P<title>.+?)\s*(?:\((?P<year>\d{4})\))?\s*(?:" + naming
 EP_RE = re.compile(r"s(\d{1,2})e(\d{1,3})", re.I)
 
 
+# What existing top-level folders are recognised as, compared without case, spaces, dashes or underscores
+LIB_DIR_NAMES = {"movies": ("Movies", ("movies", "movie", "films", "film")),
+                 "tv": ("TV Shows", ("tvshows", "tvshow", "tv", "shows", "tvseries", "series", "television"))}
+
+
+def _squash(name: str) -> str:
+    return re.sub(r"[\s_\-.]+", "", name).lower()
+
+
+def _split_abs(v: str) -> tuple[str, list[str]]:
+    """A path as (root, folder names). The root is "D:\\", "\\\\NAS\\Media\\" or (off Windows) "/" for a
+    full path, and "" for a path inside the library."""
+    v = str(v or "").strip()
+    anchor, rest = "", v
+    m = re.match(r"^([A-Za-z]:)(?:[\\/]|$)", v)
+    u = re.match(r"^[\\/]{2}([^\\/]+)[\\/]+([^\\/]+)(?:[\\/]|$)", v)  # \\server\\share
+    if m:
+        anchor, rest = m.group(1) + "\\", v[m.end():]
+    elif u:
+        anchor, rest = f"\\\\{u.group(1)}\\{u.group(2)}\\", v[u.end():]
+    elif os.name != "nt" and v.startswith("/"):
+        anchor, rest = "/", v
+    return anchor, [x for x in re.split(r"[\\/]+", rest) if x.strip()]
+
+
+def clean_lib_dir(value: str, root: str = "") -> str:
+    """A Movies/TV folder setting, tidied ("" if it isn't a usable folder).
+
+    A name ("movies") or a path inside the library ("Video\\Films") stays relative to it, and so
+    does a full path inside the library folder (what the Browse button gives), case-insensitively.
+    A full path anywhere else ("D:\\Movies", "\\\\NAS\\TV") is kept as a full path."""
+    anchor, parts = _split_abs(value)
+    if (not anchor and not parts) or any(x.strip() in (".", "..") for x in parts):
+        return ""
+    if not anchor:
+        return "\\".join(parts)
+    ra, rparts = _split_abs(root)
+    if ra and ra.lower() == anchor.lower() and [x.lower() for x in parts[:len(rparts)]] == [x.lower() for x in rparts] \
+            and len(parts) > len(rparts):
+        return "\\".join(parts[len(rparts):])  # inside the library: keep it relative
+    full = anchor + ("/" if anchor == "/" else "\\").join(parts)
+    return full.rstrip("\\") if anchor.startswith("\\\\") else full
+
+
+def is_full_path(p: str) -> bool:
+    return bool(_split_abs(p)[0])
+
+
+def lib_path(root: Path, rel: str) -> Path:
+    """A library path from a plan ("Movies\\Title (Year)", or a full path for folders kept elsewhere),
+    with each folder name made safe for Windows."""
+    anchor, parts = _split_abs(rel)
+    parts = [fs_safe(x) for x in parts]
+    return Path(anchor).joinpath(*parts) if anchor else Path(root).joinpath(*parts)
+
+
+def library_dirs(cfg: dict, root: Path | None = None) -> dict:
+    """{"movies": ..., "tv": ...}: the Movies and TV Shows folders, as paths inside the library
+    (or full paths, for folders kept somewhere else).
+
+    A folder chosen in Settings wins. Otherwise an existing folder is used whatever its case or spacing
+    ("movies", "TVShows", "TV_Shows"), so files land next to what's already there, and a new library
+    gets "Movies" and "TV Shows"."""
+    lib = str(cfg.get("plex_library_root") or "").strip()
+    if root is None and lib:
+        root = Path(lib)
+    try:  # an unchosen or unreachable library has no folders yet
+        existing = [d.name for d in root.iterdir() if d.is_dir()] if root is not None and root.is_dir() else []
+    except OSError:
+        existing = []
+    out = {}
+    for kind, key in (("movies", "movies_folder"), ("tv", "tv_folder")):
+        default, names = LIB_DIR_NAMES[kind]
+        chosen = clean_lib_dir(cfg.get(key, ""), lib)
+        if chosen and is_full_path(chosen):
+            out[kind] = chosen
+            continue
+        if chosen:
+            # match the case of a folder that's already there, so "movies" typed for "Movies" still lines up
+            first = chosen.split("\\")[0]
+            same = next((d for d in existing if d.lower() == first.lower()), None)
+            out[kind] = (same + chosen[len(first):]) if same else chosen
+            continue
+        found = None
+        for want in names:
+            found = next((d for d in sorted(existing) if _squash(d) == want), None)
+            if found:
+                break
+        out[kind] = found or default
+    return out
+
+
 def index_library(root: Path, cfg: dict) -> dict:
     lib = {"movies": [], "shows": []}
     if not root.exists():
         print(f"  ! Plex library not reachable at {root}. Episode numbering will start at 1.")
         return lib
-    for kind, top, fmts in (("movies", "Movies", cfg["movie_format_folders"]),
-                            ("shows", "TV Shows", cfg["tv_format_folders"])):
-        base = root / top
+    tops = library_dirs(cfg, root)
+    for kind, top, fmts in (("movies", tops["movies"], cfg["movie_format_folders"]),
+                            ("shows", tops["tv"], cfg["tv_format_folders"])):
+        base = lib_path(root, top)
         if not base.exists():
             continue
         fmt_names = {v.lower() for v in fmts.values()} | {"4k blu-ray", "4k blu ray", "blu-ray", "bluray", "dvd", "4k"}
@@ -482,7 +581,11 @@ def mark_library_copies(plan: dict, lib: dict, cfg: dict) -> None:
         # the movie stays as it is in Plex; send this disc's extras to that movie's folder
         best = max(copies[main["source"]], key=lambda h: h["rank"])
         try:
-            rel = str(Path(best["path"]).parent.relative_to(Path(cfg["plex_library_root"]))).replace("/", "\\")
+            parent = Path(best["path"]).parent
+            try:
+                rel = str(parent.relative_to(Path(cfg["plex_library_root"]))).replace("/", "\\")
+            except ValueError:  # a Movies folder kept outside the media library
+                rel = str(parent)
             plan["library_dir"] = rel
             for it in plan["items"]:
                 it["dest_dir"] = rel
@@ -727,7 +830,8 @@ def plan_movie(folder: Path, disc: dict, titles: list[dict], label_info: dict,
     fmt_folder = cfg["movie_format_folders"][disc_format(disc)]
     base_name = fs_safe(f"{title} ({year})" if year else title)
     tag = (" " + naming.id_tag(cfg, tid)) if naming.id_tag(cfg, tid) else ""
-    movie_dir = (f"Movies\\{fmt_folder}\\" if cfg.get("format_folders") else "Movies\\") + f"{base_name}{tag}"
+    top = library_dirs(cfg)["movies"]
+    movie_dir = (f"{top}\\{fmt_folder}\\" if cfg.get("format_folders") else f"{top}\\") + f"{base_name}{tag}"
     for m in lib["movies"]:
         if tid and m["id"] == tid:
             warnings.append("Already in library: " + "\\".join(x for x in (m["format_folder"], m["folder_name"]) if x))
@@ -808,7 +912,8 @@ def plan_tv(folder: Path, rip_root: Path, disc: dict, titles: list[dict], label_
         source = "TMDB search"
 
     fmt_folder = cfg["tv_format_folders"][disc_format(disc)]
-    show_dir = (f"TV Shows\\{fmt_folder}\\" if cfg.get("format_folders") else "TV Shows\\") + show_dir_name
+    top = library_dirs(cfg)["tv"]
+    show_dir = (f"{top}\\{fmt_folder}\\" if cfg.get("format_folders") else f"{top}\\") + show_dir_name
     season_dir = f"{show_dir}\\Season {season}"
     file_prefix = fs_safe(f"{title} ({year})" if year else title)
     show_key = tid or norm(title)
@@ -1057,6 +1162,40 @@ def skip_clutter(items: list[dict], title: str = "") -> None:
             it["note"] = "; ".join(x for x in (f"skipped: {why}. Set Keep to add it anyway", it.get("note")) if x)
 
 
+def skip_scenes(plan: dict, titles: list[dict]) -> None:
+    """Movie discs that also list every scene as its own title: set those unnamed scene titles to Skip.
+    Everything in them is in the feature being filed. Same rules as dupes.scene_pieces (used before ripping)."""
+    if plan.get("kind") != "movie":
+        return
+    import dupes
+    by_file = {t.get("output_file"): t for t in titles}
+    feats, trusted = [], set()
+    for it in plan["items"]:
+        t = by_file.get(it.get("source"))
+        if t is None or it.get("action") == "skip" or t.get("duration_seconds", 0) < dupes.FEATURE_MIN_SECONDS:
+            continue
+        feats.append(t)
+        if it.get("role") in ("main", "edition"):
+            trusted.add(t["title_id"])
+    if not feats:
+        return
+    open_extras = {it["source"]: it for it in plan["items"] if it.get("role") == "extra" and it.get("action") == "move"
+                   and PLACEHOLDER.match(str(it.get("name") or ""))}
+    # titles you'd keep under a real name are never scenes (and end a run of DVD scenes)
+    kept = {it["source"] for it in plan["items"] if it.get("action") != "skip" and it["source"] not in open_extras}
+    named = {t["title_id"] for t in titles if t.get("output_file") in kept}
+    pieces = dupes.scene_pieces(titles, feats, trusted, keep=named - {f["title_id"] for f in feats})
+    names = {t["title_id"]: next((it.get("name") for it in plan["items"] if it.get("source") == t["output_file"]), "")
+             for t in feats}
+    for tid, (fid, _why) in pieces.items():
+        it = open_extras.get(next((t["output_file"] for t in titles if t["title_id"] == tid), None))
+        if it is None:
+            continue
+        it["action"] = "skip"
+        it["note"] = "; ".join(x for x in (f"skipped: a scene from {names.get(fid) or f'title {fid}'}, which has all of it. "
+                                           "Set Keep to add it anyway", it.get("note")) if x)
+
+
 def plan_folder(folder: Path, rip_root: Path, tmdb: TMDB | None, lib: dict, cfg: dict,
                 override: dict | None = None) -> dict | None:
     """override (from the review page): {"kind": "movie"|"tv", "tmdb_id": "123", "season": 2}"""
@@ -1154,15 +1293,32 @@ def plan_folder(folder: Path, rip_root: Path, tmdb: TMDB | None, lib: dict, cfg:
             it["name"] = capital_case(it["name"])
     if cfg.get("skip_clutter", True):
         skip_clutter(plan["items"], plan.get("title") or "")
+        try:
+            skip_scenes(plan, titles)
+        except Exception as exc:
+            print(f"    (couldn't check for scene-by-scene titles: {exc})")
     try:
         attach_audio(plan, folder, disc)
     except Exception as exc:
         print(f"    (couldn't read the audio tracks: {exc})")
+    if disc.get("skipped_duplicates"):
+        n = disc["skipped_duplicates"]
+        plan["warnings"].append(f"{n} extra cop{'y' if n == 1 else 'ies'} of the main feature {'was' if n == 1 else 'were'} "
+                                "left out before ripping (Settings, Ripping: Rip the main feature only once). "
+                                "Use Rip again with that setting off if something is missing.")
+    if disc.get("skipped_scenes"):
+        n = disc["skipped_scenes"]
+        plan["warnings"].append(f"{n} scene-by-scene title{'' if n == 1 else 's'} (the movie cut into separate scenes) "
+                                f"{'was' if n == 1 else 'were'} left out before ripping, as the main feature has all of "
+                                "it (Settings, Ripping: Rip the main feature only once).")
     if disc.get("read_errors") or disc.get("titles_failed"):
         bits = [f"{disc['read_errors']} read error(s)" if disc.get("read_errors") else "",
                 f"{disc['titles_failed']} title(s) failed" if disc.get("titles_failed") else ""]
         plan["warnings"].append("The disc had " + " and ".join(b for b in bits if b) +
                                 " (scratched or dirty?). Play the files to check them before filing.")
+    if plan.get("community_answer"):
+        import community
+        community.note_shown(plan, disc)  # so filing it unchanged counts as half a vote
     return plan
 
 
@@ -1265,6 +1421,7 @@ def attach_audio(plan: dict, folder: Path, disc: dict) -> None:
             pass
     names = list(plan.get("commentaries") or [])
     for it in plan["items"]:
+        shared = it.pop("shared_audio", None) or []  # from the Shelfrip disc database (apply_discdb)
         if it.get("role") not in ("main", "edition", "episode"):
             continue
         streams = [s for s in (by_file.get(it["source"]) or {}).get("streams", []) if s.get("type") == "Audio"]
@@ -1288,15 +1445,27 @@ def attach_audio(plan: dict, folder: Path, disc: dict) -> None:
                         and 0 < a["channels"] <= 2):
                     a.update(commentary=True, guessed=True)
                     have += 1
+        same_layout = len(shared) == len(audio) and all(
+            str(x.get("lang") or "") == a["lang"] and int(x.get("ch") or 0) == a["channels"] for x, a in zip(shared, audio))
         n = 0
         for a in audio:
             if a["commentary"]:
                 a["name"] = names[n] if n < len(names) else ("Commentary" if have == 1 else f"Commentary {n + 1}")
                 n += 1
+        from_db = False
+        if same_layout:  # the same tracks as people who filed this disc: go with what they said
+            for x, a in zip(shared, audio):
+                if x.get("commentary") and x.get("name"):
+                    a.update(commentary=True, guessed=False, name=str(x["name"]))
+                    from_db = True
+                elif not x.get("commentary") and a["guessed"]:
+                    a.update(commentary=False, guessed=False, name="")
+            n = sum(a["commentary"] for a in audio)
         it["audio"] = audio
         if n:
             g = any(a["guessed"] for a in audio)
-            note = f"{n} commentary track(s) will be named" + (" (guessed from DVDCompare: check under Audio)" if g else "")
+            note = f"{n} commentary track(s) will be named" + (" (guessed from DVDCompare: check under Audio)" if g else
+                                                               " (names from the Shelfrip disc database)" if from_db else "")
             it["note"] = "; ".join(x for x in (it.get("note"), note) if x)
 
 
@@ -1328,6 +1497,11 @@ def apply_discdb(plan: dict, known: dict, tmdb: TMDB | None) -> None:
         r = pairs.get(it["source"])
         if not r:
             continue
+        if known.get("community"):
+            if r.get("confidence") is not None:
+                it["shared_confidence"] = int(r["confidence"])  # shown on the review page
+            if isinstance(r.get("tracks"), dict):
+                it["shared_audio"] = r["tracks"].get("audio") or []  # commentary names, used by attach_audio
         t = typ(it)
         desc = (r.get("description") or "").strip()
         if plan["kind"] == "tv" and t == "episode" and str(r.get("season")).isdigit() and str(r.get("episode")).isdigit():
