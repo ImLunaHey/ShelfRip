@@ -68,6 +68,13 @@ def edition_of(stem: str) -> str:
     return (m.group("a") or m.group("b") or "").strip()
 
 
+def extras_suffixed(cfg: dict) -> bool:
+    """Special features named 'Making Of-featurette.mkv' next to the film (or in the season folder)
+    instead of filed in a Featurettes folder. Plex, Jellyfin and Emby read both; Kodi only reads
+    its Extras folder."""
+    return server(cfg) != "kodi" and str(cfg.get("extras_style") or "folders").lower() == "suffix"
+
+
 def extras_folder(cfg: dict, category: str) -> str:
     return "Extras" if server(cfg) == "kodi" else (category or "Other")
 
@@ -79,4 +86,4 @@ def episode_extras_inline(cfg: dict) -> bool:
 
 def page_info(cfg: dict) -> dict:
     """What the review page needs to build names the same way."""
-    return {"server": server(cfg), "server_name": server_name(cfg)}
+    return {"server": server(cfg), "server_name": server_name(cfg), "extras_suffix": extras_suffixed(cfg)}

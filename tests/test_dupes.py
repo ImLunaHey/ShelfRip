@@ -15,6 +15,7 @@ import discs  # noqa: E402
 
 TMP = discs.setup_env({"tmdb_api_key": "", "use_community": False, "use_thediscdb": False})
 import dupes  # noqa: E402
+import identify  # noqa: E402
 import rip_all  # noqa: E402
 
 ENG51 = {"type": "Audio", "lang3": "eng", "codec": "DTS-HD MA", "channels": 6}
@@ -262,6 +263,103 @@ class RipDisc(unittest.TestCase):
         info, rips = self.run_rip(False)
         self.assertEqual([c[3] for c in rips], ["all"])
         self.assertNotIn("skipped_duplicates", info)
+
+    def test_drive_lost_is_not_retried(self):
+        # a USB drive dropped off: MakeMKV can't open it, nothing is saved, and retrying can't help
+        disc = {"titles": [title(0, 3000, "1"), title(1, 3000, "2")]}
+        calls = []
+        lost = ('MSG:2024,0,1,"Unknown device - \'J:\'","Unknown device - \'%1\'","J:"\n'
+                'MSG:5010,0,0,"Failed to open disc","Failed to open disc"')
+
+        def fake(cfg, args, logfile=None, on_progress=None, device="", on_phase=None):
+            calls.append(args)
+            return (0, "info") if args[1] == "info" else (1, lost)
+
+        cfg = {**rip_all.DEFAULT_CONFIG, "output_root": str(TMP / "rip"), "skip_duplicate_features": False,
+               "eject_when_done": False, "retry_failed_titles": True, "use_community": False, "use_thediscdb": False}
+        rip_all.run_makemkv, old_run = fake, rip_all.run_makemkv
+        rip_all.parse_disc_info, old_parse = (lambda _: json.loads(json.dumps(disc))), rip_all.parse_disc_info
+        try:
+            info = rip_all.rip_disc(cfg, {"device": "J:", "disc_label": "LOST_DRIVE", "drive_name": "x", "index": 2})
+        finally:
+            rip_all.run_makemkv, rip_all.parse_disc_info = old_run, old_parse
+        self.assertEqual(len([c for c in calls if c[1] == "mkv"]), 1)  # no retries
+        self.assertTrue(info.get("drive_lost"))
+        self.assertEqual(info["status"], "check")
+        self.assertIn("disconnected", info["makemkv_error"])
+
+    def test_authored_playlist_names(self):
+        d = {"disc_label": "SPECIAL_FEATURES", "name": "Special Features"}
+        name = lambda f: identify.authored_name({"output_file": f}, d)
+        self.assertEqual(name("Special Features-SEG_01_BTS_08_BattleReady_t12.mkv"), ("Battle Ready", "Behind the Scenes"))
+        self.assertEqual(name("Special Features-SF_02_Trls_02_IMAX_NCR_t18.mkv"), ("IMAX Trailer", "Trailers"))
+        self.assertEqual(name("Special Features-SF_03_Extras_01_MusicVideo_t22.mkv"), ("Music Video", "Other"))
+        self.assertEqual(name("Special Features-SF_01_BTS_00_PlayAll_t25.mkv")[0], "Play All")
+        self.assertEqual(name("Special Features-Uni_ScreenSaver_t02.mkv")[0], "Screen Saver")
+        self.assertIsNone(name("SPECIAL_FEATURES_t03.mkv"))  # MakeMKV's usual disc-name file: nothing to read
+        self.assertIsNone(identify.authored_name({"output_file": "THE_MATRIX_t01.mkv"}, {"disc_label": "MATRIX"}))
+        # used for unnamed extras, and the menu / screensaver are then skipped as clutter
+        t = {"output_file": "Special Features-Uni_ScreenSaver_t02.mkv", "duration_seconds": 300, "duration": "0:05:00", "title_id": 2}
+        it = identify.extra_item(t, 1, "x", {**identify.DEFAULTS, "skip_extras_under_seconds": 30}, d)
+        self.assertEqual(it["name"], "Screen Saver")
+        identify.skip_clutter([it])
+        self.assertEqual(it["action"], "skip")
+
+    def test_repeated_playlist_names_are_numbered(self):
+        mk = lambda n: {"role": "extra", "action": "move", "dest_dir": "x", "category": "Featurettes", "name": n}
+        items = [mk("Ithaca"), mk("Ithaca"), mk("Battle Ready"), {**mk("Ithaca"), "action": "skip"}]
+        identify.number_repeats(items)
+        self.assertEqual([i["name"] for i in items], ["Ithaca (Part 1)", "Ithaca (Part 2)", "Battle Ready", "Ithaca"])
+
+    def test_rip_that_saved_nothing_is_not_already_ripped(self):
+        import json, tempfile
+        with tempfile.TemporaryDirectory() as root:
+            d = Path(root) / "GOT_S2__20261124-145526"
+            d.mkdir()
+            (d / "disc_info.json").write_text(json.dumps({"titles_saved": 0}))
+            self.assertEqual(rip_all.already_ripped({"output_root": root}, "GOT_S2"), "")
+            (d / "t00.mkv").write_bytes(b"x")
+            self.assertEqual(rip_all.already_ripped({"output_root": root}, "GOT_S2"), d.name)
+
+    def test_eject_ignores_anything_but_a_drive_letter(self):
+        calls = []
+        real = rip_all.subprocess.run
+        rip_all.subprocess.run = lambda *a, **k: calls.append(a[0])
+        try:
+            rip_all.eject("E:'); Remove-Item C:\\x; ('")
+            rip_all.eject("e:")
+        finally:
+            rip_all.subprocess.run = real
+        self.assertEqual(len(calls), 1)
+        self.assertIn("ParseName('E:')", calls[0][-1])
+
+    def test_skipped_titles_still_say_what_they_are(self):
+        mk = lambda n, d: {"role": "extra", "action": "move", "dest_dir": "x", "category": "Other",
+                           "name": f"Extra {n:02d} ({identify.mmss(d)})", "duration_seconds": d}
+        items = [mk(1, 17), mk(2, 200), mk(3, 150), mk(4, 160), mk(5, 510)]  # 5 plays 2, 3 and 4
+        identify.skip_clutter(items, "Some Film")
+        self.assertEqual([i["action"] for i in items], ["skip", "move", "move", "move", "skip"])
+        self.assertTrue(items[0]["name"].startswith("Probably a Logo, Warning or Menu ("))
+        self.assertTrue(items[4]["name"].startswith("Probably Play All ("))
+        self.assertTrue(identify.PLACEHOLDER.match(items[0]["name"]))  # never shared as a real name
+        import community
+        self.assertEqual(community._title_row(items[0], {})["name"], "")
+
+    def test_shared_names_for_skipped_titles_come_through(self):
+        import catalog
+        row = catalog._as_discdb_row({"role": "extra", "kept": 0, "category": "Other", "name": "Menu Background",
+                                      "season": None, "episode": None, "size_bytes": 1, "duration_s": 92})
+        self.assertEqual(row["description"], "Menu Background")
+        plan = {"kind": "movie", "title": "Film", "year": "2020", "items": [
+            {"source": "a.mkv", "role": "extra", "action": "move", "name": "Extra 01 (1m32s)", "category": "Other",
+             "duration_seconds": 92, "dest_dir": "x", "note": ""}]}
+        identify.apply_discdb(plan, {"pairs": {"a.mkv": row}, "community": True, "src_name": "the Shelfrip disc database"}, None)
+        it = plan["items"][0]
+        self.assertEqual((it["action"], it["name"]), ("skip", "Menu Background"))
+
+    def test_drive_lost_detection(self):
+        self.assertTrue(rip_all.drive_lost('MSG:5010,0,0,"Failed to open disc","Failed to open disc"'))
+        self.assertFalse(rip_all.drive_lost('MSG:2003,0,1,"Error \'Scsi error - MEDIUM ERROR\' occurred while reading"'))
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 r"""
 app.py - Shelfrip: one app for ripping, naming, reviewing and filing.
 
-Double-click Shelfrip.exe (installed), or "Disc Ripper.bat" in a copy run from the scripts. It opens one
+Double-click Shelfrip.exe (installed), or "Run Shelfrip.bat" in a copy run from the scripts. It opens one
 page in your browser
 (http://localhost:8765, only reachable from this PC) with three tabs:
 
@@ -54,6 +54,7 @@ SETTINGS = [  # (key, label, kind)
     ("tv_folder", "TV shows folder (inside the media library or anywhere; empty = find it, else TV Shows)", "text"),
     ("music_library_root", "Music folder (empty = the music folder in the media library, else Music)", "text"),
     ("media_server", "Media server (decides how files are named)", "select"),
+    ("extras_style", "How special features are filed", "select"),
     ("format_folders", "Separate folders per format (Movies\\Blu-Ray\\..., Movies\\DVD\\...)", "bool"),
     ("use_dvdcompare", "Also look up extras names on DVDCompare (reads its web pages)", "bool"),
     ("use_community", "Look discs up in the shared Shelfrip disc database", "bool"),
@@ -92,7 +93,9 @@ SETTINGS = [  # (key, label, kind)
     ("app_window", "Open Shelfrip in its own window (not a browser tab)", "bool"),
     ("tray_icon", "Keep Shelfrip running by the clock when its window is closed (Quit from the icon's menu)", "bool"),
 ]
-CHOICES = {"media_server": [{"value": k, "label": v} for k, v in naming.SERVERS.items()]}
+CHOICES = {"media_server": [{"value": k, "label": v} for k, v in naming.SERVERS.items()],
+           "extras_style": [{"value": "folders", "label": "In folders: Featurettes\\Making Of.mkv"},
+                            {"value": "suffix", "label": "Tagged in the name: Making Of-featurette.mkv"}]}
 
 
 # --------------------------------------------------------------------------- alerts
@@ -252,6 +255,8 @@ class Ripper:
         threading.Thread(target=self.loop, daemon=True).start()
 
     def load(self) -> None:
+        """Re-read settings each loop, so changes in Settings apply without a restart. A setup problem
+        (no rip folder, no MakeMKV) is kept in self.error for the Home page instead of raising."""
         try:
             self.cfg = rip_all.load_config(exit_on_error=False)
             self.error = ""
@@ -263,6 +268,8 @@ class Ripper:
             self.cfg, self.error = None, f"Couldn't read the settings: {exc}"
 
     def loop(self) -> None:
+        """The background loop: watch the drives, start a rip for each new disc (when auto-rip is on
+        or you clicked Rip), plan finished rips for review, and do the hourly upkeep."""
         while True:
             self.beat = time.time()
             self.load()
@@ -386,7 +393,9 @@ class Ripper:
         label, dev = disc.get("disc_label"), disc.get("drive")
         try:
             n = review.plan_new_folders()
-            rip_all.log(f"{label}: named, ready to review" if n else f"{label}: ripped")
+            saved = disc.get("titles_saved", 0) if disc.get("status") != "ok" else None
+            rip_all.log(f"{label}: named, ready to review" if n else
+                        f"{label}: nothing was saved" if saved == 0 else f"{label}: ripped")
         except Exception as exc:
             rip_all.log(f"{label}: couldn't name it ({exc})")
         ok = disc.get("status") == "ok"
@@ -398,9 +407,12 @@ class Ripper:
                            f"damaged files: {', '.join(disc.get('damaged_files') or []) or 'none'}")
         notify(f"{dev} finished" if ok else f"{dev} needs a look",
                f"{label} is ripped and waiting in Review. Check the names, then file it to eject the disc."
-               if ok else f"{label} finished with problems ({disc.get('titles_failed', 0)} titles failed).")
+               if ok else f"{label}: {disc['makemkv_error']}" if disc.get("drive_lost")
+               else f"{label} finished with problems ({disc.get('titles_failed', 0)} titles failed).")
 
     def state(self) -> dict:
+        """Everything the Home page polls for: each drive with its rip progress and filing status,
+        setup problems, queue stats, errors to offer reporting, and the latest log lines."""
         drives = []
         for d in self.drives:
             st = dict(rip_all.STATUS.get(d["device"], {}))
@@ -444,8 +456,9 @@ class Ripper:
             if a and (d["ripping"] or d["elsewhere"]):
                 want = d.get("bytes_total") or 0
                 if want and d["ripping"]:  # only what this rip saves (not titles left out, or already done)
-                    a = {**a, "total": want, "pct": min(99, int(100 * a["done"] / want)),
-                         "eta_s": int((want - a["done"]) / (a["mb_s"] * 1e6)) if a["mb_s"] and want > a["done"] else None}
+                    got = max(0, a["done"] - (d.get("bytes_base") or 0))  # files finished before a resume/retry don't count
+                    a = {**a, "total": want, "pct": min(99, int(100 * got / want)),
+                         "eta_s": int((want - got) / (a["mb_s"] * 1e6)) if a["mb_s"] and want > got else None}
                 d["progress"] = a
         try:
             stats = job_stats(waiting, len(self.busy))
@@ -515,6 +528,7 @@ def tray_status() -> str:
 
 
 def quit_app(ask: bool = True) -> None:
+    """Stop Shelfrip. With ask=True, a rip or filing still running asks first (Windows message box)."""
     running = sorted(RIPPER.busy) if RIPPER else []
     running += [k for k, j in review.JOBS.items() if j.get("state") == "running"]
     if running and ask and os.name == "nt":
@@ -563,6 +577,7 @@ def restart_app() -> None:
 
 
 def start_tray(url: str, use_window: bool) -> None:
+    """The notification-area icon and its menu (open, auto-rip on/off, show the log, quit)."""
     global TRAY
     shown = {"console": False}
 
@@ -714,6 +729,20 @@ def rips_in_progress(root) -> list[dict]:
     return out
 
 
+def rip_folder_in_library(rip: str, cfg: dict) -> str:
+    """The library folder the rip folder sits in (Plex would scan the raw rips), else ''."""
+    def norm(x: str) -> str:
+        return os.path.normcase(os.path.abspath(str(x).rstrip("\\/"))) if str(x or "").strip() else ""
+    r = norm(rip)
+    lib = str(cfg.get("plex_library_root") or "").strip()
+    places = [lib] + [str(cfg.get(k) or "") for k in ("movies_folder", "tv_folder") if identify.is_full_path(str(cfg.get(k) or ""))]
+    for place in places:
+        q = norm(place)
+        if q and r and (r == q or r.startswith(q.rstrip("\\/") + os.sep)):
+            return place
+    return ""
+
+
 def setup_check() -> list[dict]:
     """What the app needs, whether it's there, and where to get it if not."""
     import split
@@ -723,8 +752,15 @@ def setup_check() -> list[dict]:
                             ("plex_library_root", "Media library folder", "the folder holding your Movies and TV Shows folders")):
         p = str(cfg.get(key) or "").strip()
         ok = bool(p) and (os.path.isdir(p) or (key == "output_root" and os.path.isdir(os.path.dirname(p.rstrip("\\/")) or "")))
-        out.append({"name": name, "ok": ok, "required": True, "link": "",
-                    "detail": p if ok else (f"{p} doesn't exist (or isn't connected)" if p else f"not chosen yet: {what}")})
+        row = {"name": name, "ok": ok, "required": True, "link": "",
+               "detail": p if ok else (f"{p} doesn't exist (or isn't connected)" if p else f"not chosen yet: {what}")}
+        if key == "output_root" and p:
+            inside = rip_folder_in_library(p, cfg)
+            if inside:
+                row["warn"] = (f"This is inside your media library ({inside}), so Plex will pick up the raw rips "
+                               f"as extra movies. Choose a folder outside it, for example "
+                               f"{os.path.splitdrive(p)[0] or 'D:'}\\Ripped.")
+        out.append(row)
     mk = rip_all.find_makemkv(cfg)
     row = {"name": "MakeMKV", "ok": bool(mk), "detail": mk or "not installed: needed to rip discs",
            "link": "" if mk else rip_all.MAKEMKV_URL, "required": True}
@@ -975,14 +1011,38 @@ def check_update() -> None:
 
 # --------------------------------------------------------------------------- settings
 
-def _read_config() -> dict:
+def _read_config(strict: bool = False) -> dict:
+    """The saved settings as a dict ({} when there are none yet).
+
+    With strict=True (used before saving) a settings file that exists but can't be read raises
+    instead of returning {}, so a locked or half-written file never gets overwritten with only
+    the one value being saved (which would wipe the TMDB key, folders and everything else).
+    A file that is there but isn't valid JSON is copied to config.broken.json first.
+    """
+    path = identify.CONFIG_PATH
     try:
-        return json.loads(identify.CONFIG_PATH.read_text(encoding="utf-8-sig"))
-    except Exception:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        return data if isinstance(data, dict) else {}
+    except FileNotFoundError:
+        return {}
+    except ValueError:
+        if strict:
+            try:
+                import shutil
+                shutil.copy2(path, path.with_name("config.broken.json"))
+            except OSError as e:
+                raise ValueError(f"Your settings file couldn't be read ({e}). Close anything that has it open and try again.")
+            return {}  # kept a copy; start from defaults rather than refusing forever
+        return {}
+    except OSError as e:
+        if strict:
+            raise ValueError(f"Your settings file couldn't be read ({e}). Close anything that has it open and try again.")
         return {}
 
 
 def settings_view() -> dict:
+    """Every setting for the Settings page and setup wizard: saved value or default, label,
+    kind and choices. Secrets are never sent back, only whether one is saved."""
     raw = _read_config()
     merged = {"check_plex_before_rip": True, "notifications": True, "check_updates": True, **JOB_DEFAULTS}
     merged.update(rip_all.DEFAULT_CONFIG)
@@ -1016,7 +1076,21 @@ def settings_view() -> dict:
 
 
 def save_settings(values: dict) -> None:
-    raw = _read_config()
+    """Merge the values from the Settings page or setup wizard into config.json.
+
+    Only known keys are kept, each checked against its kind (number, yes/no, one of the listed
+    choices, folder). An empty secret keeps the saved key. Raises ValueError with a message
+    for the user when a value can't be used or the file can't be read.
+    """
+    with paths.CONFIG_LOCK:  # the wizard autosaves while you type: one read-modify-write at a time
+        _save_settings(values)
+    review.reload_config()
+    if RIPPER:
+        RIPPER.wake.set()
+
+
+def _save_settings(values: dict) -> None:
+    raw = _read_config(strict=True)
     if values.get("setup_done"):
         raw["setup_done"] = True
     if "setup_step" in values:  # which first-time setup screen you were on, so quitting halfway resumes there
@@ -1055,13 +1129,10 @@ def save_settings(values: dict) -> None:
                 raise ValueError("That isn't a folder Shelfrip can use. Pick one with Browse.")
             v = rel
         raw[key] = v
-    identify.CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = identify.CONFIG_PATH.with_suffix(".tmp")
-    tmp.write_text(json.dumps(raw, indent=2), encoding="utf-8")
-    tmp.replace(identify.CONFIG_PATH)
-    review.reload_config()
-    if RIPPER:
-        RIPPER.wake.set()
+    try:
+        paths.write_config(raw)
+    except OSError as e:
+        raise ValueError(f"Couldn't save settings ({e}). Another program may have config.json open: try again in a moment.")
 
 
 # --------------------------------------------------------------------------- web

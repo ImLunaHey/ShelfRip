@@ -188,7 +188,7 @@ pre.log{background:var(--card);border:1px solid var(--line);border-radius:14px;p
 .wz-field input[data-pickme]:placeholder-shown,input.pickme:placeholder-shown{cursor:pointer}
 .wz-field button{padding:10px 14px}
 .wz-status{max-width:520px;margin:8px auto 0;font-size:13px;color:var(--err);word-break:break-word}
-.wz-status.ok{color:var(--ok)}.wz-status.soft{color:var(--muted)}
+.wz-status.ok{color:var(--ok)}.wz-status.warnline{color:var(--warn)}.wz-status.soft{color:var(--muted)}
 .wz-chk{display:flex;gap:8px;align-items:center;justify-content:center;margin:12px auto 0;font-size:13px;color:var(--muted)}
 .wz-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;max-width:540px;margin:16px auto 4px}
 .wz-tile{display:grid;justify-items:center;gap:6px;padding:16px 12px;border-radius:16px;background:var(--card2);border:2px solid var(--line2);transition:transform .12s,border-color .12s}
@@ -214,6 +214,7 @@ button.linkish{background:none;border:none;color:var(--accent);padding:4px 6px;t
 @media (prefers-reduced-motion: reduce){.wz-step,.wz-art i{animation:none}.wz-tile{transition:none}}
 @media (max-width:560px){.wz{padding:18px 16px}.wz-field{flex-direction:column}.wz-top{flex-direction:column;align-items:flex-start}}
 .hide{display:none!important}
+.warnline{color:var(--warn)}
 .aud{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center;margin-top:6px;font-size:12px;color:var(--muted)}
 .aud .trk{border:1px solid var(--line2);border-radius:12px;padding:1px 8px;cursor:pointer;background:var(--card);color:var(--muted);font-size:12px}
 .aud .trk.com{border-color:var(--accent);color:var(--ink)}
@@ -347,12 +348,13 @@ dialog.disc .fb .chk{display:flex;gap:8px;align-items:center;color:var(--ink)}
 
 <script>
 const CATS = ["Featurettes","Behind the Scenes","Deleted Scenes","Interviews","Scenes","Shorts","Trailers","Other"];
-let discs = [], LIB = "", LIB_RIPPED = "", SERVER = "plex", SERVER_NAME = "Plex";
+let discs = [], LIB = "", LIB_RIPPED = "", SERVER = "plex", SERVER_NAME = "Plex", EXTRAS_SUFFIX = false;
 // name parts the same way naming.py does for the chosen media server
 const idTag = id => !id ? "" : SERVER === "plex" ? ` {tmdb-${id}}` : SERVER === "jellyfin" ? ` [tmdbid-${id}]` : SERVER === "emby" ? ` [tmdbid=${id}]` : "";
 const editionName = (base, ed) => SERVER === "plex" ? `${base} {edition-${ed}}` : `${base} - ${ed}`;
 const $ = (s, el=document) => el.querySelector(s);
-const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+// HTML-escape text before putting it in markup (single quotes too, for attributes written with ')
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const safe = s => String(s||"").replace(/\s*:\s*/g," - ").replace(/[<>"/\\|?*]/g,"").replace(/\s+/g," ").trim().replace(/[ .]+$/,"");
 
 async function api(path, body){
@@ -413,7 +415,7 @@ function xpOf(p){
   let xp = 50;
   if (p.kind === "music") return xp + 2 * kept.length;
   for (const it of kept){
-    if (it.role === "extra") xp += 5 + (it.name && !/^(Extra \d+ \(|Unused clip)/i.test(it.name) ? 10 : 0);
+    if (it.role === "extra") xp += 5 + (it.name && !/^(Extra \d+ \(|Unused clip|Probably )/i.test(it.name) ? 10 : 0);
     else if (["main","edition","episode"].includes(it.role)) xp += 10;
   }
   if (/4k/i.test(p.format || "")) xp += 30;
@@ -506,6 +508,8 @@ function destOf(p, it){
     return inLib(it.dest_dir).join("\\") + "\\" + safe(`${it.attach_to}-${SUFFIX[cat] || "other"}${same.length > 1 ? k + 1 : ""}`) + ".mkv";
   }
   const parts = inLib(it.dest_dir);
+  // mirrors review.dest_for: "Making Of-featurette.mkv" beside the film, or in a Featurettes folder
+  if (it.role === "extra" && EXTRAS_SUFFIX) return parts.join("\\") + "\\" + safe(`${it.name}-${SUFFIX[cat] || "other"}`) + ".mkv";
   if (it.role === "extra") parts.push(folder);
   return parts.join("\\") + "\\" + safe(it.name) + ".mkv";
 }
@@ -780,7 +784,8 @@ const trackFile = (p, it) => `${(+p.discs||1) > 1 ? (+p.disc||1) + pad(it.track)
 const PH = /extra\(s\) still have placeholder names/;
 // an extra tied to one episode is named after that episode, so its own name isn't used
 const byEpisode = (p, it) => p.kind === "tv" && it.role === "extra" && it.attach === "episode";
-const isPlaceholder = it => it.role === "extra" && it.action === "move" && it.attach !== "episode" && /^Extra \d+ \(/.test(it.name || "");
+// a kept extra still named "Extra 03 (…)" or with Shelfrip's "Probably …" guess wants a real name
+const isPlaceholder = it => it.role === "extra" && it.action === "move" && it.attach !== "episode" && /^(Extra \d+ \(|Probably )/.test(it.name || "");
 function phWarning(p){ const n = p.items.filter(isPlaceholder).length; return n ? `${n} extra(s) still have placeholder names.` : ""; }
 function liveWarnings(p){
   const ws = (p.warnings||[]).filter(w => !PH.test(w));
@@ -1057,7 +1062,7 @@ function poll(){
 
 async function load(keepEdits){
   const j = await api("/api/discs");
-  LIB = j.library; LIB_RIPPED = j.ripped; SERVER = j.server || "plex"; SERVER_NAME = j.server_name || "Plex";
+  LIB = j.library; LIB_RIPPED = j.ripped; SERVER = j.server || "plex"; SERVER_NAME = j.server_name || "Plex"; EXTRAS_SUFFIX = !!j.extras_suffix;
   $("#sub").textContent = `${j.discs.length} disc${j.discs.length === 1 ? "" : "s"} waiting` + (j.tmdb ? "" : " · no TMDB key"); $("#sub").title = `Library: ${LIB}`;
   if (keepEdits){ // only refresh job status, keep unsaved edits
     // Redraw just the cards whose filing status changed, so typing or a dropdown open on
@@ -1294,6 +1299,7 @@ function renderDrives(j){
   const logOpen = $("details.log", el) && $("details.log", el).open;
   el.innerHTML = `
     ${missing.length ? setupBox(missing, "Needs setting up:") : j.error ? `<div class="warn" style="margin-bottom:14px">${esc(j.error)}</div>` : ""}
+    ${(j.setup||[]).filter(x => x.warn).map(x => `<div class="warn" style="margin-bottom:14px"><b>${esc(x.name)}:</b> ${esc(x.warn)} <a href="#settings" data-gosettings>Change it in Settings</a></div>`).join("")}
     ${j.makemkv_open ? `<div class="warn" style="margin-bottom:14px"><b>MakeMKV's window is open.</b> Close it while Shelfrip rips:
       MakeMKV can hold on to the drives it shows, and two programs reading the same disc make rips much slower, or fail as if the disc were scratched.</div>` : ""}
     ${j.leftover_makemkv ? `<div class="warn" style="margin-bottom:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span style="flex:1 1 360px"><b>MakeMKV is still running from before Shelfrip started</b> (${j.leftover_makemkv} cop${j.leftover_makemkv === 1 ? "y" : "ies"}).
@@ -1339,6 +1345,10 @@ async function ripAct(action, device){
 }
 let drivesTimer = null;
 let BOOT = "";
+document.addEventListener("click", e => {  // "Change it in Settings" links in warnings
+  const a = e.target.closest && e.target.closest("[data-gosettings]");
+  if (a){ e.preventDefault(); showTab("settings"); }
+});
 async function pollDrives(){
   clearTimeout(drivesTimer);
   try {
@@ -1621,6 +1631,7 @@ function wzStatus(name){
   if (!c.name) return "";
   // "not chosen yet" / "not set" just repeat the question: say nothing until there's an answer to judge
   if (!c.ok && /^not (chosen|set)/i.test(c.detail || "")) return "";
+  if (c.ok && c.warn) return `<div class="wz-status warnline" id="wzst">⚠ ${esc(c.warn)}</div>`;
   return `<div class="wz-status ${c.ok ? "ok" : c.required ? "" : "soft"}" id="wzst">${c.ok ? "✓ " : ""}${esc(c.ok ? (c.detail || "Done") : (c.detail || "Not done yet"))}</div>`;
 }
 function wzFolder(key, name, ph){
@@ -1764,7 +1775,9 @@ function wireWizard(el){
   el.querySelectorAll("input[data-w]").forEach(i => {
     if (i.type === "checkbox") { i.onchange = () => save({[i.dataset.w]: i.checked}, true); return; }
     if (i.type === "text") i.onchange = () => save({[i.dataset.w]: i.value.trim()});
-    // saved while typing too, so closing Shelfrip mid-answer keeps it
+    // saved while typing too, so closing Shelfrip mid-answer keeps it. Not folder boxes: a
+    // half-typed path like "E:\\Ri" would be saved and could get created as a folder.
+    if (i.dataset.pickme) return;
     let t = 0;
     i.oninput = () => { clearTimeout(t); t = setTimeout(() => { const v = i.value.trim();
       if (i.type === "password" ? v : true) api("/api/settings", {values:{[i.dataset.w]: v}}).then(r => { SETS = r; }).catch(() => {}); }, i.type === "password" ? 1200 : 600); };
@@ -1808,6 +1821,7 @@ const SET_GROUPS = [
     ["tv_folder", "TV shows folder", "Can be anywhere, even another drive. Leave empty and Shelfrip uses the one already in your media library (tv, TVShows, TV_Shows…), or makes TV Shows there.", {pick:"folder", under:"plex_library_root"}],
     ["output_root", "Rip folder", "Discs are ripped here first, then moved into your library once you've checked the names. Needs room: about 50 GB per Blu-ray, 100 GB per 4K disc.", {pick:"folder"}],
     ["media_server", "Media server", "Files are named the way it expects."],
+    ["extras_style", "How special features are filed", "Plex, Jellyfin and Emby read both: in folders (Movie\\Featurettes\\Making Of.mkv) or tagged in the file name next to the film (Movie\\Making Of-featurette.mkv). Kodi always uses an Extras folder."],
     ["format_folders", "Keep each format in its own folder", "Movies\\Blu-Ray\\…, Movies\\DVD\\… instead of one Movies folder."],
     ["music_library_root", "Music folder", "Where ripped CDs go. It can be anywhere. Leave empty to use the music folder already in your media library (any case), or make Music there.", {pick:"folder"}],
   ]},
@@ -1872,7 +1886,7 @@ function setField(row, meta){
   const st = SET_STATUS[key] ? statusOf(SET_STATUS[key]) : null;
   const flag = st && st.name ? `<span class="chip ${st.ok ? "good" : st.required ? "warnc" : ""}">${st.ok ? "✓ found" : st.required ? "needed" : "not found"}</span>` : "";
   const link = o.link ? `<a href="${esc(o.link)}" target="_blank" rel="noopener">${esc(o.linkText || "More")}</a>` : "";
-  const helpHtml = (help || link || (st && !st.ok && st.detail)) ? `<div class="help">${esc(help)}${help && link ? " " : ""}${link}${st && !st.ok && st.detail && row.kind !== "secret" ? `<div class="${st.required ? "err" : ""}">${esc(st.detail)}${st.link && !o.link ? ` · <a href="${esc(st.link)}" target="_blank" rel="noopener">Download</a>` : ""}</div>` : ""}</div>` : "";
+  const helpHtml = (help || link || (st && !st.ok && st.detail) || (st && st.warn)) ? `<div class="help">${esc(help)}${help && link ? " " : ""}${link}${st && !st.ok && st.detail && row.kind !== "secret" ? `<div class="${st.required ? "err" : ""}">${esc(st.detail)}${st.link && !o.link ? ` · <a href="${esc(st.link)}" target="_blank" rel="noopener">Download</a>` : ""}</div>` : ""}${st && st.ok && st.warn ? `<div class="warnline">⚠ ${esc(st.warn)}</div>` : ""}</div>` : "";
   if (row.kind === "bool") return `<div class="srow sw"><div class="lbl"><label for="${id}">${esc(label)}</label>${helpHtml}</div>
       <label class="switch bare"><input type="checkbox" id="${id}" data-k="${key}" ${v ? "checked" : ""}><span class="tog"></span><span class="sr">${esc(label)}</span></label><span class="saved" data-saved="${key}"></span></div>`;
   let ctl;
