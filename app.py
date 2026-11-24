@@ -35,6 +35,7 @@ import desktop
 import health
 import tidy
 import progress  # noqa: F401  (bundled into the exe)
+import trouble
 import identify
 import naming
 import paths
@@ -44,7 +45,7 @@ import rip_all
 JOB_DEFAULTS = {"auto_file": True, "auto_file_minutes": 15, "audio_language": "eng", "subtitle_language": "",
                 "forced_subtitles": True, "retry_failed_titles": True, "job_total_discs": 0,
                 "min_free_gb_rips": 60, "app_window": True, "tray_icon": True, "sounds": True,
-                "skip_clutter": True, "skip_duplicate_features": False}
+                "skip_clutter": True, "skip_duplicate_features": False, "offer_error_reports": True}
 SECRETS = ("tmdb_api_key", "omdb_api_key", "plex_token")
 SETTINGS = [  # (key, label, kind)
     ("output_root", "Rip folder (where discs are ripped to before review)", "text"),
@@ -79,6 +80,7 @@ SETTINGS = [  # (key, label, kind)
     ("subtitle_language", "Turn on full subtitles in this language (empty = off)", "text"),
     ("forced_subtitles", "Show forced subtitles (foreign-dialogue lines) automatically", "bool"),
     ("retry_failed_titles", "Retry titles that hit read errors once", "bool"),
+    ("offer_error_reports", "When something fails, offer to send an error report", "bool"),
     ("skip_duplicate_features", "Rip only one copy of a movie disc's feature (no duplicate copies, no scene-by-scene titles)", "bool"),
     ("job_total_discs", "Discs you plan to rip, for a progress bar (0 = no goal)", "number"),
     ("min_free_gb_rips", "Don't start a rip with less than this free in the rip folder (GB)", "number"),
@@ -242,9 +244,11 @@ class Ripper:
         self.watch = health.Watchdog(notify=notify)
         self._watched = 0.0
         self._upkeep = 0.0
+        self._told_folder = ""
         self.beat = time.time()
         rip_all.ON_DONE.append(self.after_rip)
         rip_all.ON_LOW_SPACE.append(lambda why: notify("Rip folder is full", why))
+        rip_all.ON_ERROR.append(lambda dev, label, err: trouble.record("Rip failed", label, err, f"drive {dev}", with_trace=True))
         threading.Thread(target=self.loop, daemon=True).start()
 
     def load(self) -> None:
@@ -264,7 +268,18 @@ class Ripper:
             self.load()
             if self.cfg:
                 try:
-                    os.makedirs(self.cfg["output_root"], exist_ok=True)
+                    paths.make_folder(self.cfg["output_root"], "the rip folder")
+                except OSError as exc:
+                    self.error = str(exc)
+                    if self._told_folder != self.error:  # once per problem, not every few seconds
+                        self._told_folder = self.error
+                        rip_all.log(self.error)
+                        trouble.record("Couldn't create the rip folder", "", self.error)
+                    self.wake.wait(max(15, int(self.cfg.get("watch_poll_seconds") or 15)))
+                    self.wake.clear()
+                    continue
+                self._told_folder = ""
+                try:
                     drives = rip_all.scan_drives(self.cfg)
                     for d in drives:
                         d["locked_elsewhere"] = (d["device"] not in self.busy and d["loaded"]
@@ -313,6 +328,7 @@ class Ripper:
                                            force=force, skip=self.check_first)
                 except Exception as exc:
                     self.error = f"Couldn't check the drives: {exc}"
+                    trouble.record("Couldn't check the drives", "", str(exc), with_trace=True)
             poll = int((self.cfg or {}).get("watch_poll_seconds") or 15)
             self.wake.wait(max(5, poll))
             self.wake.clear()
@@ -374,6 +390,12 @@ class Ripper:
         except Exception as exc:
             rip_all.log(f"{label}: couldn't name it ({exc})")
         ok = disc.get("status") == "ok"
+        if not ok and disc.get("status") != "cancelled":
+            trouble.record("Rip didn't finish", label or "",
+                           f"{disc.get('titles_saved', 0)} titles saved, {disc.get('titles_failed', 0)} failed"
+                           + (f". MakeMKV said: {disc['makemkv_error']}" if disc.get("makemkv_error") else ""),
+                           f"drive {dev}; read errors: {disc.get('read_errors', 0)}; "
+                           f"damaged files: {', '.join(disc.get('damaged_files') or []) or 'none'}")
         notify(f"{dev} finished" if ok else f"{dev} needs a look",
                f"{label} is ripped and waiting in Review. Check the names, then file it to eject the disc."
                if ok else f"{label} finished with problems ({disc.get('titles_failed', 0)} titles failed).")
@@ -420,6 +442,10 @@ class Ripper:
         for d in drives:  # attach folder-based progress (and speed / time left) to each drive
             a = by_label.get(rip_all.safe_folder_name(d["label"] or ""))
             if a and (d["ripping"] or d["elsewhere"]):
+                want = d.get("bytes_total") or 0
+                if want and d["ripping"]:  # only what this rip saves (not titles left out, or already done)
+                    a = {**a, "total": want, "pct": min(99, int(100 * a["done"] / want)),
+                         "eta_s": int((want - a["done"]) / (a["mb_s"] * 1e6)) if a["mb_s"] and want > a["done"] else None}
                 d["progress"] = a
         try:
             stats = job_stats(waiting, len(self.busy))
@@ -427,13 +453,14 @@ class Ripper:
             stats = {"error": str(exc)}
         filing = sum(1 for jb in review.JOBS.values() if jb.get("state") == "running")
         if time.time() - _LEFT["t"] > 20:
-            _LEFT.update(t=time.time(), n=len(health.leftovers()))
-        return {"leftover_makemkv": _LEFT["n"], "auto": self.auto, "error": self.error, "drives": drives, "stats": stats, "filing": filing, "waiting": waiting, "setup": setup, "active": active,
+            _LEFT.update(t=time.time(), n=len(health.leftovers()), gui=health.makemkv_window_open())
+        offer = {**JOB_DEFAULTS, **_read_config()}.get("offer_error_reports", True)
+        return {"failures": trouble.pending() if offer else [], "leftover_makemkv": _LEFT["n"], "makemkv_open": _LEFT["gui"], "auto": self.auto, "error": self.error, "drives": drives, "stats": stats, "filing": filing, "waiting": waiting, "setup": setup, "active": active,
                 "log": list(rip_all.LOG_LINES)[-40:]}
 
 
 RIPPER: Ripper | None = None
-_LEFT = {"t": 0.0, "n": 0}
+_LEFT = {"t": 0.0, "n": 0, "gui": False}
 
 
 def weekly_recap() -> None:
@@ -890,9 +917,25 @@ def make_problem_report() -> Path:
                                        for d in sorted(rip_root.iterdir()) if d.is_dir() and not d.name.startswith("_")]
     except Exception:
         pass
+    try:
+        info += ["", f"MakeMKV window open: {health.makemkv_window_open()}; "
+                     f"makemkvcon left over from before: {len(health.leftovers())}"]
+    except Exception:
+        pass
     with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("about.txt", "\n".join(info))
         z.writestr("config (keys removed).json", json.dumps(safe_cfg, indent=2))
+        try:  # MakeMKV's own output for the latest rips: what it read, and any error it gave
+            recent = sorted([d for d in rip_root.iterdir() if d.is_dir() and (d / "makemkv_info.txt").exists()]
+                            + [d for d in (rip_root / "_Filed").glob("*") if (d / "makemkv_info.txt").exists()],
+                            key=lambda d: (d / "makemkv_info.txt").stat().st_mtime, reverse=True)[:3]
+            for d in recent:
+                for name in ("rip.log", "makemkv_info.txt", "disc_info.json"):
+                    f = d / name
+                    if f.exists():
+                        z.writestr(f"rips/{d.name}/{name}", f.read_bytes()[-3_000_000:])
+        except OSError:
+            pass
         for f, name in ((desktop.LOG_PATH, "shelfrip.log"), (desktop.LOG_PATH.with_suffix(".old.log"), "shelfrip.old.log"),
                         (rip_root / "disc_ripper.log", "disc_ripper.log"), (rip_root / "rip_history.csv", "rip_history.csv"),
                         (rip_root / "damaged_discs.json", "damaged_discs.json")):
@@ -1065,13 +1108,24 @@ class Handler(review.Handler):
             return self.send(200, REPORT)
         if u.path == "/api/pick":  # the Browse buttons on the Settings page
             b = self.body()
-            got = desktop.pick("file" if b.get("kind") == "file" else "folder", str(b.get("start") or ""), str(b.get("title") or ""))
-            return self.send(200, {"path": got, "available": got is not None})
+            got, err = desktop.pick("file" if b.get("kind") == "file" else "folder", str(b.get("start") or ""),
+                                    str(b.get("title") or ""))
+            if err:
+                rip_all.log(f"Browse: {err}")
+            return self.send(200, {"path": got, "available": got is not None, "error": err})
         if u.path == "/api/tidy":
             res = tidy.clean(review.RIP_ROOT, [str(x) for x in (self.body().get("ids") or [])], busy_labels())
             if res["done"]:
                 rip_all.log(f"Tidied the rip folder: {len(res['done'])} item(s), {res['freed'] / 1e9:.1f} GB freed")
             return self.send(200, res)
+        if u.path == "/api/trouble":  # an error report offered after a failure: send it, or not
+            b = self.body()
+            key = str(b.get("id") or "")
+            if b.get("action") == "send":
+                cfg = {**rip_all.DEFAULT_CONFIG, **JOB_DEFAULTS, **_read_config()}
+                return self.send(200, trouble.send(key, str(b.get("note") or "")[:1000], str(b.get("contact") or ""), cfg))
+            trouble.dismiss(key)
+            return self.send(200, {"ok": True})
         if u.path == "/api/feedback":
             import community
             cfg = {**rip_all.DEFAULT_CONFIG, **JOB_DEFAULTS, **_read_config()}
