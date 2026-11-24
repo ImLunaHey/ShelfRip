@@ -1011,13 +1011,19 @@ def settings_view() -> dict:
             mr = str(music.music_root(merged))
             row["placeholder"] = f"{mr} ({'found in your library' if os.path.isdir(mr) else 'made when the first CD is filed'})"
     return {"settings": out, "path": str(identify.CONFIG_PATH), "setup": setup_check(), "version": UPDATE,
-            "first_run": not raw.get("setup_done") and not raw.get("migrated_from")}
+            "first_run": not raw.get("setup_done") and not raw.get("migrated_from"),
+            "setup_step": raw.get("setup_step") or 0}
 
 
 def save_settings(values: dict) -> None:
     raw = _read_config()
     if values.get("setup_done"):
         raw["setup_done"] = True
+    if "setup_step" in values:  # which first-time setup screen you were on, so quitting halfway resumes there
+        try:
+            raw["setup_step"] = max(0, min(20, int(values["setup_step"])))
+        except (TypeError, ValueError):
+            pass
     kinds = {k: kind for k, _, kind in SETTINGS}
     for key, v in values.items():
         kind = kinds.get(key)

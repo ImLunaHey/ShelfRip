@@ -1610,7 +1610,7 @@ const WZ_STEPS = [
   {id:"hello"}, {id:"server"}, {id:"library", need:"Media library folder"}, {id:"rips", need:"Rip folder"},
   {id:"makemkv", need:"MakeMKV"}, {id:"tmdb", need:"TMDB key"}, {id:"once"}, {id:"share"}, {id:"split", optional:true}, {id:"done"},
 ];
-let WZSTEP = 0;
+let WZSTEP = 0, WZRESUMED = false;
 const wzVal = k => ((SETS.settings || []).find(s => s.key === k) || {}).value;
 const wzChk = n => ((SETS.setup || []).find(x => x.name === n)) || {};
 function wzArt(id, ok){
@@ -1742,21 +1742,32 @@ function wireWizard(el){
     if (!quiet) redraw();
     return true;
   };
-  const go = k => { WZSTEP = Math.max(0, Math.min(WZ_STEPS.length - 1, k)); redraw(); const h = $("h2", el); if (h){ h.tabIndex = -1; h.focus(); } };
+  const go = k => { WZSTEP = Math.max(0, Math.min(WZ_STEPS.length - 1, k));
+    api("/api/settings", {values:{setup_step: WZSTEP}}).catch(() => {});  // quit halfway: setup reopens on this screen
+    redraw(); const h = $("h2", el); if (h){ h.tabIndex = -1; h.focus(); } };
   el.querySelectorAll("[data-next]").forEach(b => b.onclick = async () => {
     const t = $("#wz_tmdb", el);  // a key pasted but not checked yet
     if (t && t.value.trim()) await save({tmdb_api_key: t.value.trim()}, true);
     go(WZSTEP + 1);
   });
   el.querySelectorAll("[data-back]").forEach(b => b.onclick = () => go(WZSTEP - 1));
+  window.onpagehide = () => {  // window closed mid-answer: send what's typed (keepalive outlives the page)
+    const values = {};
+    el.querySelectorAll("input[data-w]").forEach(i => { if (i.type !== "checkbox" && i.value.trim()) values[i.dataset.w] = i.value.trim(); });
+    if (Object.keys(values).length) try { fetch("/api/settings", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({values}), keepalive:true}); } catch(e){}
+  };
   el.querySelectorAll("[data-goto]").forEach(b => b.onclick = () => go(+b.dataset.goto));
   el.querySelectorAll("[data-tile]").forEach(b => b.onclick = async () => {
     await save({[b.dataset.tile]: JSON.parse(b.dataset.v)}, true);
     chime("file"); go(WZSTEP + 1);
   });
   el.querySelectorAll("input[data-w]").forEach(i => {
-    if (i.type === "checkbox") i.onchange = () => save({[i.dataset.w]: i.checked}, true);
-    else if (i.type === "text") i.onchange = () => save({[i.dataset.w]: i.value.trim()});
+    if (i.type === "checkbox") { i.onchange = () => save({[i.dataset.w]: i.checked}, true); return; }
+    if (i.type === "text") i.onchange = () => save({[i.dataset.w]: i.value.trim()});
+    // saved while typing too, so closing Shelfrip mid-answer keeps it
+    let t = 0;
+    i.oninput = () => { clearTimeout(t); t = setTimeout(() => { const v = i.value.trim();
+      if (i.type === "password" ? v : true) api("/api/settings", {values:{[i.dataset.w]: v}}).then(r => { SETS = r; }).catch(() => {}); }, i.type === "password" ? 1200 : 600); };
   });
   // clicking an empty folder box opens the picker straight away; typing a path still works
   el.querySelectorAll("[data-pickme]").forEach(i => i.onclick = () => {
@@ -1960,6 +1971,7 @@ async function loadSettings(){
   const j = await api("/api/settings");
   SETS = j;
   if (j.first_run){  // first start: just the essentials, one step at a time
+    if (!WZRESUMED){ WZRESUMED = true; WZSTEP = Math.min(+j.setup_step || 0, WZ_STEPS.length - 1); }  // pick up where you left off
     el.innerHTML = wizard();
     wireWizard(el);
     return;
