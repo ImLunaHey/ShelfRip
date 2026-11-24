@@ -853,6 +853,7 @@ def build_report() -> None:
 # --------------------------------------------------------------------------- updates
 
 UPDATE: dict = {"app": paths.APP_NAME, "current": paths.APP_VERSION}
+BOOT = f"{os.getpid()}-{time.time():.0f}"  # changes when Shelfrip restarts, so an open page knows to reload
 
 
 def _ver(v: str) -> tuple:
@@ -1064,7 +1065,7 @@ class Handler(review.Handler):
         u = urllib.parse.urlparse(self.path)
         try:
             if u.path == "/api/drives":
-                return self.send(200, RIPPER.state())
+                return self.send(200, {**RIPPER.state(), "boot": BOOT})
             if u.path == "/api/settings":
                 return self.send(200, settings_view())
             if u.path == "/api/report":

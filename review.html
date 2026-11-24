@@ -1299,10 +1299,15 @@ async function ripAct(action, device){
   renderDrives(j);
 }
 let drivesTimer = null;
+let BOOT = "";
 async function pollDrives(){
   clearTimeout(drivesTimer);
   try {
     const j = await api("/api/drives");
+    // Shelfrip restarted (an update, or another copy) while this window stayed open: start the page afresh,
+    // so it shows what the new one has (e.g. first-time setup) instead of what the old one had
+    if (j.boot && BOOT && j.boot !== BOOT){ location.reload(); return; }
+    BOOT = j.boot || BOOT;
     troublePrompt(j.failures);
     $("#nwait").textContent = j.waiting; $("#nwait").classList.toggle("zero", !j.waiting);
     if (TAB === "drives") renderDrives(j);
