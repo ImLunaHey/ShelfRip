@@ -774,6 +774,8 @@ function filingCard(p, i){  // while filing, the names can't change: just show h
       <div class="filing-bar"><div class="bar"><i style="width:${pct}%"></i></div><b>${pct}%</b></div>
       <span class="filing-now">Moving ${n} ${music ? "track" : "file"}${n === 1 ? "" : "s"} into ${SERVER_NAME}: ${esc(job.current || "starting")}</span>
       ${job.note ? `<span class="filing-now">${esc(job.note)}</span>` : ""}
+      ${job.idle >= 300 ? `<span class="filing-now" style="color:var(--err)">No progress for ${Math.round(job.idle / 60)} minutes. If it's stuck, stop it: nothing is lost, and you can file it again or discard the rip.</span>` : ""}
+      <button class="stopfile" title="Stop filing this disc. What's already moved stays in the library; the rest stays in the rip.">Stop filing</button>
     </div></div></section>`;
 }
 
@@ -898,7 +900,15 @@ function wire(p, i){
   const nx = el && $("[data-next]", el);
   if (nx) nx.onclick = () => { const next = discs.find(d => !(d.job && d.job.state === "done")); if (next){ const c = $("#c" + discs.indexOf(next)); c && c.scrollIntoView({behavior:"smooth"}); } else showTab("drives"); };
   if (p._justFiled){ p._justFiled = false; chime("file"); loadProgress(true); }
-  if (!msg) return; // filed
+  const sf = el && $(".stopfile", el);
+  if (sf) sf.onclick = async () => {
+    if (!confirm(`Stop filing ${p.kind === "music" ? p.album : p.title || p.folder}? Anything already moved stays in ${SERVER_NAME}; the rest stays in the rip, ready to file again or discard.`)) return;
+    sf.disabled = true;
+    const j = await api("/api/stopfiling", {folder:p.folder}).catch(e => ({error: e.message}));
+    if (j.error){ toast("Couldn't stop it", j.error); sf.disabled = false; }
+    await load(true);
+  };
+  if (!msg) return; // filed or filing
   const rerender = () => { const cur = $("#c"+i); if (cur){ cur.outerHTML = card(p, i); wire(p, i); } };
   const hold = () => { if (p.auto && !p.hold){ p.hold = true; p.auto.blocked = ["you chose to review it"]; api("/api/hold", {folder:p.folder}).catch(()=>{}); } };
   el.addEventListener("input", hold); el.addEventListener("change", hold);

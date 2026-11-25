@@ -65,6 +65,61 @@ def reload_config() -> None:
 
 JOBS: dict[str, dict] = {}
 LOCK = threading.Lock()
+THREADS: dict[str, threading.Thread] = {}  # the worker filing each disc, to spot one that died
+
+
+class Stopped(Exception):
+    """You pressed Stop on a filing."""
+
+
+def _beat(job: dict) -> None:
+    """The filing is still moving. Raises Stopped if you stopped it, so the worker gives up."""
+    job["beat"] = time.time()
+    if job.get("stop"):
+        raise Stopped()
+
+
+def reap_jobs() -> None:
+    """A filing whose worker has ended without finishing (it crashed, or never got going) would
+    otherwise sit at "running" for ever: blocking that disc, the other filings and quitting.
+    Mark those as errors so the disc is back on the Review tab, ready to file again or discard."""
+    with LOCK:
+        for name, job in JOBS.items():
+            if job.get("state") != "running":
+                continue
+            t = THREADS.get(name)
+            if t is None or not t.is_alive():
+                job.update(state="error", current=STOPPED_EARLY)
+
+
+STOPPED_EARLY = "Filing stopped before it finished. Nothing was lost: file it again, or discard the rip."
+
+
+def job_view(job: dict) -> dict:
+    """The job as the page sees it, with how long it's gone without progress (seconds)."""
+    v = {k: x for k, x in job.items() if k != "stop"}
+    if job.get("state") == "running":
+        v["idle"] = round(time.time() - float(job.get("beat") or time.time()))
+    return v
+
+
+def stop_filing(folder: Path) -> str:
+    """Stop filing a disc. What's already in the library stays (it's noted in the plan, so filing
+    again carries on from there); the rest stays in the rip folder. Returns an error or ''."""
+    with LOCK:
+        job = JOBS.get(folder.name)
+        if not job or job.get("state") != "running":
+            return "This disc isn't being filed."
+        job.update(stop=True, state="error", current="Filing stopped. Nothing was lost: what was already "
+                   "moved is in the library and the rest is still in the rip. File it again, or discard the rip.")
+    try:  # so it isn't picked up again by itself
+        plan = json.loads((folder / "plan.json").read_text(encoding="utf-8"))
+        plan.pop("filing", None)
+        plan["hold"] = True
+        save_plan(folder, plan)
+    except (OSError, ValueError) as exc:
+        print(f"couldn't update {folder.name}'s plan after stopping: {exc}")
+    return ""
 _LIB_CACHE: dict = {}
 
 
@@ -89,7 +144,14 @@ def save_plan(folder: Path, plan: dict) -> None:
         f.write(data)
         f.flush()
         os.fsync(f.fileno())
-    os.replace(tmp, folder / "plan.json")
+    for attempt in range(20):  # on Windows another reader (the page, antivirus) can hold it for a moment
+        try:
+            os.replace(tmp, folder / "plan.json")
+            return
+        except PermissionError:
+            if attempt == 19:
+                raise
+            time.sleep(0.25)
 
 
 def library_reachable() -> str:
@@ -165,6 +227,7 @@ def _is_music(folder: Path) -> bool:
 def list_plans() -> list[dict]:
     """Every disc waiting for review, newest last, with its plan and any problems that would
     stop it being filed. Filed discs are left out."""
+    reap_jobs()
     out = []
     for p in sorted(RIP_ROOT.glob("*/plan.json"), key=lambda p: p.parent.name):
         try:
@@ -176,7 +239,7 @@ def list_plans() -> list[dict]:
         plan["folder"] = p.parent.name
         job = JOBS.get(p.parent.name)
         if job:
-            plan["job"] = job
+            plan["job"] = job_view(job)
         if plan.get("kind") == "tv":  # episodes already in the library, for "belongs to episode"
             plan["season_files"] = season_files(plan)
         if CFG.get("auto_file", True):
@@ -260,19 +323,44 @@ def start_filing(folder: Path, plan: dict) -> list[str]:
     with LOCK:
         if JOBS.get(folder.name, {}).get("state") == "running":
             return ["Already filing this disc."]
-        JOBS[folder.name] = {"state": "running", "done_bytes": 0, "total_bytes": 0, "current": "starting",
-                             "label": plan.get("disc_label") or ""}
-    f = plan.get("filing") or {}
-    plan["filing"] = {"started": f.get("started") or time.strftime("%Y-%m-%dT%H:%M:%S"),
-                      "tries": int(f.get("tries") or 0) + 1, "at": time.time()}
-    save_plan(folder, plan)  # marks it as being filed, so an interrupted filing is finished next time
-    threading.Thread(target=file_job, args=(folder, plan), daemon=True).start()
+        old = THREADS.get(folder.name)
+        if old is not None and old.is_alive():  # stopped, but still finishing the step it was on
+            return ["The last filing of this disc is still stopping. Try again in a minute (or restart "
+                    "Shelfrip if it doesn't clear)."]
+        job = JOBS[folder.name] = {"state": "running", "done_bytes": 0, "total_bytes": 0, "current": "starting",
+                                   "label": plan.get("disc_label") or "", "beat": time.time()}
+    try:
+        f = plan.get("filing") or {}
+        plan["filing"] = {"started": f.get("started") or time.strftime("%Y-%m-%dT%H:%M:%S"),
+                          "tries": int(f.get("tries") or 0) + 1, "at": time.time()}
+        save_plan(folder, plan)  # marks it as being filed, so an interrupted filing is finished next time
+        t = threading.Thread(target=_run_job, args=(folder, plan, job), daemon=True)
+        THREADS[folder.name] = t
+        t.start()
+    except Exception as exc:  # never leave a job "running" with nothing behind it
+        traceback.print_exc()
+        job.update(state="error", current=f"Couldn't start filing: {exc}")
+        return [f"Couldn't start filing: {exc}. Nothing was moved, so try again."]
     return []
+
+
+def _run_job(folder: Path, plan: dict, job: dict) -> None:
+    """The worker thread: file the disc, and whatever happens, don't leave the job "running"."""
+    try:
+        file_job(folder, plan)
+    except Exception as exc:
+        traceback.print_exc()
+        if not job.get("stop"):
+            job.update(state="error", current=str(exc))
+    finally:
+        if job.get("state") == "running":
+            job.update(state="error", current=STOPPED_EARLY)
 
 
 def filing_status(plan: dict) -> dict | None:
     """Is this disc being filed (or about to pick up a filing that was cut off)? For the drive cards
     on the home page, which hide "Rip again" and the like until it's done. None = not filing."""
+    reap_jobs()
     job = JOBS.get(plan.get("folder") or "") or {}
     if job.get("state") == "running":
         total = job.get("total_bytes") or 0
@@ -296,6 +384,7 @@ def resume_tick(log=print) -> list[str]:
     """Finish filings that were cut off: by Shelfrip closing (picked up straight away) or by an
     error such as the library dropping off the network (tried again every 5 minutes, 3 times)."""
     started = []
+    reap_jobs()
     if any(j.get("state") == "running" for j in JOBS.values()):
         return started
     for plan in list_plans():
@@ -840,6 +929,12 @@ def copy_with_progress(src: Path, dst: Path, job: dict) -> None:
                 break
             fo.write(buf)
             job["done_bytes"] += len(buf)
+            try:
+                _beat(job)
+            except Stopped:
+                fo.close()
+                tmp.unlink(missing_ok=True)
+                raise
     if tmp.stat().st_size != size:
         tmp.unlink(missing_ok=True)
         raise IOError(f"size mismatch copying {src.name}")
@@ -910,10 +1005,7 @@ def file_music_job(folder: Path, plan: dict) -> None:
         threading.Thread(target=music.plex_scan, args=(CFG, music.album_dir(plan, CFG), job["plex"]),
                          daemon=True).start()
     except Exception as exc:
-        traceback.print_exc()
-        save_plan(folder, plan)
-        job.update(state="error", current=str(exc))
-        _offer_report("Filing didn't finish", folder.name.rsplit("__", 1)[0], str(exc))
+        _job_failed(folder, plan, job, exc)
 
 
 def _offer_report(what: str, label: str, error: str) -> None:
@@ -947,6 +1039,7 @@ def file_job(folder: Path, plan: dict) -> None:
                     k = pc["split_index"]
                     dst = dest_for(pc, plan)
                     job["current"] = f"{i}/{len(moves)}: cutting episode {k + 1} of {len(it['split']['names'])}: {dst.name}"
+                    _beat(job)
                     part = split.cut(src, it["split"], k, folder / "_split" / f"{k + 1:02d}.mkv", CFG,
                                      title=dst.stem)
                     why = "; ".join(x for x in (split.tag_audio(part, it.get("audio"), CFG),
@@ -954,6 +1047,7 @@ def file_job(folder: Path, plan: dict) -> None:
                     if why:
                         job["note"] = "; ".join(x for x in (job.get("note"), f"{dst.stem}: {why}") if x)
                     job["current"] = f"{i}/{len(moves)}: {dst.name}"
+                    _beat(job)
                     copy_with_progress(part, dst, job)
                     filed.append(str(dst))
                 it["filed_to"] = filed
@@ -966,13 +1060,16 @@ def file_job(folder: Path, plan: dict) -> None:
                 save_plan(folder, plan)
                 continue
             job["current"] = f"{i}/{len(moves)}: {dst.name}"
+            _beat(job)
             why = "; ".join(x for x in (split.tag_audio(folder / it["source"], it.get("audio"), CFG),  # name commentary tracks
                                         split.set_default_tracks(folder / it["source"], CFG)) if x)
             if why:
                 job["note"] = "; ".join(x for x in (job.get("note"), f"{dst.stem}: {why}") if x)
+            _beat(job)
             copy_with_progress(folder / it["source"], dst, job)
             it["filed_to"] = str(dst)
             save_plan(folder, plan)  # progress, in case filing is interrupted
+        _beat(job)  # last chance to stop: from here on it's only tidying up
         plan["status"] = "filed"
         plan["filed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
         plan.pop("filing", None)
@@ -1031,10 +1128,26 @@ def file_job(folder: Path, plan: dict) -> None:
         job["plex"] = {"state": "starting", "summary": "Asking Plex to scan…"}
         threading.Thread(target=plex.scan_and_check, args=(CFG, plan, job["plex"]), daemon=True).start()
     except Exception as exc:
+        _job_failed(folder, plan, job, exc)
+
+
+def _job_failed(folder: Path, plan: dict, job: dict, exc: Exception) -> None:
+    """A filing that didn't finish: keep the plan (with what was already moved) and say why."""
+    stopped = isinstance(exc, Stopped) or bool(job.get("stop"))
+    if stopped:
+        plan.pop("filing", None)  # you stopped it, so it isn't picked up again by itself
+        plan["hold"] = True
+    else:
         traceback.print_exc()
-        save_plan(folder, plan)
-        job.update(state="error", current=str(exc))
-        _offer_report("Filing didn't finish", folder.name.rsplit("__", 1)[0], str(exc))
+    try:
+        if folder.exists():
+            save_plan(folder, plan)
+    except Exception as exc2:  # e.g. the plan is locked: the job must still say it stopped
+        print(f"couldn't save {folder.name}'s plan: {exc2}")
+    if stopped:
+        return
+    job.update(state="error", current=str(exc))
+    _offer_report("Filing didn't finish", folder.name.rsplit("__", 1)[0], str(exc))
 
 
 # --------------------------------------------------------------------------- http
@@ -1076,7 +1189,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, page.read_bytes(), "text/html; charset=utf-8")
             if u.path == "/api/discs":
                 return self.send(200, {"discs": list_plans(), "library": str(LIB_ROOT), "ripped": str(RIP_ROOT), **naming.page_info(CFG),
-                                       "tmdb": bool(TMDB), "jobs": JOBS})
+                                       "tmdb": bool(TMDB), "jobs": {k: job_view(j) for k, j in JOBS.items()}})
             if u.path == "/api/poster":  # box art, so you can see the match is the right one
                 import progress
                 return self.send(200, progress.poster(TMDB, q.get("kind", ""), q.get("id", ""), q.get("season") or None))
@@ -1128,9 +1241,17 @@ class Handler(BaseHTTPRequestHandler):
                 refresh_warnings(plan)
                 save_plan(folder, plan)
                 return self.send(200, {"ok": True})
+            if u.path == "/api/stopfiling":  # a filing that's stuck, or that you changed your mind about
+                err = stop_filing(folder)
+                return self.send(200, {"error": err} if err else {"ok": True})
             if u.path == "/api/discard":  # delete a rip you don't want (e.g. already in Plex)
+                reap_jobs()
                 if JOBS.get(folder.name, {}).get("state") == "running":
-                    return self.send(200, {"error": "This disc is being filed."})
+                    return self.send(200, {"error": "This disc is being filed. Stop the filing first."})
+                t = THREADS.get(folder.name)
+                if t is not None and t.is_alive():
+                    return self.send(200, {"error": "The filing of this disc is still stopping. Try again in a "
+                                                    "minute (or restart Shelfrip if it doesn't clear)."})
                 info = read_disc_info(folder)
                 shutil.rmtree(folder)
                 note = eject_disc(info) if CFG.get("eject_after_filing", True) else ""
