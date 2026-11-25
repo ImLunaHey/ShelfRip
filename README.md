@@ -152,6 +152,11 @@ finds them whatever their case or spacing and files into them. To pick them your
 different drives. Music CDs work the same way: an
 existing `music` folder is found, or choose any folder under **Music folder**.
 
+Keep more than one library, such as 4K films in their own folder for a separate Plex server? Turn on
+**Settings › Library and folders › Use multiple libraries** and add each other library's folder.
+Tick the formats that should go there by default (4K discs, say). Each disc on the Review tab then
+has a **Library** menu next to File, so you can send any disc to any library.
+
 ## Good to know
 
 - Shelfrip opens in its own window. Closing the window keeps it running as an icon by the clock, so
