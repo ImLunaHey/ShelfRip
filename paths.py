@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 
 APP_NAME = "Shelfrip"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 # Shown to the web services the app talks to (MusicBrainz asks every app for one).
 APP_URL = "https://github.com/Shelfrip/ShelfRip"
 USER_AGENT = f"Shelfrip/{APP_VERSION} ( {APP_URL} )"
@@ -38,16 +38,19 @@ COMMUNITY_URL = "https://shelfrip-db.shelfrip.workers.dev"
 APP_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 
 
+def _installed_data_dir() -> Path:
+    """Where Shelfrip keeps your files when it isn't portable (see _data_dir)."""
+    if os.name == "nt":
+        return Path(os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")) / APP_NAME
+    return Path(os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")) / "shelfrip"
+
+
 def _data_dir() -> Path:
     if os.environ.get("SHELFRIP_DATA") or os.environ.get("DISC_RIPPER_DATA"):
         return Path(os.environ.get("SHELFRIP_DATA") or os.environ["DISC_RIPPER_DATA"]).expanduser()
     if (APP_DIR / "portable.txt").exists():
         return APP_DIR
-    if os.name == "nt":
-        base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
-        return Path(base) / APP_NAME
-    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
-    return Path(base) / "shelfrip"
+    return _installed_data_dir()
 
 
 DATA_DIR = _data_dir()
@@ -104,8 +107,28 @@ def _old_data_dir() -> Path | None:
     return Path(os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")) / "disc-ripper"
 
 
+# Not worth carrying into a portable copy: logs, problem reports and settings backups.
+_PORTABLE_SKIP = shutil.ignore_patterns("*.log", "*.tmp", "reports", "backups")
+
+
+def _copy_into_portable() -> str:
+    """Portable zips before 1.2.0 had no portable.txt, so a portable copy kept its files in
+    %APPDATA%\\Shelfrip like the installed app. The first time a portable copy finds no settings
+    of its own, it starts from those (copied, so the installed app keeps its own)."""
+    if DATA_DIR != APP_DIR or os.environ.get("SHELFRIP_DATA") or os.environ.get("DISC_RIPPER_DATA"):
+        return ""
+    src = _installed_data_dir()
+    if CONFIG_PATH.exists() or src.resolve() == APP_DIR or not (src / "config.json").is_file():
+        return ""
+    shutil.copytree(src, DATA_DIR, dirs_exist_ok=True, ignore=_PORTABLE_SKIP)
+    return f"This copy is portable now, so it keeps its own settings here. It started from your settings in {src}."
+
+
 def migrate() -> str:
     """Copy an older version's files into DATA_DIR once. Returns a line for the log, or ''."""
+    note = _copy_into_portable()
+    if note:
+        return note
     old = _old_data_dir()
     if old and not CONFIG_PATH.exists() and (old / "config.json").exists():
         shutil.copytree(old, DATA_DIR, dirs_exist_ok=True)

@@ -66,7 +66,8 @@ server expects it.
 
    Shelfrip isn't code-signed yet, so Windows may say **"Windows protected your PC"**. Click
    **More info**, then **Run anyway**. If you'd rather not install anything, the portable zip on the
-   same page works too.
+   same page works too. It keeps its settings in its own folder (that's what its `portable.txt` does),
+   so it can live on a USB stick.
 3. **Open Shelfrip and answer the setup questions:**
    - which media server you use,
    - your media library folder (the one that holds `Movies` and `TV Shows`),
