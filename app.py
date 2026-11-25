@@ -45,7 +45,8 @@ import rip_all
 JOB_DEFAULTS = {"auto_file": True, "auto_file_minutes": 15, "audio_language": "eng", "subtitle_language": "",
                 "forced_subtitles": True, "retry_failed_titles": True, "job_total_discs": 0,
                 "min_free_gb_rips": 60, "app_window": True, "tray_icon": True, "sounds": True,
-                "skip_clutter": True, "skip_duplicate_features": False, "offer_error_reports": True}
+                "skip_clutter": True, "skip_duplicate_features": False, "choose_titles": False,
+                "offer_error_reports": True}
 SECRETS = ("tmdb_api_key", "omdb_api_key", "plex_token")
 SETTINGS = [  # (key, label, kind)
     ("output_root", "Rip folder (where discs are ripped to before review)", "text"),
@@ -83,6 +84,7 @@ SETTINGS = [  # (key, label, kind)
     ("retry_failed_titles", "Retry titles that hit read errors once", "bool"),
     ("offer_error_reports", "When something fails, offer to send an error report", "bool"),
     ("skip_duplicate_features", "Rip each movie or episode only once (no duplicate copies, scene-by-scene titles or TV Play Alls)", "bool"),
+    ("choose_titles", "Let me choose the titles before each rip starts", "bool"),
     ("job_total_discs", "Discs you plan to rip, for a progress bar (0 = no goal)", "number"),
     ("min_free_gb_rips", "Don't start a rip with less than this free in the rip folder (GB)", "number"),
     ("tmdb_api_key", "TMDB key", "secret"),
@@ -251,6 +253,7 @@ class Ripper:
         self.beat = time.time()
         rip_all.ON_DONE.append(self.after_rip)
         rip_all.ON_LOW_SPACE.append(lambda why: notify("Rip folder is full", why))
+        rip_all.ON_CHOOSE.append(lambda dev, label: notify(f"{dev}: choose the titles", f"{label} is read. Tick the titles to rip on its drive card, then press Rip."))
         rip_all.ON_ERROR.append(lambda dev, label, err: trouble.record("Rip failed", label, err, f"drive {dev}", with_trace=True))
         threading.Thread(target=self.loop, daemon=True).start()
 
@@ -418,7 +421,7 @@ class Ripper:
             st = dict(rip_all.STATUS.get(d["device"], {}))
             st.pop("cancel", None)
             ripping = d["device"] in self.busy
-            if not ripping and st.get("state") in ("scanning", "ripping"):
+            if not ripping and st.get("state") in ("scanning", "choosing", "ripping"):
                 st["state"] = "idle"
             drives.append({"device": d["device"], "loaded": d["loaded"], "label": d["disc_label"],
                            "ripping": ripping, "elsewhere": d.get("locked_elsewhere", False),
@@ -1191,6 +1194,23 @@ class Handler(review.Handler):
             if err:
                 rip_all.log(f"Browse: {err}")
             return self.send(200, {"path": got, "available": got is not None, "error": err})
+        if u.path == "/api/import":  # a folder of videos ripped before, to be named like a fresh rip
+            import importer
+            b = self.body()
+            if b.get("status"):
+                return self.send(200, {"jobs": importer.JOBS})
+            src = Path(str(b.get("path") or "").strip().strip('"'))
+            libs = [identify.lib_path(review.LIB_ROOT, v) for v in identify.library_dirs(review.CFG, review.LIB_ROOT).values()]
+            why = importer.problem(src, review.RIP_ROOT, libs)
+            if why:
+                return self.send(200, {"error": why})
+            if not b.get("go"):  # first ask: what's there, for the confirmation
+                vids = importer.videos(src)
+                return self.send(200, {"path": str(src), "count": len(vids), "gb": round(sum(v.stat().st_size for v in vids) / 1e9, 1),
+                                       "move": importer.same_drive(src, review.RIP_ROOT)})
+            job = importer.start(src, review.RIP_ROOT, review.CFG, log=rip_all.log,
+                                 on_done=lambda _d: review.plan_new_folders())
+            return self.send(200, {"ok": True, "job": job})
         if u.path == "/api/tidy":
             res = tidy.clean(review.RIP_ROOT, [str(x) for x in (self.body().get("ids") or [])], busy_labels())
             if res["done"]:
@@ -1256,6 +1276,14 @@ class Handler(review.Handler):
                 elif act == "cancel":
                     if not rip_all.cancel(str(b.get("device") or "")):
                         return self.send(200, {"error": "That drive isn't ripping."})
+                elif act == "choose":  # the titles you ticked on a drive waiting for them
+                    ids = b.get("ids")
+                    if not isinstance(ids, list) or not all(isinstance(i, int) for i in ids):
+                        return self.send(200, {"error": "Tick the titles to rip first."})
+                    if not ids:
+                        return self.send(200, {"error": "Tick at least one title, or cancel the rip."})
+                    if not rip_all.choose(str(b.get("device") or ""), ids):
+                        return self.send(200, {"error": "That drive isn't waiting for titles any more."})
                 elif act == "eject":
                     dev = str(b.get("device") or "")
                     if dev in RIPPER.busy:
