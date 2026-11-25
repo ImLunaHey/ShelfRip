@@ -19,10 +19,12 @@ import json
 import os
 import shutil
 import sys
+import threading
+import time
 from pathlib import Path
 
 APP_NAME = "Shelfrip"
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.1.0"
 # Shown to the web services the app talks to (MusicBrainz asks every app for one).
 APP_URL = "https://github.com/Shelfrip/ShelfRip"
 USER_AGENT = f"Shelfrip/{APP_VERSION} ( {APP_URL} )"
@@ -51,6 +53,32 @@ def _data_dir() -> Path:
 DATA_DIR = _data_dir()
 CONFIG_PATH = DATA_DIR / "config.json"
 CACHE_DIR = DATA_DIR / ".cache"
+
+# Several parts of the app write config.json (Settings, the setup wizard's autosave, the shared
+# database's install id, filled-in defaults). They all go through write_config under this lock,
+# each with its own temp file, so two saves at once can't lose each other's changes.
+CONFIG_LOCK = threading.RLock()
+
+
+def write_config(cfg: dict) -> None:
+    """Save the whole settings dict to config.json atomically (temp file, then rename).
+
+    Retries briefly when Windows reports the file busy (antivirus, backup tools), and raises
+    OSError if it still can't be replaced. Callers that read-modify-write hold CONFIG_LOCK.
+    """
+    with CONFIG_LOCK:
+        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = CONFIG_PATH.with_name(f"config.{os.getpid()}.{threading.get_ident()}.tmp")
+        tmp.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+        for attempt in range(5):
+            try:
+                tmp.replace(CONFIG_PATH)
+                return
+            except PermissionError:
+                if attempt == 4:
+                    tmp.unlink(missing_ok=True)
+                    raise
+                time.sleep(0.2)
 
 # Files an older version kept next to the scripts.
 _OLD_FILES = ("config.json", "disc_catalog.db", "learned_labels.json")
@@ -203,3 +231,37 @@ try:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 except OSError:
     pass
+
+
+# --------------------------------------------------------------------------- folders
+
+def folder_problem(path, exc: BaseException, what: str = "the folder") -> str:
+    """A sentence saying which folder couldn't be made and why, in plain words."""
+    code = getattr(exc, "winerror", None) or getattr(exc, "errno", None)
+    if isinstance(exc, PermissionError) or code in (5, 13):
+        why = ("Windows refused access. If Windows Security showed \"Unauthorized changes blocked\", its Controlled folder "
+               "access is protecting that folder: allow Shelfrip (and MakeMKV) under Virus & threat protection > "
+               "Ransomware protection, or choose a folder outside Documents, Videos and Desktop")
+    elif code in (21,):
+        why = "the drive isn't ready (is it a disc drive, or a USB drive that was unplugged?)"
+    elif code in (53, 67, 64, 59, 1219, 1326):
+        why = "the network location can't be reached (is the NAS on, and are you signed in to it?)"
+    elif code in (3, 2) or isinstance(exc, FileNotFoundError):
+        why = "that drive or the folder above it doesn't exist"
+    elif code in (123, 161, 22):
+        why = "that isn't a valid folder path"
+    elif code in (112, 28):
+        why = "the drive is full"
+    else:
+        why = getattr(exc, "strerror", None) or str(exc)
+    return f"Couldn't create {what} {path}: {why}."
+
+
+def make_folder(path, what: str = "the folder") -> Path:
+    """mkdir -p, but a failure says which folder and why (OSError with a readable message)."""
+    p = Path(path)
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise OSError(folder_problem(p, exc, what)) from exc
+    return p

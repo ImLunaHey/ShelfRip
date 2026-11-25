@@ -2,7 +2,7 @@
 //
 // Run "Deploy Database.bat" (or: node deploy.mjs) from this folder. It:
 //   1. signs you in to Cloudflare (a browser window opens the first time),
-//   2. creates the D1 database "shelfrip" (once) and its tables,
+//   2. creates the D1 database "shelfrip" (once) and its tables, and applies migrations/ (once each),
 //   3. deploys the Worker, and
 //   4. gives it two secrets: SALT (hashes install ids and IPs) and ADMIN_TOKEN (for /v1/admin).
 // Both secrets are kept in .secrets.json next to this file, which is never committed. Keep it:
@@ -62,6 +62,16 @@ try {
 
   step("Creating the tables (safe to repeat)");
   wrangler(["d1", "execute", DB, "--remote", "--file=schema.sql", "--yes"]);
+
+  step("Updating the tables (safe to repeat)");
+  for (const f of fs.readdirSync("migrations").filter(f => f.endsWith(".sql")).sort()) {
+    const r = spawnSync("npx", ["--yes", "wrangler@4", "d1", "execute", DB, "--remote", `--file=migrations/${f}`, "--yes"],
+      { encoding: "utf8", shell: process.platform === "win32", stdio: ["inherit", "pipe", "pipe"] });
+    const out = (r.stdout || "") + (r.stderr || "");
+    if (r.status === 0) console.log(`${f}: applied`);
+    else if (/duplicate column|already exists/i.test(out)) console.log(`${f}: already in`);
+    else { process.stderr.write(out); throw new Error(`migration ${f} failed`); }
+  }
 
   step("Deploying the Worker");
   const tryDeploy = () => spawnSync("npx", ["--yes", "wrangler@4", "deploy"], {

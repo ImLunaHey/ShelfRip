@@ -110,6 +110,8 @@ def plan_new_folders() -> int:
 
 
 def _plan_new_folders() -> int:
+    """Make a plan.json (proposed names) for each finished rip that doesn't have one yet.
+    Returns how many were planned. Folders still ripping (no disc_info.json) are left alone."""
     lib = library(refresh=True)
     n = 0
     if not RIP_ROOT.is_dir():
@@ -161,6 +163,8 @@ def _is_music(folder: Path) -> bool:
 
 
 def list_plans() -> list[dict]:
+    """Every disc waiting for review, newest last, with its plan and any problems that would
+    stop it being filed. Filed discs are left out."""
     out = []
     for p in sorted(RIP_ROOT.glob("*/plan.json"), key=lambda p: p.parent.name):
         try:
@@ -236,7 +240,7 @@ def refresh_warnings(plan: dict) -> None:
     """Recount placeholder extras from the names as they are now (you may have renamed them)."""
     ws = [w for w in plan.get("warnings") or [] if "still have placeholder names" not in w]
     n = sum(1 for it in plan.get("items", []) if it.get("role") == "extra" and it.get("action") == "move"
-            and it.get("attach") != "episode" and re.match(r"Extra \d+ \(", str(it.get("name", ""))))
+            and it.get("attach") != "episode" and re.match(r"Extra \d+ \(|Probably ", str(it.get("name", ""))))
     if n:
         ws.append(f"{n} extra(s) still have placeholder names.")
     plan["warnings"] = ws
@@ -256,13 +260,36 @@ def start_filing(folder: Path, plan: dict) -> list[str]:
     with LOCK:
         if JOBS.get(folder.name, {}).get("state") == "running":
             return ["Already filing this disc."]
-        JOBS[folder.name] = {"state": "running", "done_bytes": 0, "total_bytes": 0, "current": "starting"}
+        JOBS[folder.name] = {"state": "running", "done_bytes": 0, "total_bytes": 0, "current": "starting",
+                             "label": plan.get("disc_label") or ""}
     f = plan.get("filing") or {}
     plan["filing"] = {"started": f.get("started") or time.strftime("%Y-%m-%dT%H:%M:%S"),
                       "tries": int(f.get("tries") or 0) + 1, "at": time.time()}
     save_plan(folder, plan)  # marks it as being filed, so an interrupted filing is finished next time
     threading.Thread(target=file_job, args=(folder, plan), daemon=True).start()
     return []
+
+
+def filing_status(plan: dict) -> dict | None:
+    """Is this disc being filed (or about to pick up a filing that was cut off)? For the drive cards
+    on the home page, which hide "Rip again" and the like until it's done. None = not filing."""
+    job = JOBS.get(plan.get("folder") or "") or {}
+    if job.get("state") == "running":
+        total = job.get("total_bytes") or 0
+        return {"state": "running", "pct": min(100, round(100 * job.get("done_bytes", 0) / total)) if total else 0,
+                "current": job.get("current") or "starting"}
+    f = plan.get("filing")
+    if not f:
+        return None
+    tries = int(f.get("tries") or 0)
+    if tries >= 6 or (job.get("state") == "error" and tries >= 3):
+        return None  # resume_tick won't try again: it's back on the Review tab for you
+    return {"state": "waiting", "pct": 0, "current": job.get("current") if job.get("state") == "error" else ""}
+
+
+def filed_label(label: str) -> bool:
+    """Was the disc with this label filed in this session? (Its plan is gone from the rip folder.)"""
+    return bool(label) and any(j.get("label") == label and j.get("state") == "done" for j in JOBS.values())
 
 
 def resume_tick(log=print) -> list[str]:
@@ -472,7 +499,7 @@ def refile_tv(name: str, tmdb_id: str, season, shift=0, log=print) -> dict:
     try:
         for it, f, src, dst in moves:
             if dst != src:
-                dst.parent.mkdir(parents=True, exist_ok=True)
+                paths.make_folder(dst.parent, "the library folder")
                 os.rename(src, dst)
                 done.append((src, dst))
     except OSError as exc:
@@ -574,6 +601,8 @@ def dest_for(item: dict, plan: dict | None = None) -> Path:
                     and (o.get("category") or "Other") == cat]
             idx = str(next((k for k, o in enumerate(same, 1) if o is item), 1)) if len(same) > 1 else ""
             name = f"{item['attach_to']}-{EXTRA_SUFFIX.get(cat, 'other')}{idx}"
+        elif naming.extras_suffixed(CFG):  # "Making Of-featurette.mkv" next to the film or in the season folder
+            name = f"{name}-{EXTRA_SUFFIX.get(cat, 'other')}"
         else:
             parts.append(folder)
     return identify.lib_path(LIB_ROOT, "\\".join(parts)) / (identify.fs_safe(name) + ".mkv")
@@ -614,6 +643,8 @@ def item_done(it: dict) -> bool:
 
 
 def check_plan(folder: Path, plan: dict) -> list[str]:
+    """What would stop this plan being filed: missing files, two items with one destination,
+    files already in the library, a bad split, the library not reachable. [] when it's fine."""
     if plan.get("kind") == "music":
         import music
         return music.check_plan(folder, plan, CFG)
@@ -793,7 +824,9 @@ def verify_copy(src: Path, copy: Path) -> str:
 
 
 def copy_with_progress(src: Path, dst: Path, job: dict) -> None:
-    dst.parent.mkdir(parents=True, exist_ok=True)
+    """Move src to dst, counting bytes into job for the progress bar. On the same drive it's a
+    rename; across drives it copies to dst.partial, checks the size, renames, then deletes src."""
+    paths.make_folder(dst.parent, "the library folder")
     if same_volume(src, dst.parent):
         os.replace(src, dst)
         job["done_bytes"] += src.stat().st_size if src.exists() else dst.stat().st_size
@@ -880,9 +913,21 @@ def file_music_job(folder: Path, plan: dict) -> None:
         traceback.print_exc()
         save_plan(folder, plan)
         job.update(state="error", current=str(exc))
+        _offer_report("Filing didn't finish", folder.name.rsplit("__", 1)[0], str(exc))
+
+
+def _offer_report(what: str, label: str, error: str) -> None:
+    try:
+        import trouble
+        trouble.record(what, label, error, with_trace=True)
+    except Exception:
+        pass
 
 
 def file_job(folder: Path, plan: dict) -> None:
+    """File one reviewed disc (runs on a worker thread): split episodes, move each kept title to
+    its library name, set track names, share with the disc database, then mark the plan filed.
+    Progress and errors go into JOBS[folder.name] for the page to show."""
     if plan.get("kind") == "music":
         return file_music_job(folder, plan)
     name = folder.name
@@ -989,6 +1034,7 @@ def file_job(folder: Path, plan: dict) -> None:
         traceback.print_exc()
         save_plan(folder, plan)
         job.update(state="error", current=str(exc))
+        _offer_report("Filing didn't finish", folder.name.rsplit("__", 1)[0], str(exc))
 
 
 # --------------------------------------------------------------------------- http

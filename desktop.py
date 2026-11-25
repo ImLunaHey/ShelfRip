@@ -520,11 +520,137 @@ class Tray:
 
 # --------------------------------------------------------------------------- pickers
 
-def pick(kind: str = "folder", start: str = "", title: str = "") -> str | None:
-    """Windows' own folder (or .exe file) picker, for the Settings page. '' if cancelled,
-    None if there's no picker on this system."""
-    if os.name != "nt":
-        return None
+def _raise_when_shown(thread_id: int, stop: threading.Event) -> None:
+    """Bring the picker to the front once it opens. Shelfrip's own process isn't the foreground app
+    (the window is Edge's), so Windows would otherwise open the dialog behind it, where it looks
+    like Browse did nothing. Borrowing the foreground window's input lets us hand focus over."""
+    import ctypes
+    u32 = ctypes.WinDLL("user32")
+    k32 = ctypes.WinDLL("kernel32")
+    PROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    u32.EnumThreadWindows.argtypes = [ctypes.c_uint32, PROC, ctypes.c_void_p]
+    u32.GetClassNameW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
+    u32.IsWindowVisible.argtypes = [ctypes.c_void_p]
+    u32.GetForegroundWindow.restype = ctypes.c_void_p
+    u32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    u32.SetForegroundWindow.argtypes = [ctypes.c_void_p]
+    u32.BringWindowToTop.argtypes = [ctypes.c_void_p]
+    for _ in range(200):  # up to 10 seconds
+        if stop.wait(0.05):
+            return
+        found = []
+
+        def each(hwnd, _):
+            cls = ctypes.create_unicode_buffer(32)
+            u32.GetClassNameW(hwnd, cls, 32)
+            if cls.value == "#32770" and u32.IsWindowVisible(hwnd):  # a dialog box
+                found.append(hwnd)
+            return True
+        u32.EnumThreadWindows(thread_id, PROC(each), None)
+        if found:
+            me = k32.GetCurrentThreadId()
+            fg = u32.GetForegroundWindow()
+            other = u32.GetWindowThreadProcessId(fg, None) if fg else 0
+            if other and other != me:
+                u32.AttachThreadInput(me, other, True)
+            u32.BringWindowToTop(found[0])
+            u32.SetForegroundWindow(found[0])
+            if other and other != me:
+                u32.AttachThreadInput(me, other, False)
+            return
+
+
+def _pick_native(kind: str, start: str, title: str) -> str:
+    """Windows' folder or .exe picker, opened from this process and owned by Shelfrip's window."""
+    import ctypes
+    from ctypes import wintypes
+    u32 = ctypes.WinDLL("user32")
+    k32 = ctypes.WinDLL("kernel32")
+    ole32 = ctypes.WinDLL("ole32")
+    owners = _shelfrip_windows()
+    owner = owners[0] if owners else None
+    stop = threading.Event()
+    threading.Thread(target=_raise_when_shown, args=(k32.GetCurrentThreadId(), stop), daemon=True).start()
+    ole32.OleInitialize(None)  # the folder picker's "new style" needs OLE on this thread
+    try:
+        if kind == "file":
+            comdlg = ctypes.WinDLL("comdlg32")
+
+            class OFN(ctypes.Structure):
+                _fields_ = [("lStructSize", wintypes.DWORD), ("hwndOwner", ctypes.c_void_p), ("hInstance", ctypes.c_void_p),
+                            ("lpstrFilter", ctypes.c_void_p), ("lpstrCustomFilter", ctypes.c_void_p),
+                            ("nMaxCustFilter", wintypes.DWORD), ("nFilterIndex", wintypes.DWORD),
+                            ("lpstrFile", ctypes.c_void_p), ("nMaxFile", wintypes.DWORD), ("lpstrFileTitle", ctypes.c_void_p),
+                            ("nMaxFileTitle", wintypes.DWORD), ("lpstrInitialDir", ctypes.c_wchar_p),
+                            ("lpstrTitle", ctypes.c_wchar_p), ("Flags", wintypes.DWORD), ("nFileOffset", wintypes.WORD),
+                            ("nFileExtension", wintypes.WORD), ("lpstrDefExt", ctypes.c_wchar_p), ("lCustData", ctypes.c_void_p),
+                            ("lpfnHook", ctypes.c_void_p), ("lpTemplateName", ctypes.c_void_p), ("pvReserved", ctypes.c_void_p),
+                            ("dwReserved", wintypes.DWORD), ("FlagsEx", wintypes.DWORD)]
+            filt = "Programs (*.exe)\0*.exe\0\0"
+            filt_buf = (ctypes.c_wchar * len(filt))(*filt)
+            out = ctypes.create_unicode_buffer(32768)
+            folder = os.path.dirname(start) if start else ""
+            o = OFN()
+            o.lStructSize = ctypes.sizeof(OFN)
+            o.hwndOwner = owner
+            o.lpstrFilter = ctypes.cast(filt_buf, ctypes.c_void_p)
+            o.nFilterIndex = 1
+            o.lpstrFile = ctypes.cast(out, ctypes.c_void_p)
+            o.nMaxFile = 32768
+            o.lpstrInitialDir = folder if folder and os.path.isdir(folder) else None
+            o.lpstrTitle = title or "Choose the program"
+            o.Flags = 0x80000 | 0x1000 | 0x800 | 0x8  # OFN_EXPLORER | FILEMUSTEXIST | PATHMUSTEXIST | NOCHANGEDIR
+            comdlg.GetOpenFileNameW.argtypes = [ctypes.c_void_p]
+            if comdlg.GetOpenFileNameW(ctypes.byref(o)):
+                return out.value
+            err = comdlg.CommDlgExtendedError()
+            if err:
+                raise OSError(f"the file picker failed (error {err:#x})")
+            return ""
+        shell32 = ctypes.WinDLL("shell32")
+        CALLBACK = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p)
+
+        class BROWSEINFO(ctypes.Structure):
+            _fields_ = [("hwndOwner", ctypes.c_void_p), ("pidlRoot", ctypes.c_void_p), ("pszDisplayName", ctypes.c_void_p),
+                        ("lpszTitle", ctypes.c_wchar_p), ("ulFlags", ctypes.c_uint), ("lpfn", CALLBACK),
+                        ("lParam", ctypes.c_void_p), ("iImage", ctypes.c_int)]
+        u32.SendMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p]
+        here = start.rstrip("\\/")
+        first = ctypes.create_unicode_buffer(here + "\\" if here.endswith(":") else here) if here else None
+
+        def on_event(hwnd, msg, lparam, data):
+            if msg == 1 and first is not None and os.path.isdir(first.value):  # BFFM_INITIALIZED: open at the current folder
+                u32.SendMessageW(hwnd, 0x467, ctypes.c_void_p(1), ctypes.cast(first, ctypes.c_void_p))  # BFFM_SETSELECTIONW
+            return 0
+        cb = CALLBACK(on_event)
+        name = ctypes.create_unicode_buffer(260)
+        bi = BROWSEINFO()
+        bi.hwndOwner = owner
+        bi.pszDisplayName = ctypes.cast(name, ctypes.c_void_p)
+        bi.lpszTitle = title or "Choose a folder"
+        bi.ulFlags = 0x1 | 0x10 | 0x40  # BIF_RETURNONLYFSDIRS | BIF_EDITBOX | BIF_NEWDIALOGSTYLE (has "Make New Folder")
+        bi.lpfn = cb
+        shell32.SHBrowseForFolderW.argtypes = [ctypes.c_void_p]
+        shell32.SHBrowseForFolderW.restype = ctypes.c_void_p
+        shell32.SHGetPathFromIDListW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
+        ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
+        pidl = shell32.SHBrowseForFolderW(ctypes.byref(bi))
+        if not pidl:
+            return ""
+        try:
+            path = ctypes.create_unicode_buffer(32768)
+            if not shell32.SHGetPathFromIDListW(pidl, path):
+                raise OSError("that isn't a folder on disk (pick a drive or folder, not a library or 'This PC')")
+            return path.value
+        finally:
+            ole32.CoTaskMemFree(pidl)
+    finally:
+        stop.set()
+        ole32.OleUninitialize()
+
+
+def _pick_powershell(kind: str, start: str, title: str) -> str:
+    """The same pickers through PowerShell, if opening them directly failed."""
     esc = lambda x: str(x or "").replace("'", "''")
     if kind == "file":
         ps = ("Add-Type -AssemblyName System.Windows.Forms;"
@@ -539,9 +665,24 @@ def pick(kind: str = "folder", start: str = "", title: str = "") -> str | None:
     ps += ("$o = New-Object System.Windows.Forms.Form; $o.TopMost = $true;"
            "if ($d.ShowDialog($o) -eq 'OK') { [Console]::OutputEncoding = [Text.Encoding]::UTF8;"
            + ("$d.FileName" if kind == "file" else "$d.SelectedPath") + " }")
-    try:
-        r = subprocess.run(["powershell", "-NoProfile", "-STA", "-Command", ps], capture_output=True,
-                           timeout=600, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        return r.stdout.decode("utf-8", "replace").strip()
-    except Exception:
-        return None
+    r = subprocess.run(["powershell", "-NoProfile", "-STA", "-Command", ps], capture_output=True,
+                       stdin=subprocess.DEVNULL, timeout=600, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    err = r.stderr.decode("utf-8", "replace").strip()
+    if r.returncode and err:
+        raise OSError(err.splitlines()[0][:300])
+    return r.stdout.decode("utf-8", "replace").strip()
+
+
+def pick(kind: str = "folder", start: str = "", title: str = "") -> tuple[str | None, str]:
+    """Windows' own folder (or .exe file) picker, for the Settings page.
+    Returns (path, error): path is '' if cancelled, None if there's no picker (error says why)."""
+    if os.name != "nt":
+        return None, "There's no folder picker on this computer."
+    errors = []
+    for how in (_pick_native, _pick_powershell):
+        try:
+            return how(kind, start, title), ""
+        except Exception as exc:
+            errors.append(f"{how.__name__.strip('_')}: {exc}")
+            print(f"(folder picker: {how.__name__} failed: {exc})")
+    return None, "Couldn't open the folder picker (" + "; ".join(errors) + "). Type the path instead."

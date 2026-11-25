@@ -2,15 +2,26 @@ r"""
 community.py - the shared Shelfrip disc database.
 
 When you file a disc (and "share_discs" is on), what you filed is sent to the database:
-the disc's fingerprint, and for each title its playlist, length, size and what it turned out
-to be (the movie, s01e03, the featurette "Making Of", a clip you skipped). Nothing else: no
-file paths, no folder names, no library details, no keys, no names of people. Your install
-is identified only by a random id (install_id in config.json), so repeat filings of the
-same disc replace each other instead of counting twice.
+the disc's fingerprint, its volume label and the name written on it, its format, what it is
+(the TMDB/IMDb id, title, year and season), the Shelfrip version, and for each title its
+playlist, length, size and what it turned out to be (the movie, s01e03, the featurette
+"Making Of", a clip you skipped). For the titles that matter (kept ones, and every movie or
+episode candidate) its tracks go too: the video codec and size, each audio track's language,
+codec, channels and commentary name, and each subtitle's language and whether it's forced.
+Nothing else: no file paths, no folder names, no library details, no keys, no names of people
+using Shelfrip. Your install is identified only by a random
+id (install_id in config.json), so repeat filings of the same disc replace each other instead of
+counting twice.
 
 When anyone rips a disc, identify.py asks the database before TheDiscDB, and uses the answer
 most people agreed on. Answers only one person has given yet are used too, but the review
 page says so and the disc isn't filed automatically.
+
+If the review page showed you the database's answer and you filed a title exactly as it was
+shown, that title is marked "accepted": the database counts it as half a vote, so clicking
+through can't confirm an answer on its own. Anything you changed, or identified without the
+database, counts fully. Each title's answer comes back with a confidence (0-100) built from
+those weighted votes, less any disagreement and "this disc is wrong" reports.
 
 The server is in server/ (a Cloudflare Worker); its address is paths.COMMUNITY_URL, or
 "community_url" in config.json.
@@ -30,8 +41,11 @@ import uuid
 import paths
 
 TIMEOUT = 8
-PLACEHOLDER = re.compile(r"^(Extra \d+ \(|Unused clip)", re.I)
+PLACEHOLDER = re.compile(r"^(Extra \d+ \(|Unused clip|Probably )", re.I)  # see identify.PLACEHOLDER
+GENERIC_COMMENTARY = re.compile(r"^commentary( \d+)?$", re.I)
 SOURCE = "the Shelfrip disc database"
+MAX_AUDIO, MAX_SUBS = 24, 48            # per title; the server keeps no more than this either
+FORCED_SUBS, DERIVED = 4096, 2048        # MakeMKV stream flags
 
 
 def base_url(cfg: dict) -> str:
@@ -45,13 +59,12 @@ def install_id(cfg: dict) -> str:
         return iid
     iid = str(uuid.uuid4())
     try:
-        raw = json.loads(paths.CONFIG_PATH.read_text(encoding="utf-8-sig")) if paths.CONFIG_PATH.exists() else {}
-        raw["install_id"] = iid
-        tmp = paths.CONFIG_PATH.with_suffix(".tmp")
-        tmp.write_text(json.dumps(raw, indent=2), encoding="utf-8")
-        tmp.replace(paths.CONFIG_PATH)
-    except OSError:
-        pass
+        with paths.CONFIG_LOCK:
+            raw = json.loads(paths.CONFIG_PATH.read_text(encoding="utf-8-sig")) if paths.CONFIG_PATH.exists() else {}
+            raw["install_id"] = iid
+            paths.write_config(raw)
+    except (OSError, ValueError):
+        pass  # unreadable settings: use the id for this run only rather than overwrite them
     cfg["install_id"] = iid
     return iid
 
@@ -91,31 +104,26 @@ def lookup(disc: dict, titles: list[dict], cfg: dict, log=print) -> dict | None:
         return None
     if not ans.get("found") or not ans.get("kind"):
         return None
+    # Answers come from other people's filings: only use one that's well formed, so a bad value
+    # can't break planning this disc (it's planned the usual way instead).
+    if (ans.get("kind") not in ("movie", "tv") or not re.fullmatch(r"\d{1,9}", str(ans.get("tmdb_id") or ""))
+            or (ans.get("season") is not None and not re.fullmatch(r"\d{1,3}", str(ans.get("season"))))):
+        log("    (the Shelfrip disc database's answer for this disc looks broken: not using it)")
+        return None
+    conf = ans.get("confidence")
+    ans["confidence"] = max(0, min(100, int(conf))) if isinstance(conf, (int, float)) and not isinstance(conf, bool) else None
     if ans.get("disputed"):
         log(f"    (the Shelfrip disc database says {ans.get('title')}, but people reported that as wrong: not using it)")
         return None
 
     import catalog
-    rows = ans.get("titles") or []
-    pairs: dict[str, dict] = {}
-    used: set[int] = set()
-    for t in titles:
-        for i, r in enumerate(rows):
-            if i in used:
-                continue
-            same_size = r.get("size_bytes") and r.get("size_bytes") == t.get("size_bytes")
-            same_play = (r.get("source_file") and r.get("source_file") == t.get("source_file") and
-                         abs((r.get("duration_s") or 0) - t.get("duration_seconds", 0)) <= 2)
-            if same_size or same_play:
-                row = catalog._as_discdb_row({
-                    "role": r.get("role"), "kept": r.get("kept"), "category": r.get("category"),
-                    "name": r.get("name") or "", "season": r.get("season"), "episode": r.get("episode"),
-                    "size_bytes": r.get("size_bytes"), "duration_s": r.get("duration_s")})
-                row["votes"], row["confirmed"] = r.get("votes", 0), bool(r.get("confirmed"))
-                row["episode_last"] = str(r["episode_last"]) if r.get("episode_last") else ""
-                pairs[t["output_file"]] = row
-                used.add(i)
-                break
+    rows = ans.get("titles") if isinstance(ans.get("titles"), list) else []
+    rows = [r for r in rows if isinstance(r, dict)]
+    try:
+        pairs = _pair_titles(rows, titles, ans, catalog)
+    except (TypeError, ValueError, KeyError, AttributeError) as exc:
+        log(f"    (the Shelfrip disc database's answer for this disc looks broken ({exc}): not using it)")
+        return None
     if len(pairs) < max(1, len(titles) // 2):
         return None
     who = ("checked by hand" if ans.get("locked") else
@@ -126,40 +134,161 @@ def lookup(disc: dict, titles: list[dict], cfg: dict, log=print) -> dict | None:
         "tmdb_id": str(ans.get("tmdb_id") or ""), "imdb_id": ans.get("imdb_id") or "", "release": "",
         "disc_name": ans.get("disc_name") or "", "how": "community", "pairs": pairs, "local": False,
         "community": True, "confirmed": bool(ans.get("confirmed") or ans.get("locked")),
-        "season": ans.get("season"),
+        "season": ans.get("season"), "confidence": 100 if ans.get("locked") else ans.get("confidence"),
         "source": f"{SOURCE} ({ans.get('title')}; {who})", "src_name": "the Shelfrip disc database",
     }
 
 
+def _pair_titles(rows: list[dict], titles: list[dict], ans: dict, catalog) -> dict[str, dict]:
+    """Match the database's titles to this rip's files (same size, or same playlist and length),
+    as rows apply_discdb takes, keyed by output file."""
+    pairs: dict[str, dict] = {}
+    used: set[int] = set()
+    for t in titles:
+        for i, r in enumerate(rows):
+            if i in used:
+                continue
+            same_size = r.get("size_bytes") and r.get("size_bytes") == t.get("size_bytes")
+            same_play = (r.get("source_file") and r.get("source_file") == t.get("source_file") and
+                         abs((r.get("duration_s") or 0) - t.get("duration_seconds", 0)) <= 2)
+            if same_size or same_play:
+                if r.get("role") not in ("main", "edition", "episode", "extra", "play_all"):
+                    raise ValueError(f"unknown role {r.get('role')!r}")
+                row = catalog._as_discdb_row({
+                    "role": r.get("role"), "kept": r.get("kept"), "category": r.get("category"),
+                    "name": r.get("name") or "", "season": r.get("season"), "episode": r.get("episode"),
+                    "size_bytes": r.get("size_bytes"), "duration_s": r.get("duration_s")})
+                row["votes"], row["confirmed"] = r.get("votes", 0), bool(r.get("confirmed"))
+                row["episode_last"] = str(r["episode_last"]) if str(r.get("episode_last") or "").isdigit() else ""
+                c = r.get("confidence")
+                row["confidence"] = 100 if ans.get("locked") else (  # 0-100; anything else is dropped
+                    max(0, min(100, int(c))) if isinstance(c, (int, float)) and not isinstance(c, bool) else None)
+                if isinstance(r.get("tracks"), dict):
+                    row["tracks"] = r["tracks"]
+                pairs[t["output_file"]] = row
+                used.add(i)
+                break
+    return pairs
+
+
 # --------------------------------------------------------------------------- share
+
+def _title_row(it: dict, t: dict) -> dict | None:
+    """One title as the database stores it (without tracks), or None if it can't be described."""
+    import naming
+    role = it.get("role")
+    row = {"source_file": t.get("source_file") or "", "duration_s": int(it.get("duration_seconds") or
+                                                                          t.get("duration_seconds") or 0),
+           "size_bytes": t.get("size_bytes"), "chapters": t.get("chapters"), "role": role,
+           "kept": it.get("action") == "move"}
+    if role == "episode":
+        eps = it.get("episodes") or ([it["episode"]] if it.get("episode") else [])
+        if not eps:
+            return None
+        row.update(season=it.get("season") or 0, episode=eps[0], episode_last=eps[-1] if len(eps) > 1 else None)
+        sp = it.get("split") if it.get("needs_split") else None
+        if sp and sp.get("starts"):
+            row["split"] = "chapters " + ",".join(str(x + 1) for x in sp["starts"])
+    elif role == "extra":
+        name = str(it.get("name") or "")
+        row.update(category=it.get("category") or "Other", name="" if PLACEHOLDER.match(name) else name)
+    elif role == "edition":
+        row["name"] = naming.edition_of(str(it.get("name") or ""))
+    return row
+
+
+def answer_key(row: dict) -> str:
+    """What one title "is", as the server compares it (server/worker.js: answerKey)."""
+    n = re.sub(r"\s+", " ", str(row.get("name") or "").lower()).strip()
+    kept = 1 if row.get("kept") else 0
+    role = row.get("role")
+    if role == "episode":
+        last = row.get("episode_last") or ""
+        return f"episode|{row.get('season')}|{row.get('episode')}|{last}|{kept}"
+    if role == "extra":
+        return f"extra|{row.get('category')}|{n}|{kept}"
+    if role == "edition":
+        return f"edition|{n}|{kept}"
+    return f"{role}|{kept}"
+
+
+def note_shown(plan: dict, disc: dict) -> None:
+    """Remember what the review page is about to show for a disc the database identified, so filing
+    it unchanged can be told apart from filing it after a change (see the top of this file)."""
+    ca = plan.get("community_answer")
+    if not ca:
+        return
+    by_file = {t.get("output_file"): t for t in disc.get("titles", [])}
+    # Only titles the database had an answer for: a name Shelfrip guessed itself (TMDB, DVDCompare,
+    # the disc's playlist names) and filed unchanged isn't someone agreeing with the database.
+    known = set(ca["sources"]) if isinstance(ca.get("sources"), list) else None  # None: plans made before 1.1.0
+    shown = {}
+    for it in plan.get("items", []):
+        if known is not None and it.get("source") not in known:
+            continue
+        row = _title_row(it, by_file.get(it.get("source"), {}))
+        if row and it.get("source"):
+            shown[it["source"]] = answer_key(row)
+    ca["shown"] = shown
+
+
+def tracks(t: dict, it: dict) -> dict | None:
+    """A title's video, audio and subtitle tracks, compactly. Commentary names come from the
+    review page (it["audio"]); "Commentary" or "Commentary 2" on its own isn't worth sending."""
+    streams = t.get("streams") or []
+    if not streams:
+        return None
+    named = {a.get("i"): a for a in it.get("audio") or [] if isinstance(a, dict)}
+    out: dict = {"audio": [], "subs": []}
+    k = 0
+    for st in streams:
+        typ = str(st.get("type") or "")
+        flags = int(st.get("flags") or 0)
+        if typ == "Video" and "video" not in out:
+            out["video"] = {"codec": str(st.get("codec") or "")[:20], "res": str(st.get("resolution") or "")[:20]}
+        elif typ == "Audio":
+            k += 1
+            if len(out["audio"]) >= MAX_AUDIO:
+                continue
+            mine = named.get(k) or {}
+            com = bool(mine.get("commentary")) if mine else bool(flags & 3)
+            name = str(mine.get("name") or "").strip() if com else ""
+            a = {"lang": str(st.get("lang3") or st.get("lang") or "")[:3], "codec": str(st.get("codec") or "")[:20],
+                 "ch": int(st.get("channels") or 0)}
+            if com:
+                a["commentary"] = 1
+                if name and not GENERIC_COMMENTARY.match(name):
+                    a["name"] = name[:150]
+            if flags & DERIVED:
+                a["core"] = 1      # e.g. the AC3 core inside a TrueHD track
+            out["audio"].append(a)
+        elif typ == "Subtitles" and len(out["subs"]) < MAX_SUBS:
+            sub = {"lang": str(st.get("lang3") or st.get("lang") or "")[:3]}
+            if flags & FORCED_SUBS:
+                sub["forced"] = 1
+            out["subs"].append(sub)
+    return out if out["audio"] or out["subs"] or out.get("video") else None
+
 
 def submission(plan: dict, disc: dict, cfg: dict) -> dict | None:
     """What gets sent for one filed disc (see the top of this file), or None if there's nothing useful."""
     if plan.get("kind") not in ("movie", "tv") or not plan.get("tmdb_id"):
         return None
-    import naming
     by_file = {t.get("output_file"): t for t in disc.get("titles", [])}
+    ca = plan.get("community_answer") or {}
+    shown = ca.get("shown") if isinstance(ca.get("shown"), dict) and _ident(ca) == _ident(plan) else {}
     out = []
     for it in plan.get("items", []):
         t = by_file.get(it.get("source"), {})
-        role = it.get("role")
-        row = {"source_file": t.get("source_file") or "", "duration_s": int(it.get("duration_seconds") or
-                                                                              t.get("duration_seconds") or 0),
-               "size_bytes": t.get("size_bytes"), "chapters": t.get("chapters"), "role": role,
-               "kept": it.get("action") == "move"}
-        if role == "episode":
-            eps = it.get("episodes") or ([it["episode"]] if it.get("episode") else [])
-            if not eps:
-                continue
-            row.update(season=it.get("season") or 0, episode=eps[0], episode_last=eps[-1] if len(eps) > 1 else None)
-            sp = it.get("split") if it.get("needs_split") else None
-            if sp and sp.get("starts"):
-                row["split"] = "chapters " + ",".join(str(x + 1) for x in sp["starts"])
-        elif role == "extra":
-            name = str(it.get("name") or "")
-            row.update(category=it.get("category") or "Other", name="" if PLACEHOLDER.match(name) else name)
-        elif role == "edition":
-            row["name"] = naming.edition_of(str(it.get("name") or ""))
+        row = _title_row(it, t)
+        if not row:
+            continue
+        if row["kept"] or row["role"] in ("main", "edition", "episode"):
+            tr = tracks(t, it)
+            if tr:
+                row["tracks"] = tr
+        if shown.get(it.get("source")) == answer_key(row):
+            row["accepted"] = True   # filed just as the database's answer was shown: counts as half a vote
         out.append(row)
     if not out:
         return None

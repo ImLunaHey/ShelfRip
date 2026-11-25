@@ -52,6 +52,7 @@ DEFAULTS = {
     "tv_folder": "",
     # plex, jellyfin, emby or kodi: how filed files are named (naming.py)
     "media_server": "plex",
+    "extras_style": "folders",  # special features in Featurettes\, Trailers\... folders, or "suffix": Name-featurette.mkv
     # Put each format in its own folder (Movies\Blu-Ray\Title ...)? Off: Movies\Title ...
     "format_folders": False,
     # DVDCompare has no API; looking extras up there means reading its web pages. Off unless you turn it on.
@@ -101,7 +102,7 @@ NOISE_WORDS = {
 
 # --------------------------------------------------------------------------- utils
 
-PLANNER_VERSION = 8  # bump when naming improves, so untouched proposals get redone
+PLANNER_VERSION = 11  # bump when naming improves, so untouched proposals get redone
 
 
 # Settings you fill in yourself: added to config.json (empty) if they're missing, so you can see where they go
@@ -109,6 +110,9 @@ FILL_IN = {"plex_url": "", "plex_token": ""}
 
 
 def load_config() -> dict:
+    """The defaults overlaid with config.json. A settings file that isn't valid JSON is
+    reported (raises) rather than silently ignored, since running with defaults would rip and
+    file into the wrong folders."""
     cfg = dict(DEFAULTS)
     if CONFIG_PATH.exists():
         mine = json.loads(CONFIG_PATH.read_text(encoding="utf-8-sig"))
@@ -117,11 +121,12 @@ def load_config() -> dict:
             missing.update(eject_after_filing=True, eject_when_done=False)
         if missing:
             try:
+                with paths.CONFIG_LOCK:  # re-read under the lock so a save in between isn't lost
+                    fresh = json.loads(CONFIG_PATH.read_text(encoding="utf-8-sig"))
+                    fresh.update({k: v for k, v in missing.items() if k not in fresh})
+                    paths.write_config(fresh)
                 mine.update(missing)
-                tmp = CONFIG_PATH.with_suffix(".tmp")
-                tmp.write_text(json.dumps(mine, indent=2), encoding="utf-8")
-                tmp.replace(CONFIG_PATH)
-            except OSError:
+            except (OSError, ValueError):
                 pass
         cfg.update(mine)
     return cfg
@@ -355,6 +360,8 @@ def library_dirs(cfg: dict, root: Path | None = None) -> dict:
 
 
 def index_library(root: Path, cfg: dict) -> dict:
+    """The movies and shows already in the library (title, year, TMDB id, folder), used to
+    spot copies you already have and to number episodes after the ones already there."""
     lib = {"movies": [], "shows": []}
     if not root.exists():
         print(f"  ! Plex library not reachable at {root}. Episode numbering will start at 1.")
@@ -399,7 +406,12 @@ def library_show_match(lib: dict, query: str) -> dict | None:
     return best
 
 
+# Extras tagged in the file name, next to the film (Plex/Jellyfin/Emby): "Making Of-featurette.mkv"
+EXTRA_TAGGED = re.compile(r"-(?:behindthescenes|deleted|deletedscene|featurette|interview|scene|short|trailer|other|clip|extra)\d*$", re.I)
+
+
 def episodes_in_library(lib: dict, tmdb_id: str, title_norm: str, season: int) -> set[int]:
+    """Episode numbers of `season` already filed for this show (matched by TMDB id, else by name)."""
     eps: set[int] = set()
     for s in lib["shows"]:
         if (tmdb_id and s["id"] == str(tmdb_id)) or (not tmdb_id and s["norm"] == title_norm):
@@ -411,6 +423,8 @@ def episodes_in_library(lib: dict, tmdb_id: str, title_norm: str, season: int) -
 
 
 def episodes_claimed_by_plans(rip_root: Path, this_folder: Path, show_key: str, season: int) -> set[int]:
+    """Episode numbers of `season` other discs waiting for review already use, so two discs
+    of one season don't both get numbered from 1."""
     eps: set[int] = set()
     for p in rip_root.glob("*/plan.json"):
         if p.parent == this_folder:
@@ -482,17 +496,22 @@ FORMAT_OF_RANK = {1: "DVD", 2: "Blu-ray", 3: "4K"}
 VIDEO_EXT = (".mkv", ".mp4", ".avi", ".m4v", ".ts", ".m2ts")
 
 
+def library_folders(plan: dict, lib: dict) -> list[dict]:
+    """The library's folders for this plan's film or show: by TMDB id, else by title (and year)."""
+    tid = str(plan.get("tmdb_id") or "")
+    t_norm, year = norm(plan.get("title") or ""), str(plan.get("year") or "")
+    return [x for x in lib.get("shows" if plan.get("kind") == "tv" else "movies", [])
+            if (tid and x["id_src"] == "tmdb" and x["id"] == tid)
+            or (x["norm"] == t_norm and (not year or not x["year"] or x["year"] == year))]
+
+
 def library_copies(plan: dict, lib: dict, cfg: dict) -> dict[str, list[dict]]:
     """What the library already has of each movie / episode in this plan, in any format folder.
 
     Returns {item source: [{"path", "format", "rank"}]} for main features, other versions and
     episodes. Matches by TMDB id in the folder name, else by title (and year)."""
     tv = plan.get("kind") == "tv"
-    tid = str(plan.get("tmdb_id") or "")
-    t_norm, year = norm(plan.get("title") or ""), str(plan.get("year") or "")
-    folders = [x for x in lib.get("shows" if tv else "movies", [])
-               if (tid and x["id_src"] == "tmdb" and x["id"] == tid)
-               or (x["norm"] == t_norm and (not year or not x["year"] or x["year"] == year))]
+    folders = library_folders(plan, lib)
     out: dict[str, list[dict]] = {}
     if not folders:
         return out
@@ -500,7 +519,8 @@ def library_copies(plan: dict, lib: dict, cfg: dict) -> dict[str, list[dict]]:
         have = []
         for f in folders:
             try:
-                vids = [p for p in f["folder"].iterdir() if p.is_file() and p.suffix.lower() in VIDEO_EXT]
+                vids = [p for p in f["folder"].iterdir() if p.is_file() and p.suffix.lower() in VIDEO_EXT
+                        and not EXTRA_TAGGED.search(p.stem)]  # "Making Of-featurette.mkv" is an extra, not the film
             except OSError:
                 continue
             for v in vids:
@@ -577,11 +597,16 @@ def mark_library_copies(plan: dict, lib: dict, cfg: dict) -> None:
                                    f"filing if you don't want both", it.get("note")) if x)
             upgrades += 1
     main = next((it for it in plan["items"] if it.get("role") == "main"), None)
+    parent = None
     if plan.get("kind") == "movie" and main and main.get("action") == "skip" and copies.get(main["source"]):
         # the movie stays as it is in Plex; send this disc's extras to that movie's folder
-        best = max(copies[main["source"]], key=lambda h: h["rank"])
+        parent = Path(max(copies[main["source"]], key=lambda h: h["rank"])["path"]).parent
+    elif plan.get("kind") == "movie" and plan.get("bonus_disc"):
+        # a bonus disc: its extras join the film already in the library (best-quality copy's folder)
+        have = sorted(library_folders(plan, lib), key=lambda f: quality_rank(f.get("format_folder") or "", cfg), reverse=True)
+        parent = have[0]["folder"] if have else None
+    if parent is not None:
         try:
-            parent = Path(best["path"]).parent
             try:
                 rel = str(parent.relative_to(Path(cfg["plex_library_root"]))).replace("/", "\\")
             except ValueError:  # a Movies folder kept outside the media library
@@ -591,7 +616,7 @@ def mark_library_copies(plan: dict, lib: dict, cfg: dict) -> None:
                 it["dest_dir"] = rel
             if any(it.get("action") == "move" for it in plan["items"]):
                 plan.setdefault("warnings", []).append(f"Extras will go into the movie's existing folder ({rel}).")
-        except ValueError:
+        except (ValueError, KeyError):
             pass
     if skipped:
         plan.setdefault("warnings", []).append(
@@ -604,6 +629,7 @@ def mark_library_copies(plan: dict, lib: dict, cfg: dict) -> None:
 # --------------------------------------------------------------------------- classification
 
 def disc_format(disc: dict) -> str:
+    """"4k", "bluray" or "dvd", from the widest video stream on the disc."""
     width = 0
     for t in disc["titles"]:
         for s in t.get("streams", []):
@@ -645,6 +671,8 @@ def mark_duplicates(titles: list[dict]) -> None:
 
 
 def looks_like_tv(titles: list[dict], label_info: dict, lib_show: dict | None) -> bool:
+    """Is this a TV disc? Yes if the label names a season or the show is in the library;
+    otherwise judged from the run times (several similar episode-length titles, no feature)."""
     if label_info["season"] is not None or lib_show:
         return True
     longs = [t["duration_seconds"] for t in titles if t["duration_seconds"] >= 15 * 60]
@@ -661,7 +689,81 @@ def looks_like_tv(titles: list[dict], label_info: dict, lib_show: dict | None) -
 
 # --------------------------------------------------------------------------- planners
 
-def extra_item(t: dict, idx: int, base_dir: str, cfg: dict) -> dict:
+# Studios sometimes give each playlist a descriptive name that MakeMKV puts in the file name, e.g.
+# "Special Features-SEG_01_BTS_07_Ithaca_t11.mkv" or "SF_02_Trls_03_Trailer1_NCR". Known tags say
+# what kind of extra it is; the words left over are its name.
+AUTHORED_KIND = {
+    "bts": "Behind the Scenes", "behindthescenes": "Behind the Scenes", "making": "Behind the Scenes",
+    "trl": "Trailers", "trls": "Trailers", "trailer": "Trailers", "trailers": "Trailers", "teaser": "Trailers",
+    "del": "Deleted Scenes", "deleted": "Deleted Scenes", "delscn": "Deleted Scenes",
+    "int": "Interviews", "interview": "Interviews", "interviews": "Interviews",
+    "fea": "Featurettes", "feat": "Featurettes", "featurette": "Featurettes", "featurettes": "Featurettes",
+    "musicvideo": "Other", "gag": "Other", "gagreel": "Other", "bloopers": "Other",
+}
+AUTHORED_NOISE = {"seg", "sf", "tmpl", "ncr", "uni", "extras", "extra", "bonus", "pl", "mpls", "hd", "uhd", "sdr", "hdr"}
+
+
+def authored_name(t: dict, disc: dict | None = None) -> tuple[str, str] | None:
+    """(name, category) from a playlist name the studio wrote, or None when the file name is just
+    the disc's own name (MakeMKV's usual DISC_LABEL_t03.mkv) or says nothing useful."""
+    stem = re.sub(r"_t\d+$", "", Path(str(t.get("output_file") or "")).stem)
+    part = stem.split("-", 1)[1] if "-" in stem and " " in stem.split("-", 1)[0] else stem
+    flat = lambda x: re.sub(r"[^a-z0-9]", "", str(x or "").lower())
+    if not part or flat(part) in {flat((disc or {}).get("disc_label")), flat((disc or {}).get("name")), flat((disc or {}).get("volume_label"))}:
+        return None
+    toks = [x for x in re.split(r"[_\s.]+", part) if x]
+    if len(toks) < 2:  # one word, like the disc's own name: no structure to read
+        return None
+    kind, words = "", []
+    for tok in toks:
+        low = tok.lower()
+        if low in AUTHORED_KIND:
+            kind = kind or AUTHORED_KIND[low]
+            if low in ("teaser", "trailer", "musicvideo"):
+                words.append(tok)
+            continue
+        if low in AUTHORED_NOISE or re.fullmatch(r"\d+|t\d+", low):
+            continue
+        words.append(tok)
+    marked = any(x.lower() in ("seg", "sf", "extras", "bonus", "tmpl") for x in toks)  # a studio's bonus-menu naming
+    if not words or not (kind or marked or any(re.search(r"playall|menu|screensaver", w, re.I) for w in words)):
+        return None  # no tag we know: don't guess a name from it
+    spaced = lambda w: re.sub(r"(?<=[a-z])(?=[A-Z])|(?<=[A-Za-z])(?=\d)", " ", w)
+    name = " ".join(spaced(w) for w in words)
+    name = re.sub(r"\bPlay All\b|\bPlayall\b", "Play All", name, flags=re.I)
+    name = re.sub(r"\bScreen Saver\b|\bScreensaver\b", "Screen Saver", name, flags=re.I)
+    name = " ".join(w if w.isupper() and len(w) > 1 else w[:1].upper() + w[1:] for w in name.split())
+    if kind == "Trailers" and not re.search(r"trailer|teaser", name, re.I):
+        name += " Trailer"
+    if not kind:
+        import extras
+        kind = extras.guess_category(name)
+    return name, kind
+
+
+def name_copies(items: list[dict]) -> None:
+    """"Probably a Copy (1m31s, t12)" becomes "Probably a Copy of Tunnel Scene" once the title it
+    copies has a real name, so a skipped copy says what it is."""
+    by_src = {it.get("source"): it for it in items}
+    for it in items:
+        m = re.fullmatch(r"same length as (\S+) \(duplicate\)", str(it.get("note") or ""))
+        if not (m and it.get("action") == "skip" and str(it.get("name") or "").startswith("Probably a Copy (")):
+            continue
+        other = by_src.get(m.group(1)) or {}
+        twin = "the Movie" if other.get("role") in ("main", "edition") else str(other.get("name") or "")
+        if twin and not PLACEHOLDER.match(twin):
+            it["name"] = f"Probably a Copy of {twin}"
+
+
+def bonus_disc(longest_min: float, film_min: float) -> bool:
+    """A disc of special features for a film (a collector's edition's second disc): even its longest
+    title is under an hour and less than half the film's length, so none of it is the film."""
+    return bool(film_min) and longest_min < 60 and longest_min < 0.5 * film_min
+
+
+def extra_item(t: dict, idx: int, base_dir: str, cfg: dict, disc: dict | None = None) -> dict:
+    """A plan item for a bonus title: "Extra 01 (4m10s)", or a name read from the disc's own
+    playlist name. Duplicates and very short clips start as skipped."""
     d = t["duration_seconds"]
     item = {
         "source": t["output_file"], "duration": t.get("duration"), "duration_seconds": d,
@@ -669,14 +771,33 @@ def extra_item(t: dict, idx: int, base_dir: str, cfg: dict) -> dict:
         "name": f"Extra {idx:02d} ({mmss(d)})",
         "action": "move", "note": "",
     }
+    # skipped titles still get a name saying what they probably are, so you can tell at a glance
     if t.get("_duplicate_of"):
-        item.update(action="skip", name=f"Unused clip ({mmss(d)}, t{t['title_id']:02d})",
+        item.update(action="skip", name=f"Probably a Copy ({mmss(d)}, t{t['title_id']:02d})",
                     note=f"same length as {t['_duplicate_of']} (duplicate)")
     elif d < cfg["skip_extras_under_seconds"]:
-        item.update(action="skip", name=f"Unused clip ({mmss(d)}, t{t['title_id']:02d})",
+        item.update(action="skip", name=f"Probably a Logo, Warning or Menu ({mmss(d)}, t{t['title_id']:02d})",
                     note="very short: probably a logo, menu or promo")
+    else:
+        got = authored_name(t, disc)
+        if got:
+            item.update(name=got[0], category=got[1], note="named from the disc's own playlist name")
     item["dest_dir"] = base_dir
     return item
+
+
+def number_repeats(items: list[dict]) -> None:
+    """Extras named from the disc's playlist names can repeat (a studio's "Ithaca" segment in
+    three parts drops its numbers). Two files with one name can't be filed into the same folder,
+    so repeats become "Name (Part 1)", "Name (Part 2)", in disc order."""
+    groups: dict[tuple, list[dict]] = {}
+    for it in items:
+        if it.get("role") == "extra" and it.get("action") == "move":
+            groups.setdefault((it.get("dest_dir"), it.get("category"), it["name"].lower()), []).append(it)
+    for same in groups.values():
+        if len(same) > 1:
+            for k, it in enumerate(same, 1):
+                it["name"] = f"{it['name']} (Part {k})"
 
 
 def name_editions(items: list[dict], base: str, tmdb_min: int, label: str, warnings: list[str],
@@ -793,7 +914,10 @@ def plan_movie(folder: Path, disc: dict, titles: list[dict], label_info: dict,
         title, year, tid = label_info["query"] or disc.get("disc_label", "Unknown"), "", ""
     else:
         title, year, tid = match["title"], year_of(match.get("release_date")), str(match["id"])
-        if match.get("runtime") and abs(match["runtime"] - main_min) > 6:
+        if bonus_disc(main_min, match.get("runtime") or 0):
+            warnings.append(f"This looks like a bonus disc: its longest title is {main_min:.0f} min and the film is "
+                            f"{match['runtime']} min, so everything on it is treated as extras.")
+        elif match.get("runtime") and abs(match["runtime"] - main_min) > 6:
             warnings.append(f"Possibly the wrong movie: the disc's movie is {main_min:.0f} min, but TMDB says "
                             f"{match['title']} ({year}) is {match['runtime']} min. Check the cover, or pick the right one.")
         elif not match.get("runtime") and not label_info.get("force_id"):
@@ -836,17 +960,18 @@ def plan_movie(folder: Path, disc: dict, titles: list[dict], label_info: dict,
         if tid and m["id"] == tid:
             warnings.append("Already in library: " + "\\".join(x for x in (m["format_folder"], m["folder_name"]) if x))
 
-    items = [{
+    bonus = bool(match) and bonus_disc(main_min, match.get("runtime") or 0)
+    items = [] if bonus else [{
         "source": main["output_file"], "duration": main.get("duration"),
         "duration_seconds": main["duration_seconds"], "role": "main",
         "dest_dir": movie_dir, "name": f"{base_name}{tag}", "action": "move", "note": "main feature",
     }]
     n = 0
     for t in sorted(titles, key=lambda t: t["title_id"]):
-        if t is main:
+        if t is main and not bonus:
             continue
         d = t["duration_seconds"]
-        if d >= 0.9 * main["duration_seconds"]:
+        if not bonus and d >= 0.9 * main["duration_seconds"]:
             same = abs(d - main["duration_seconds"]) <= 60
             items.append({
                 "source": t["output_file"], "duration": t.get("duration"), "duration_seconds": d,
@@ -858,14 +983,16 @@ def plan_movie(folder: Path, disc: dict, titles: list[dict], label_info: dict,
                          "another cut of the film: set the edition name"),
             })
             continue
-        item = extra_item(t, n + 1, movie_dir, cfg)
+        item = extra_item(t, n + 1, movie_dir, cfg, disc)
         n += item["action"] != "skip"
         items.append(item)
     name_editions(items, f"{base_name}{tag}", (match or {}).get("runtime") or 0,
                   f"{disc.get('disc_label', '')} {disc.get('name', '')}", warnings, cfg)
+    number_repeats(items)
     return {
         "kind": "movie", "title": title, "year": year, "tmdb_id": tid,
         "format": fmt_folder, "library_dir": movie_dir, "items": items,
+        **({"bonus_disc": True} if bonus else {}),
         **({"match_source": checked} if checked else {}),
         "tmdb_candidates": [{"id": c["id"], "title": c.get("title"), "year": year_of(c.get("release_date")),
                              "runtime": c.get("runtime")} for c in candidates[:6]],
@@ -1071,13 +1198,14 @@ def plan_tv(folder: Path, rip_root: Path, disc: dict, titles: list[dict], label_
                           "dest_dir": season_dir, "name": "", "action": "skip",
                           "note": notes[t["output_file"]]})
             continue
-        item = extra_item(t, n + 1, season_dir, cfg)
+        item = extra_item(t, n + 1, season_dir, cfg, disc)
         if t["output_file"] in odd:
             item["category"] = "Featurettes"
             item["note"] = odd[t["output_file"]]
         n += item["action"] != "skip"
         items.append(item)
 
+    number_repeats(items)
     if not episode_titles:
         warnings.append("No episode-length titles found. This may be a bonus disc.")
     if any(i.get("needs_split") for i in items):
@@ -1096,8 +1224,10 @@ def plan_tv(folder: Path, rip_root: Path, disc: dict, titles: list[dict], label_
 # What people skip, learned from real filings: menus, warnings and logos; clips too short to be
 # anything that nobody could name; and "Play All" titles whose pieces are kept anyway.
 CLUTTER = re.compile(r"\b(menu|copyright|fbi|piracy|warning|(disc|bonus features?) credits|easter egg|digital copy|"
-                     r"sneak peeks?|previews|promo|disneyparks(\.com)?|logo)\b", re.I)
-PLACEHOLDER = re.compile(r"^(Extra \d+|Unused clip) \(", re.I)
+                     r"sneak peeks?|previews|promo|disneyparks(\.com)?|logo|screen ?saver)\b", re.I)
+# Names Shelfrip made up itself: "Extra 03 (4m10s)", and the guesses given to skipped titles
+# ("Probably Play All (12m30s)"). They're never sent to the shared database as real names.
+PLACEHOLDER = re.compile(r"^(?:(?:Extra \d+|Unused clip) \(|Probably )", re.I)
 PLAY_ALL = re.compile(r"play all|\((all|play all)\)|\s-\s+all\b", re.I)
 
 
@@ -1135,19 +1265,22 @@ def _same_length_run(it, extras) -> bool:
 
 
 def skip_clutter(items: list[dict], title: str = "") -> None:
+    """Set extras that look like menus, warnings, promos or ads for other films to Skip (with a
+    note saying why), so only real special features get filed."""
     extras = [it for it in items if it.get("role") == "extra" and it.get("action") == "move"]
     own = _title_words(title)
     for it in extras:
         name, d = str(it.get("name") or ""), int(it.get("duration_seconds") or 0)
-        why = ""
+        why, guess = "", ""
         if CLUTTER.search(name):
             why = "looks like a menu, warning or promo"
         elif PLACEHOLDER.match(name) and d < 45:
-            why = "short, and nothing could name it"
+            why, guess = "short, and nothing could name it", "Probably a Logo, Warning or Menu"
         elif PLACEHOLDER.match(name) and _sums_others(it, extras):
-            why = "about as long as the other extras together: probably a Play All"
+            why, guess = "about as long as the other extras together: probably a Play All", "Probably Play All"
         elif PLACEHOLDER.match(name) and _same_length_run(it, extras):
-            why = "one of several unnamed clips of the same length: probably trailers for other titles"
+            why, guess = ("one of several unnamed clips of the same length: probably trailers for other titles",
+                          "Probably a Trailer")
         elif (it.get("category") == "Trailers" and own and not OWN_TRAILER.search(name)
               and not PLACEHOLDER.match(name) and not (_title_words(name) & own)):
             why = "looks like a trailer for another title"
@@ -1160,6 +1293,44 @@ def skip_clutter(items: list[dict], title: str = "") -> None:
         if why:
             it["action"] = "skip"
             it["note"] = "; ".join(x for x in (f"skipped: {why}. Set Keep to add it anyway", it.get("note")) if x)
+            if guess and re.match(r"Extra \d+ \(", name):
+                it["name"] = f"{guess} ({mmss(d)})"
+
+
+def skip_scenes(plan: dict, titles: list[dict]) -> None:
+    """Movie discs that also list every scene as its own title: set those unnamed scene titles to Skip.
+    Everything in them is in the feature being filed. Same rules as dupes.scene_pieces (used before ripping)."""
+    if plan.get("kind") != "movie":
+        return
+    import dupes
+    by_file = {t.get("output_file"): t for t in titles}
+    feats, trusted = [], set()
+    for it in plan["items"]:
+        t = by_file.get(it.get("source"))
+        if t is None or it.get("action") == "skip" or t.get("duration_seconds", 0) < dupes.FEATURE_MIN_SECONDS:
+            continue
+        feats.append(t)
+        if it.get("role") in ("main", "edition"):
+            trusted.add(t["title_id"])
+    if not feats:
+        return
+    open_extras = {it["source"]: it for it in plan["items"] if it.get("role") == "extra" and it.get("action") == "move"
+                   and PLACEHOLDER.match(str(it.get("name") or ""))}
+    # titles you'd keep under a real name are never scenes (and end a run of DVD scenes)
+    kept = {it["source"] for it in plan["items"] if it.get("action") != "skip" and it["source"] not in open_extras}
+    named = {t["title_id"] for t in titles if t.get("output_file") in kept}
+    pieces = dupes.scene_pieces(titles, feats, trusted, keep=named - {f["title_id"] for f in feats})
+    names = {t["title_id"]: next((it.get("name") for it in plan["items"] if it.get("source") == t["output_file"]), "")
+             for t in feats}
+    for tid, (fid, _why) in pieces.items():
+        it = open_extras.get(next((t["output_file"] for t in titles if t["title_id"] == tid), None))
+        if it is None:
+            continue
+        it["action"] = "skip"
+        if re.match(r"Extra \d+ \(", str(it.get("name") or "")):
+            it["name"] = f"Probably a Scene From the Movie ({mmss(int(it.get('duration_seconds') or 0))})"
+        it["note"] = "; ".join(x for x in (f"skipped: a scene from {names.get(fid) or f'title {fid}'}, which has all of it. "
+                                           "Set Keep to add it anyway", it.get("note")) if x)
 
 
 def plan_folder(folder: Path, rip_root: Path, tmdb: TMDB | None, lib: dict, cfg: dict,
@@ -1238,7 +1409,8 @@ def plan_folder(folder: Path, rip_root: Path, tmdb: TMDB | None, lib: dict, cfg:
         apply_discdb(plan, known, tmdb)
         if known.get("community"):  # remembered, so a correction can be reported back
             plan["community_answer"] = {"kind": known["kind"], "tmdb_id": known["tmdb_id"], "season": known.get("season"),
-                                        "title": known.get("title")}
+                                        "title": known.get("title"),
+                                        "sources": sorted(known.get("pairs") or {})}  # titles the database knew
         if known.get("community") and not known.get("confirmed"):
             plan["warnings"].append("Only one person has shared this disc with the Shelfrip disc database so far: "
                             "check the names before filing.")
@@ -1255,19 +1427,37 @@ def plan_folder(folder: Path, rip_root: Path, tmdb: TMDB | None, lib: dict, cfg:
         except Exception as exc:
             print(f"    (couldn't look up extras names: {exc})")
     for it in plan["items"]:
-        if it.get("role") == "extra" and it.get("name"):
+        if it.get("role") == "extra" and it.get("name") and not PLACEHOLDER.match(it["name"]):
             it["name"] = capital_case(it["name"])
+    name_copies(plan["items"])  # Shelfrip's own "Probably a Copy (…, t03)" stays as written
     if cfg.get("skip_clutter", True):
         skip_clutter(plan["items"], plan.get("title") or "")
+        try:
+            skip_scenes(plan, titles)
+        except Exception as exc:
+            print(f"    (couldn't check for scene-by-scene titles: {exc})")
     try:
         attach_audio(plan, folder, disc)
     except Exception as exc:
         print(f"    (couldn't read the audio tracks: {exc})")
+    if disc.get("skipped_duplicates"):
+        n = disc["skipped_duplicates"]
+        plan["warnings"].append(f"{n} extra cop{'y' if n == 1 else 'ies'} of the main feature {'was' if n == 1 else 'were'} "
+                                "left out before ripping (Settings, Ripping: Rip the main feature only once). "
+                                "Use Rip again with that setting off if something is missing.")
+    if disc.get("skipped_scenes"):
+        n = disc["skipped_scenes"]
+        plan["warnings"].append(f"{n} scene-by-scene title{'' if n == 1 else 's'} (the movie cut into separate scenes) "
+                                f"{'was' if n == 1 else 'were'} left out before ripping, as the main feature has all of "
+                                "it (Settings, Ripping: Rip the main feature only once).")
     if disc.get("read_errors") or disc.get("titles_failed"):
         bits = [f"{disc['read_errors']} read error(s)" if disc.get("read_errors") else "",
                 f"{disc['titles_failed']} title(s) failed" if disc.get("titles_failed") else ""]
         plan["warnings"].append("The disc had " + " and ".join(b for b in bits if b) +
                                 " (scratched or dirty?). Play the files to check them before filing.")
+    if plan.get("community_answer"):
+        import community
+        community.note_shown(plan, disc)  # so filing it unchanged counts as half a vote
     return plan
 
 
@@ -1370,6 +1560,7 @@ def attach_audio(plan: dict, folder: Path, disc: dict) -> None:
             pass
     names = list(plan.get("commentaries") or [])
     for it in plan["items"]:
+        shared = it.pop("shared_audio", None) or []  # from the Shelfrip disc database (apply_discdb)
         if it.get("role") not in ("main", "edition", "episode"):
             continue
         streams = [s for s in (by_file.get(it["source"]) or {}).get("streams", []) if s.get("type") == "Audio"]
@@ -1393,15 +1584,27 @@ def attach_audio(plan: dict, folder: Path, disc: dict) -> None:
                         and 0 < a["channels"] <= 2):
                     a.update(commentary=True, guessed=True)
                     have += 1
+        same_layout = len(shared) == len(audio) and all(
+            str(x.get("lang") or "") == a["lang"] and int(x.get("ch") or 0) == a["channels"] for x, a in zip(shared, audio))
         n = 0
         for a in audio:
             if a["commentary"]:
                 a["name"] = names[n] if n < len(names) else ("Commentary" if have == 1 else f"Commentary {n + 1}")
                 n += 1
+        from_db = False
+        if same_layout:  # the same tracks as people who filed this disc: go with what they said
+            for x, a in zip(shared, audio):
+                if x.get("commentary") and x.get("name"):
+                    a.update(commentary=True, guessed=False, name=str(x["name"]))
+                    from_db = True
+                elif not x.get("commentary") and a["guessed"]:
+                    a.update(commentary=False, guessed=False, name="")
+            n = sum(a["commentary"] for a in audio)
         it["audio"] = audio
         if n:
             g = any(a["guessed"] for a in audio)
-            note = f"{n} commentary track(s) will be named" + (" (guessed from DVDCompare: check under Audio)" if g else "")
+            note = f"{n} commentary track(s) will be named" + (" (guessed from DVDCompare: check under Audio)" if g else
+                                                               " (names from the Shelfrip disc database)" if from_db else "")
             it["note"] = "; ".join(x for x in (it.get("note"), note) if x)
 
 
@@ -1433,6 +1636,11 @@ def apply_discdb(plan: dict, known: dict, tmdb: TMDB | None) -> None:
         r = pairs.get(it["source"])
         if not r:
             continue
+        if known.get("community"):
+            if r.get("confidence") is not None:
+                it["shared_confidence"] = int(r["confidence"])  # shown on the review page
+            if isinstance(r.get("tracks"), dict):
+                it["shared_audio"] = r["tracks"].get("audio") or []  # commentary names, used by attach_audio
         t = typ(it)
         desc = (r.get("description") or "").strip()
         if plan["kind"] == "tv" and t == "episode" and str(r.get("season")).isdigit() and str(r.get("episode")).isdigit():
@@ -1465,17 +1673,23 @@ def apply_discdb(plan: dict, known: dict, tmdb: TMDB | None) -> None:
         elif (local or known.get("community")) and r.get("kept") is False and it["role"] in ("extra", "play_all", "edition"):
             it.update(action="skip", note="you skipped this title last time (your catalog)" if local
                       else f"skipped by people who filed this disc ({src})")
+            if desc and it["role"] in ("extra", "play_all"):  # what it was called, so you know what's skipped
+                it.update(role="extra", name=desc, category=r.get("category") or extras.guess_category(desc))
     numbered = [i for i in plan["items"] if i.get("db_numbered")]
     seen_eps: set = set()
     for i in numbered:
         key = (i["season"], i["episode"])
         if key in seen_eps:
-            i.update(action="skip", note=f"another copy of s{key[0]:02d}e{key[1]:02d} (per {src})")
+            i.update(action="skip", name=f"Probably a Copy of s{key[0]:02d}e{key[1]:02d}",
+                     note=f"another copy of s{key[0]:02d}e{key[1]:02d} (per {src})")
         seen_eps.add(key)
     for i in plan["items"]:
-        if i["role"] == "episode" and not i.get("db_numbered") and \
-                any(abs(i["duration_seconds"] - n["duration_seconds"]) <= 1 for n in numbered):
-            i.update(action="skip", note=f"same length as an episode {src} identified: probably a copy")
+        twin = next((n for n in numbered if abs(i["duration_seconds"] - n["duration_seconds"]) <= 1), None) \
+            if i["role"] == "episode" and not i.get("db_numbered") else None
+        if twin:
+            # named after the episode it copies, not the next episode number it was given before
+            i.update(action="skip", name=f"Probably a Copy of s{twin['season']:02d}e{twin['episode']:02d}",
+                     note=f"same length as an episode {src} identified: probably a copy")
     if plan["kind"] == "tv" and numbered:
         plan["warnings"] = [w for w in plan["warnings"] if "Assumed Season 1" not in w]
 

@@ -80,6 +80,60 @@ class LibraryDirs(unittest.TestCase):
         self.assertEqual(music.music_root({"plex_library_root": str(lib("music"))}).name, "music")
         self.assertEqual(str(music.music_root({"plex_library_root": str(lib()), "music_library_root": r"M:\Audio"})), r"M:\Audio")
 
+    def test_rip_folder_inside_library(self):
+        import app
+        root = lib("Movies")
+        cfg = {"plex_library_root": str(root)}
+        self.assertEqual(app.rip_folder_in_library(str(root / "Ripped"), cfg), str(root))
+        self.assertEqual(app.rip_folder_in_library(str(root), cfg), str(root))
+        self.assertEqual(app.rip_folder_in_library(str(root.parent / "Ripped"), cfg), "")
+        self.assertEqual(app.rip_folder_in_library(str(root) + "-rips", cfg), "")  # same prefix, different folder
+        self.assertEqual(app.rip_folder_in_library(str(root / "x"), {}), "")
+
+    def test_extras_style(self):
+        import review
+        root = lib("Movies")
+        old = (review.CFG, review.LIB_ROOT)
+        it = {"role": "extra", "category": "Behind the Scenes", "name": "Ithaca", "dest_dir": "Movies\\Film (2026) {tmdb-1}"}
+        try:
+            review.LIB_ROOT = root
+            review.CFG = {**identify.DEFAULTS, "extras_style": "folders"}
+            self.assertEqual(review.dest_for(it).relative_to(root).parts[-2:], ("Behind the Scenes", "Ithaca.mkv"))
+            review.CFG = {**identify.DEFAULTS, "extras_style": "suffix"}
+            self.assertEqual(review.dest_for(it).relative_to(root).parts[-2:], ("Film (2026) {tmdb-1}", "Ithaca-behindthescenes.mkv"))
+            review.CFG = {**identify.DEFAULTS, "extras_style": "suffix", "media_server": "kodi"}
+            self.assertEqual(review.dest_for(it).relative_to(root).parts[-2:], ("Extras", "Ithaca.mkv"))
+        finally:
+            review.CFG, review.LIB_ROOT = old
+        # a tagged extra next to the film isn't mistaken for a copy of the film
+        self.assertTrue(identify.EXTRA_TAGGED.search("Ithaca-behindthescenes"))
+        self.assertFalse(identify.EXTRA_TAGGED.search("Film (2026) {tmdb-1}"))
+
+    def test_settings_saves_dont_lose_each_other(self):
+        import json
+        import threading
+        import app
+        import paths
+        import review
+        tmp = Path(tempfile.mkdtemp()) / "config.json"
+        saved = (paths.CONFIG_PATH, identify.CONFIG_PATH, review.reload_config, app.RIPPER)
+        try:
+            paths.CONFIG_PATH = identify.CONFIG_PATH = tmp
+            review.reload_config, app.RIPPER = (lambda: None), None
+            tmp.write_text('{"tmdb_api_key": "k", "output_root": "E:\\Ripped"', encoding="utf-8")  # cut off
+            app.save_settings({"notifications": False})
+            self.assertTrue((tmp.parent / "config.broken.json").exists())  # the unreadable one was kept
+            # the setup wizard saves several answers at once while you type
+            keys = [k for k, _, kind in app.SETTINGS if kind == "bool"][:6]
+            ts = [threading.Thread(target=app.save_settings, args=({k: True},)) for k in keys]
+            [t.start() for t in ts]
+            [t.join() for t in ts]
+            cfg = json.loads(tmp.read_text(encoding="utf-8"))
+            self.assertTrue(all(cfg.get(k) is True for k in keys), cfg)
+            self.assertEqual(list(tmp.parent.glob("*.tmp")), [])
+        finally:
+            paths.CONFIG_PATH, identify.CONFIG_PATH, review.reload_config, app.RIPPER = saved
+
 
 if __name__ == "__main__":
     unittest.main()

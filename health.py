@@ -22,6 +22,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import paths
+
 NOWIN = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 NAMES = ("makemkvcon.exe", "makemkvcon64.exe")
 
@@ -42,6 +44,19 @@ def _makemkv_pids() -> list[int]:
             if len(row) > 1 and row[0].lower() == name and row[1].isdigit():
                 pids.append(int(row[1]))
     return pids
+
+
+def makemkv_window_open() -> bool:
+    """Is MakeMKV's own window (makemkv.exe) open? It can hold on to the drives it shows, and two
+    programs reading one drive make rips crawl, or fail as if the disc were scratched."""
+    if os.name != "nt":
+        return False
+    try:
+        out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq makemkv.exe", "/FO", "CSV", "/NH"],
+                             capture_output=True, text=True, timeout=20, creationflags=NOWIN).stdout
+    except Exception:
+        return False
+    return any(len(row) > 1 and row[0].lower() == "makemkv.exe" for row in csv.reader(io.StringIO(out)))
 
 
 LEFTOVER: list[int] = []
@@ -222,7 +237,7 @@ def backup(data_dir: Path, rip_root: Path | None, keep: int = 7) -> Path | None:
     import tempfile
     import zipfile
     out_dir = data_dir / BACKUP_DIR_NAME
-    out_dir.mkdir(parents=True, exist_ok=True)
+    paths.make_folder(out_dir, "the backup folder")
     dst = out_dir / f"Shelfrip backup {dt.date.today().isoformat()}.zip"
     if dst.exists():
         return None
