@@ -95,6 +95,7 @@ from collections import deque
 LOG_LINES: deque = deque(maxlen=300)
 STATUS: dict[str, dict] = {}
 PROCS: dict[str, subprocess.Popen] = {}
+PICKS: dict[str, dict] = {}  # drives waiting for you to choose titles: {device: {"event", "ids"}}
 ON_DONE: list = []
 
 
@@ -607,6 +608,54 @@ def rip_all_cheaper(cfg: dict, disc: dict, todo: list[dict], listed: list[dict],
     return True
 
 
+def wait_for_picks(device: str, label: str, st: dict) -> set[int] | None:
+    """Wait until you choose this disc's titles on its drive card (choose(device, ids)). Returns
+    the title ids to rip, or None if the rip was cancelled meanwhile."""
+    ev = threading.Event()
+    PICKS[device] = {"event": ev, "ids": None}
+    st.update(state="choosing", message="Choose the titles to rip, then press Rip", phase="")
+    log(f"{device} [{label}] waiting for you to choose the titles to rip")
+    for cb in ON_CHOOSE:
+        try:
+            cb(device, label)
+        except Exception:
+            pass
+    try:
+        while not ev.wait(1):
+            if st.get("cancel"):
+                return None
+        if st.get("cancel"):
+            return None
+        return set(PICKS[device]["ids"] or [])
+    finally:
+        PICKS.pop(device, None)
+
+
+def choose(device: str, ids) -> bool:
+    """The titles you ticked on a drive that's waiting for them. False if it isn't waiting."""
+    pick = PICKS.get(device)
+    if not pick:
+        return False
+    pick["ids"] = [int(i) for i in ids]
+    pick["event"].set()
+    return True
+
+
+def apply_picks(disc: dict, picked: set[int]) -> int:
+    """Rip exactly the titles you ticked: one Shelfrip would have left out comes back in, and an
+    unticked one is left out like a copy ("you left it out"). Returns how many are left out."""
+    out = 0
+    for t in disc["titles"]:
+        if t.get("title_id") in picked:
+            for k in ("skipped_duplicate_of", "skip_reason", "skip_kind"):
+                t.pop(k, None)
+            continue
+        if "skipped_duplicate_of" not in t:
+            t.update(skipped_duplicate_of=None, skip_reason="you left it out", skip_kind="chosen")
+        out += 1
+    return out
+
+
 def title_summary(disc: dict) -> list[dict]:
     """Each title MakeMKV found, with its length, size and tracks, for the drive card."""
     out = []
@@ -761,8 +810,20 @@ def rip_disc(cfg: dict, drive: dict) -> dict:
             st["message"] = f"{n_titles - len(skipped)} titles to rip ({what} left out)"
             log(f"{device} [{label}] {what} left out ({saved_min} min of video, {saved_gb:.1f} GB)")
 
-    # 2. rip the titles
+    # 1c. optional: wait for you to choose the titles on the drive card (pre-ticked from the plan above)
     st["titles"] = title_summary(disc)  # what's on the disc, for the drive card
+    if cfg.get("choose_titles") and disc["titles"] and not st.get("cancel"):
+        picked = wait_for_picks(device, label, st)
+        if picked is None:
+            st.update(state="cancelled", message="cancelled", cancel=False, phase="")
+            log(f"{device} [{label}] cancelled while choosing titles")
+            return {}
+        n_out = apply_picks(disc, picked)
+        st["titles"] = title_summary(disc)
+        st.update(state="ripping", message=f"{n_titles - n_out} titles to rip ({n_out} left out)")
+        log(f"{device} [{label}] ripping {n_titles - n_out} of {n_titles} titles you chose")
+
+    # 2. rip the titles
     last_pct = [-10]
 
     def progress(frac: float) -> None:
@@ -944,6 +1005,11 @@ def cancel(device: str) -> bool:
     """Stop the rip running on a drive. Its partial folder is left for you to delete."""
     proc = PROCS.get(device)
     if not proc:
+        if device in PICKS:  # waiting for you to choose titles: nothing is running yet
+            STATUS.setdefault(device, {})["cancel"] = True
+            PICKS[device]["event"].set()
+            log(f"{device} rip cancelled")
+            return True
         return False
     STATUS.setdefault(device, {})["cancel"] = True
     proc.terminate()
@@ -983,6 +1049,7 @@ def saved_nothing(folder: Path) -> bool:
 
 
 ON_LOW_SPACE: list = []   # app.py: alert when a rip is held back for space
+ON_CHOOSE: list = []      # app.py: a disc is waiting for you to choose its titles, (device, label)
 ON_ERROR: list = []       # app.py: a rip that crashed, (device, label, error), to offer an error report
 
 

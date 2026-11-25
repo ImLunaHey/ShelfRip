@@ -38,6 +38,9 @@ server expects it.
   "Play All" titles whose episodes are on the disc are left out before ripping. Different cuts,
   language versions and named extras are always ripped, and a TV disc with only a "Play All" keeps it
   so it can be split into episodes.
+- **Lets you choose the titles first (optional).** Turn on "Let me choose the titles before each rip
+  starts" and, once a disc is read, its drive card lists every title with the ones Shelfrip would rip
+  already ticked. Tick or untick any, then press Rip.
 - **Sets scene-by-scene titles to Skip.** Even with that setting off, unnamed titles that are just
   scenes of the movie (made only of its video, or carrying exactly its soundtracks and subtitles)
   start as Skip on the Review tab.

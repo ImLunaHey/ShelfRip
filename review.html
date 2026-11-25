@@ -1105,6 +1105,7 @@ const stateText = d => {
   if (d.filing) return d.filing.state === "running" ? `Filing into ${SERVER_NAME} ${d.filing.pct}%` + (d.filing.current ? ` · ${d.filing.current}` : "")
     : "Filing was cut off · it picks up again by itself" + (d.filing.current ? ` (${d.filing.current})` : "");
   if (d.filed) return `Filed into ${SERVER_NAME} · on your shelf`;
+  if (d.ripping && d.state === "choosing") return "Choose the titles to rip, then press Rip";
   if (d.ripping && d.state === "scanning") return "Reading the disc…" + (d.phase ? ` (MakeMKV: ${d.phase})` : "");
   // before saving, each MakeMKV run opens and analyses the disc again: say so instead of a stuck percentage
   if (d.ripping && d.phase) return `Ripping ${pctOf(d)}% · MakeMKV is reading the disc first: ${d.phase}` + (d.progress ? ` · ${gb(d.progress.done)} of ${gb(d.progress.total)} saved` : "");
@@ -1224,19 +1225,32 @@ function damagedBox(st){
     : `Discs that didn't rip completely (${st.damaged.length}): see what MakeMKV said, then click Rip again`}</summary>${dmg}</details>` : "";
 }
 const OPENT = new Set();  // drive cards whose title list is open (kept open across refreshes)
+const PICK = {};  // drives waiting for you to choose titles: {device: {label, ids: Set}} (kept across refreshes)
+const choosing = d => d.ripping && d.state === "choosing" && d.rip_label === d.label;
+function picksOf(d){
+  const p = PICK[d.device];
+  if (!p || p.label !== d.label) PICK[d.device] = {label: d.label, ids: new Set((d.titles||[]).filter(t => !t.skip).map(t => t.id))};
+  return PICK[d.device].ids;
+}
+const pickLabel = (d, ids) => { const n = ids.size, size = (d.titles||[]).filter(t => ids.has(t.id)).reduce((a, t) => a + (t.size || 0), 0);
+  return n ? `Rip ${n} title${n === 1 ? "" : "s"} (${gb(size)})` : "Tick a title to rip"; };
 // What MakeMKV found on the disc: each title's length, size and tracks, and what's left out.
+// While the drive waits for you to choose, each title gets a tick box (pre-ticked from Shelfrip's plan).
 function titleList(d){
   const ts = d.titles || [];
   if (!ts.length || d.rip_label !== d.label) return "";
-  const kept = ts.filter(t => !t.skip);
-  const row = t => `<tr class="${t.skip ? "muted" : ""}"><td>${t.id}</td><td>${esc(t.length)}</td><td>${t.size ? gb(t.size) : ""}</td>
+  const pick = choosing(d) ? picksOf(d) : null;
+  const kept = pick ? ts.filter(t => pick.has(t.id)) : ts.filter(t => !t.skip);
+  const box = t => pick ? `<td><input type="checkbox" data-pdev="${esc(d.device)}" data-pid="${t.id}" ${pick.has(t.id) ? "checked" : ""} aria-label="Rip title ${t.id}"></td>` : "";
+  const row = t => `<tr class="${pick ? "" : t.skip ? "muted" : ""}">${box(t)}<td>${t.id}</td><td>${esc(t.length)}</td><td>${t.size ? gb(t.size) : ""}</td>
       <td>${t.chapters || ""}</td><td>${esc(t.video || "")}</td>
       <td title="${esc((t.audio||[]).join("\n"))}">${(t.audio||[]).length ? esc((t.audio||[]).slice(0, 2).join(", ")) + ((t.audio||[]).length > 2 ? ` +${t.audio.length - 2}` : "") : ""}</td>
       <td title="${esc((t.subtitles||[]).join(", "))}">${(t.subtitles||[]).length || ""}</td>
-      <td>${t.skip ? `left out: ${esc(t.skip)}` : esc(t.source || "")}</td></tr>`;
-  return `<details class="titles" data-tdev="${esc(d.device)}" ${OPENT.has(d.device) ? "open" : ""}><summary>What's on this disc: ${ts.length} title${ts.length === 1 ? "" : "s"}, ripping ${kept.length} (${gb(kept.reduce((a, t) => a + (t.size || 0), 0))})</summary>
-    <div class="tscroll"><table><thead><tr><th>#</th><th>Length</th><th>Size</th><th>Ch.</th><th>Video</th><th>Audio</th><th>Subs</th><th></th></tr></thead>
-    <tbody>${kept.map(row).join("")}${ts.filter(t => t.skip).map(row).join("")}</tbody></table></div></details>`;
+      <td>${t.skip ? `${pick ? "Shelfrip would leave it out" : "left out"}: ${esc(t.skip)}` : esc(t.source || "")}</td></tr>`;
+  const order = pick ? ts : kept.concat(ts.filter(t => t.skip));
+  return `<details class="titles" data-tdev="${esc(d.device)}" ${pick || OPENT.has(d.device) ? "open" : ""}><summary>What's on this disc: ${ts.length} title${ts.length === 1 ? "" : "s"}, ${pick ? "ticked" : "ripping"} ${kept.length} (${gb(kept.reduce((a, t) => a + (t.size || 0), 0))})</summary>
+    <div class="tscroll"><table><thead><tr>${pick ? "<th></th>" : ""}<th>#</th><th>Length</th><th>Size</th><th>Ch.</th><th>Video</th><th>Audio</th><th>Subs</th><th></th></tr></thead>
+    <tbody>${order.map(row).join("")}</tbody></table></div></details>`;
 }
 function driveCard(d){
   // fil: being filed into the library. Rip again, Review now and "Not this one?" make no sense then.
@@ -1266,6 +1280,7 @@ function driveCard(d){
     </div>` : d.loaded ? `<div class="row">
       ${ready && m && m.folder ? `<button class="gold" data-review="${esc(m.folder)}">Review now</button>` : ""}
       ${m && !ready && !d.filed ? `<button data-notthis="1" title="The box art isn't what's in the drive? Fix it on the Review tab once it's ripped.">Not this one?</button>` : ""}
+      ${choosing(d) ? `<button class="primary" data-pick="${esc(d.device)}" ${picksOf(d).size ? "" : "disabled"}>${esc(pickLabel(d, picksOf(d)))}</button>` : ""}
       ${d.ripping ? `<button data-act="cancel" data-dev="${esc(d.device)}" ${d.stuck ? 'class="primary"' : ""}>${d.stuck ? "Stop this rip" : "Cancel rip"}</button>`
         : `${d.already ? `<button data-act="rip_again" data-dev="${esc(d.device)}">${d.state === "in_plex" && d.rip_label === d.label ? "Rip anyway" : "Rip again"}</button>` : ""}<button data-act="eject" data-dev="${esc(d.device)}">Eject</button>`}
     </div>` : ""}
@@ -1331,6 +1346,19 @@ function renderDrives(j){
   const openCard = i => { showTab("review"); setTimeout(() => { const c = $("#c" + i); c && c.scrollIntoView({behavior:"smooth", block:"start"}); }, 50); };
   el.querySelectorAll("[data-open]").forEach(b => b.onclick = () => openCard(+b.dataset.open));
   el.querySelectorAll("[data-review]").forEach(b => b.onclick = () => openCard(discs.findIndex(p => p.folder === b.dataset.review)));
+  el.querySelectorAll("input[data-pdev]").forEach(c => c.onchange = () => {
+    const dev = c.dataset.pdev, d = j.drives.find(x => x.device === dev), ids = picksOf(d), id = +c.dataset.pid;
+    c.checked ? ids.add(id) : ids.delete(id);
+    const b = $(`[data-pick="${CSS.escape(dev)}"]`, el);
+    if (b){ b.textContent = pickLabel(d, ids); b.disabled = !ids.size; }
+  });
+  el.querySelectorAll("[data-pick]").forEach(b => b.onclick = async () => {
+    const dev = b.dataset.pick, ids = [...(PICK[dev] ? PICK[dev].ids : [])].sort((x, y) => x - y);
+    b.disabled = true;
+    const r = await api("/api/rip", {action:"choose", device:dev, ids});
+    if (r.error) alert(r.error); else delete PICK[dev];
+    renderDrives(r.drives ? r : j);
+  });
   el.querySelectorAll("details[data-tdev]").forEach(x => x.ontoggle = () => x.open ? OPENT.add(x.dataset.tdev) : OPENT.delete(x.dataset.tdev));
   el.querySelectorAll("[data-notthis]").forEach(b => b.onclick = () => toast("Got it", "Once it's ripped, open it on the Review tab and click \"No, pick the right one\". Shelfrip learns from the fix."));
 }
@@ -1830,6 +1858,7 @@ const SET_GROUPS = [
     ["check_plex_before_rip", "Skip discs you already have", "If your library already has it in the same or better quality, the disc isn't ripped. You can still click Rip anyway."],
     ["retry_failed_titles", "Retry titles that hit read errors", "Tries once more before giving up on a scratched section."],
     ["skip_duplicate_features", "Rip each movie or episode only once", "Some discs list the movie several times (often as decoys) or every scene of it as a title of its own, and TV discs often list each episode twice or add a Play All of every episode. Leaves out copies that are the same video and tracks, copies a disc database says aren't the real one, scene-by-scene titles, and a TV disc's Play All when its episodes are on the disc too. Different cuts, language versions and named extras are still ripped."],
+    ["choose_titles", "Let me choose the titles before each rip starts", "After reading a disc, Shelfrip waits on its drive card with the titles it would rip already ticked. Tick or untick any, then press Rip. Leave it off to rip straight away."],
     ["eject_when_done", "Eject as soon as the rip finishes", "Normally the disc stays in until you file it, so you can check its extras."],
     ["min_length_seconds", "Ignore titles shorter than", "Menus, logos and warnings.", {unit:"seconds", adv:1}],
     ["min_free_gb_rips", "Keep this much space free in the rip folder", "A rip waits if there's less than this.", {unit:"GB", adv:1}],
