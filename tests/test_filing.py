@@ -156,5 +156,60 @@ class Stuck(unittest.TestCase):
         self.assertTrue(src.exists())
 
 
+class StartOver(unittest.TestCase):
+    def test_start_naming_over(self):
+        d, plan = make_disc("AGAIN")
+        plan["items"][0]["name"] = "My Edit"
+        plan["edited"] = True
+        review.save_plan(d, plan)
+        fresh = {"kind": "movie", "title": "Fresh", "year": "2001", "tmdb_id": "9", "status": "proposed", "items": []}
+        real = review.identify.plan_folder
+        review.identify.plan_folder = lambda *a, **k: dict(fresh)
+        review.JOBS["AGAIN"] = {"state": "error", "current": "old problem"}
+        try:
+            r = review.start_over(d)
+        finally:
+            review.identify.plan_folder = real
+        self.assertEqual(r["plan"]["title"], "Fresh")
+        self.assertEqual(r["plan"]["folder"], "AGAIN")
+        saved = json.loads((d / "plan.json").read_text())
+        self.assertNotIn("edited", saved)
+        self.assertTrue(saved["hold"])
+        self.assertEqual(json.loads((d / "plan.old.json").read_text())["items"][0]["name"], "My Edit")
+        self.assertNotIn("AGAIN", review.JOBS)
+
+    def test_not_while_filing_or_part_filed(self):
+        d, plan = make_disc("BUSY")
+        review.JOBS["BUSY"] = {"state": "running"}
+        review.THREADS["BUSY"] = threading.Thread(target=threading.Event().wait, args=(1,), daemon=True)
+        review.THREADS["BUSY"].start()
+        self.assertIn("being filed", review.start_over(d)["error"])
+        review.THREADS["BUSY"].join(2)
+        review.JOBS["BUSY"] = {"state": "error"}
+        plan["items"][0]["filed_to"] = str(TMP / "x.mkv")
+        review.save_plan(d, plan)
+        self.assertIn("already in your library", review.start_over(d)["error"])
+
+
+class EpisodeStyle(unittest.TestCase):
+    def test_upper_codes_only_when_chosen(self):
+        n = review.naming
+        self.assertEqual(n.episode_code({}, "Show (2001) - s01e02 - Pilot"), "Show (2001) - s01e02 - Pilot")
+        up = {"episode_style": "upper"}
+        self.assertEqual(n.episode_code(up, "Show (2001) - s01e02 - Pilot"), "Show (2001) - S01E02 - Pilot")
+        self.assertEqual(n.episode_code(up, "Show (2001) - s01e02-e03"), "Show (2001) - S01E02-E03")
+        self.assertEqual(n.episode_code(up, "Show (2001) - s01e02-featurette"), "Show (2001) - S01E02-featurette")
+        self.assertEqual(n.episode_code(up, "Making Of"), "Making Of")
+
+    def test_filed_name_uses_the_setting(self):
+        it = {"name": "Show (2001) - s01e02 - Pilot", "dest_dir": "TV Shows\\Show (2001)\\Season 1", "role": "episode"}
+        self.assertTrue(review.dest_for(it).name.endswith("- s01e02 - Pilot.mkv"))
+        review.CFG["episode_style"] = "upper"
+        try:
+            self.assertTrue(review.dest_for(it).name.endswith("- S01E02 - Pilot.mkv"))
+        finally:
+            review.CFG.pop("episode_style")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

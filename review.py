@@ -209,6 +209,44 @@ def _plan_new_folders() -> int:
     return n
 
 
+def start_over(folder: Path) -> dict:
+    """Name a disc again from scratch, as if it had just been ripped: your edits and any match you
+    picked are dropped (the old plan is kept as plan.old.json). Returns {plan} or {error}."""
+    reap_jobs()
+    if JOBS.get(folder.name, {}).get("state") == "running":
+        return {"error": "This disc is being filed. Stop the filing first."}
+    t = THREADS.get(folder.name)
+    if t is not None and t.is_alive():
+        return {"error": "The filing of this disc is still stopping. Try again in a minute."}
+    pj = folder / "plan.json"
+    try:
+        old = json.loads(pj.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        old = {}
+    if any(it.get("filed_to") for it in old.get("items") or []):
+        return {"error": "Some of this disc is already in your library from a filing that was stopped. "
+                         "File it again to finish, or discard the rip."}
+    with PLAN_LOCK:
+        if _is_music(folder):
+            import music
+            plan = music.plan_folder(folder, CFG, identify.PLANNER_VERSION)
+        else:
+            plan = identify.plan_folder(folder, RIP_ROOT, TMDB, library(refresh=True), CFG)
+        if not plan:
+            return {"error": "Couldn't name this disc again: its ripped files or disc_info.json are missing."}
+        if pj.exists():
+            shutil.copy2(pj, folder / "plan.old.json")
+        if old.get("community_answer") and not plan.get("community_answer"):
+            plan["community_answer"] = old["community_answer"]  # so filing can still report it was wrong
+        plan["planned_at"] = time.time()
+        plan["hold"] = True  # you're looking at it: don't file it by itself
+        save_plan(folder, plan)
+    if JOBS.get(folder.name, {}).get("state") == "error":
+        JOBS.pop(folder.name, None)  # the old error is about the old names
+    plan["folder"] = folder.name
+    return {"plan": next((p for p in list_plans() if p["folder"] == folder.name), plan)}  # as the page loads it
+
+
 def unnamed_folders() -> list[str]:
     """Finished rips that have no names yet (naming failed, e.g. no internet at the time)."""
     if not RIP_ROOT.is_dir():
@@ -555,6 +593,7 @@ def refile_tv(name: str, tmdb_id: str, season, shift=0, log=print) -> dict:
             new["split_names"] = [ep_name([n]) for n in nums][:len(sp["names"])]
             stems.update(zip(sp["names"], new["split_names"]))
         changes.append((it, new))
+    stems.update({naming.episode_code(CFG, o): naming.episode_code(CFG, n) for o, n in stems.items()})  # files as filed
     old_prefix = identify.fs_safe(f"{plan.get('title')} ({plan.get('year')})" if plan.get("year") else plan.get("title") or "")
 
     def new_stem(stem):
@@ -694,7 +733,7 @@ def dest_for(item: dict, plan: dict | None = None) -> Path:
             name = f"{name}-{EXTRA_SUFFIX.get(cat, 'other')}"
         else:
             parts.append(folder)
-    return identify.lib_path(LIB_ROOT, "\\".join(parts)) / (identify.fs_safe(name) + ".mkv")
+    return identify.lib_path(LIB_ROOT, "\\".join(parts)) / (identify.fs_safe(naming.episode_code(CFG, name)) + ".mkv")
 
 
 def split_ok(it: dict) -> str:
@@ -1241,6 +1280,8 @@ class Handler(BaseHTTPRequestHandler):
                 refresh_warnings(plan)
                 save_plan(folder, plan)
                 return self.send(200, {"ok": True})
+            if u.path == "/api/startover":  # throw away the names and work them out again
+                return self.send(200, start_over(folder))
             if u.path == "/api/stopfiling":  # a filing that's stuck, or that you changed your mind about
                 err = stop_filing(folder)
                 return self.send(200, {"error": err} if err else {"ok": True})
