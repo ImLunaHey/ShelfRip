@@ -20,6 +20,7 @@ Online services used for names and details
 * TMDB (The Movie Database). This application uses TMDB and the TMDB APIs but is
   not endorsed, certified, or otherwise approved by TMDB. https://www.themoviedb.org/
   Used through Shelfrip's shared key, or your own free API key.
+  The TMDB logo shown in Settings is TMDB's, used as TMDB's attribution rules ask.
 * TheDiscDB: https://thediscdb.com/
 * TVmaze (CC BY-SA): https://www.tvmaze.com/
 * OMDb (optional, your own key): https://www.omdbapi.com/
