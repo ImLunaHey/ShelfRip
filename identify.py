@@ -1442,14 +1442,20 @@ def plan_folder(folder: Path, rip_root: Path, tmdb: TMDB | None, lib: dict, cfg:
         print(f"    (couldn't read the audio tracks: {exc})")
     if disc.get("skipped_duplicates"):
         n = disc["skipped_duplicates"]
-        plan["warnings"].append(f"{n} extra cop{'y' if n == 1 else 'ies'} of the main feature {'was' if n == 1 else 'were'} "
-                                "left out before ripping (Settings, Ripping: Rip the main feature only once). "
+        plan["warnings"].append(f"{n} duplicate cop{'y' if n == 1 else 'ies'} (the same video and tracks as another title, or a "
+                                f"decoy of the feature) {'was' if n == 1 else 'were'} "
+                                "left out before ripping (Settings, Ripping: Rip each movie or episode only once). "
                                 "Use Rip again with that setting off if something is missing.")
     if disc.get("skipped_scenes"):
         n = disc["skipped_scenes"]
         plan["warnings"].append(f"{n} scene-by-scene title{'' if n == 1 else 's'} (the movie cut into separate scenes) "
                                 f"{'was' if n == 1 else 'were'} left out before ripping, as the main feature has all of "
-                                "it (Settings, Ripping: Rip the main feature only once).")
+                                "it (Settings, Ripping: Rip each movie or episode only once).")
+    if disc.get("skipped_play_alls"):
+        n = disc["skipped_play_alls"]
+        plan["warnings"].append(f"{n} 'Play All' title{'' if n == 1 else 's'} (every episode in one video) "
+                                f"{'was' if n == 1 else 'were'} left out before ripping, as the episodes are ripped on their own "
+                                "(Settings, Ripping: Rip each movie or episode only once).")
     if disc.get("read_errors") or disc.get("titles_failed"):
         bits = [f"{disc['read_errors']} read error(s)" if disc.get("read_errors") else "",
                 f"{disc['titles_failed']} title(s) failed" if disc.get("titles_failed") else ""]
