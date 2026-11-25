@@ -30,11 +30,14 @@ server expects it.
   Deleted Scenes, Behind the Scenes and so on.
 - **Skips the clutter.** Menus, copyright warnings, promos, trailers for other films and "Play All"
   titles are set to Skip for you.
-- **Rips the main feature only once (optional).** Some discs list the movie several times, often as
-  decoy playlists, or offer every scene of it as a separate title. Turn on "Rip the main feature only
-  once" in Settings and copies that are the same video and tracks, copies a disc database says aren't
-  the real one, and scene-by-scene titles are left out before ripping. Different cuts, language
-  versions and named extras are always ripped.
+- **Rips each movie and episode only once (optional).** Some discs list the movie several times, often
+  as decoy playlists, or offer every scene of it as a separate title. TV Blu-rays often list each
+  episode twice (as a playlist and as its raw video file), and TV DVDs add a "Play All" of every
+  episode. Turn on "Rip each movie or episode only once" in Settings and copies that are the same
+  video and tracks, copies a disc database says aren't the real one, scene-by-scene titles and TV
+  "Play All" titles whose episodes are on the disc are left out before ripping. Different cuts,
+  language versions and named extras are always ripped, and a TV disc with only a "Play All" keeps it
+  so it can be split into episodes.
 - **Sets scene-by-scene titles to Skip.** Even with that setting off, unnamed titles that are just
   scenes of the movie (made only of its video, or carrying exactly its soundtracks and subtitles)
   start as Skip on the Review tab.
