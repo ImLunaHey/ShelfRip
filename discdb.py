@@ -191,11 +191,15 @@ def tdb_seasons(match: dict) -> list[int]:
 
 # --------------------------------------------------------------------------- learned labels
 
-def label_key(label: str) -> str:
-    """'TRANSFORMERS_G1_S2_D7' -> 'TRANSFORMERS G1 S2'  (disc / volume numbers removed)"""
+def label_key(label: str, keep_number: bool = False) -> str:
+    """'TRANSFORMERS_G1_S2_D7' -> 'TRANSFORMERS G1 S2'  (disc / volume numbers removed).
+
+    A trailing bare number is taken as a disc number ('FRIENDS_S1_2') unless keep_number:
+    for a film it's usually part of the title ('THE_SANTA_CLAUSE_2')."""
     up = re.sub(r"[_\-.]+", " ", (label or "").upper()).strip()
     up = re.sub(r"\b(?:D|DISC|DISK|DVD|V|VOL|VOLUME|CD)\s?\d{1,2}\b", " ", up)
-    up = re.sub(r"\s\d{1,2}$", "", up)  # trailing bare disc number: 'FRIENDS S1 2'
+    if not keep_number:
+        up = re.sub(r"\s\d{1,2}$", "", up)  # trailing bare disc number: 'FRIENDS S1 2'
     return re.sub(r"\s+", " ", up).strip()
 
 
@@ -207,13 +211,24 @@ def _load() -> dict:
 
 
 def learned(label: str) -> dict | None:
+    """What a disc with this label was filed as before, else None. A film's sequel isn't taken
+    for the film: 'THE_SANTA_CLAUSE_2' only matches an earlier 'THE_SANTA_CLAUSE' if that was
+    a TV set (where the 2 is a disc number)."""
+    data = _load()
+    full = label_key(label, keep_number=True)
+    if full and full in data:
+        return data[full]
     k = label_key(label)
-    return _load().get(k) if k else None
+    hit = data.get(k) if k else None
+    if hit and k != full and hit.get("kind") != "tv":
+        return None
+    return hit
 
 
 def remember(label: str, plan: dict) -> None:
-    """Called when a disc is filed: remember label -> confirmed match."""
-    k = label_key(label)
+    """Called when a disc is filed: remember label -> confirmed match. Films keep a trailing
+    number in the key, so filing 'THE_SANTA_CLAUSE_2' doesn't overwrite 'THE_SANTA_CLAUSE'."""
+    k = label_key(label, keep_number=plan.get("kind") != "tv")
     if not k or not plan.get("tmdb_id"):
         return
     data = _load()

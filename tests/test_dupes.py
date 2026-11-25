@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -317,7 +318,7 @@ class ReviewScenes(unittest.TestCase):
 class RipDisc(unittest.TestCase):
     """rip_disc rips only the titles that are left, one by one, and records what it left out."""
 
-    def run_rip(self, setting, disc=None, label=""):
+    def run_rip(self, setting, disc=None, label="", **extra):
         disc = disc or {"titles": [title(0, 7200, "1,2,3"), title(1, 7200, "1,2,3"), title(2, 600, "7")]}
         calls = []
 
@@ -333,7 +334,7 @@ class RipDisc(unittest.TestCase):
             return 0, ""
 
         cfg = {**rip_all.DEFAULT_CONFIG, "output_root": str(TMP / "rip"), "skip_duplicate_features": setting, "eject_when_done": False,
-               "retry_failed_titles": False, "use_community": False, "use_thediscdb": False}
+               "retry_failed_titles": False, "use_community": False, "use_thediscdb": False, **extra}
         rip_all.run_makemkv, old_run = fake, rip_all.run_makemkv
         rip_all.parse_disc_info, old_parse = (lambda _: json.loads(json.dumps(disc))), rip_all.parse_disc_info
         try:
@@ -393,6 +394,44 @@ class RipDisc(unittest.TestCase):
         info, rips = self.run_rip(False)
         self.assertEqual([c[3] for c in rips], ["all"])
         self.assertNotIn("skipped_duplicates", info)
+
+    def pick(self, then, **kw):
+        """Rip with "choose titles" on; then(device) answers the drive card once it's waiting."""
+        import threading
+
+        def answer():
+            for _ in range(500):
+                if "disc:9" in rip_all.PICKS:
+                    self.assertEqual(rip_all.STATUS["disc:9"]["state"], "choosing")
+                    return then("disc:9")
+                time.sleep(0.01)
+        t = threading.Thread(target=answer)
+        t.start()
+        out = self.run_rip(True, choose_titles=True, **kw)
+        t.join()
+        return out
+
+    def test_choose_titles(self):
+        # Shelfrip leaves out title 1 (a copy of 0); you tick 1 and 2 instead
+        info, rips = self.pick(lambda dev: rip_all.choose(dev, [1, 2]), label="PICK_SWAP")
+        self.assertEqual([c[3] for c in rips], ["1", "2"])
+        t0, t1 = info["titles"][0], info["titles"][1]
+        self.assertEqual((t0["skip_kind"], t0["skip_reason"], t0["ripped"]), ("chosen", "you left it out", False))
+        self.assertNotIn("skipped_duplicate_of", t1)
+        self.assertTrue(t1["ripped"])
+        self.assertEqual(info["status"], "ok")
+
+    def test_choose_titles_keeps_the_plan(self):
+        info, rips = self.pick(lambda dev: rip_all.choose(dev, [0, 2]), label="PICK_PLAN")
+        self.assertEqual([c[3] for c in rips], ["0", "2"])
+        self.assertEqual(info["titles"][1]["skip_kind"], "copy")
+
+    def test_cancel_while_choosing(self):
+        info, rips = self.pick(lambda dev: rip_all.cancel(dev), label="PICK_CANCEL")
+        self.assertEqual((info, rips), ({}, []))
+        self.assertEqual(rip_all.STATUS["disc:9"]["state"], "cancelled")
+        self.assertNotIn("disc:9", rip_all.PICKS)
+        self.assertFalse(rip_all.choose("disc:9", [0]))
 
     def test_drive_lost_is_not_retried(self):
         # a USB drive dropped off: MakeMKV can't open it, nothing is saved, and retrying can't help
