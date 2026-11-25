@@ -102,6 +102,7 @@ function cleanTitle(t) {
   if (role === "edition") out.name = str(t.name, 60);  // just the edition, e.g. "Extended"
   if (t.split) out.split = str(t.split, 200);          // how a multi-episode title was cut
   if (t.accepted === true) out.accepted = 1;           // filed just as our answer showed it
+  if (t.changed === true) out.changed = 1;             // the person changed what Shelfrip suggested
   const tracks = cleanTracks(t.tracks);
   if (tracks) out.tracks = tracks;
   return out;
@@ -175,6 +176,11 @@ async function submit(req, env) {
   if (!titles.length) throw new Refusal("no titles");
   // the whole disc filed just as our answer showed it: its say on what the disc is counts less too
   const accepted = titles.every(t => t.accepted) ? 1 : 0;
+  // what Shelfrip suggested before review (apps from 1.2 on): {} = the same match, else the one it suggested
+  const p = b.proposed && typeof b.proposed === "object" ? b.proposed : null;
+  const proposed = !p ? null : JSON.stringify(p.tmdb_id ? {
+    kind: p.kind === "tv" ? "tv" : "movie", title: str(p.title, 200), year: str(p.year, 4),
+    tmdb_id: /^\d+$/.test(str(p.tmdb_id, 20)) ? str(p.tmdb_id, 20) : "", season: int(p.season) } : {});
 
   const ip = req.headers.get("CF-Connecting-IP") || "";
   await bump(env, await sha(env.SALT + "|ip|" + ip), PER_IP_PER_DAY);
@@ -185,16 +191,16 @@ async function submit(req, env) {
     .bind(discKey, install, kind, tmdb, kind === "tv" ? (int(m.season) ?? -1) : -1).run();
   await env.DB.prepare(
     `INSERT INTO submissions (disc_key, alt_key, install, created, app_version, format, disc_label, disc_name,
-       kind, title, year, tmdb_id, imdb_id, season, titles, accepted)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       kind, title, year, tmdb_id, imdb_id, season, titles, accepted, proposed)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(disc_key, install) DO UPDATE SET alt_key=excluded.alt_key, created=excluded.created,
        app_version=excluded.app_version, format=excluded.format, disc_label=excluded.disc_label,
        disc_name=excluded.disc_name, kind=excluded.kind, title=excluded.title, year=excluded.year,
        tmdb_id=excluded.tmdb_id, imdb_id=excluded.imdb_id, season=excluded.season, titles=excluded.titles,
-       accepted=excluded.accepted`
+       accepted=excluded.accepted, proposed=excluded.proposed`
   ).bind(discKey, altKey, install, now(), str(b.app_version, 20), str(d.format, 20), str(d.label, 100),
     str(d.name, 200), kind, str(m.title, 200), str(m.year, 4), tmdb, str(m.imdb_id, 20),
-    kind === "tv" ? int(m.season) : null, JSON.stringify(titles), accepted).run();
+    kind === "tv" ? int(m.season) : null, JSON.stringify(titles), accepted, proposed).run();
   return json({ ok: true, disc_key: discKey });
 }
 
@@ -322,7 +328,7 @@ function consensus(rows, reports = []) {
     const best = list[0], second = list[1] ? list[1].w : 0;
     const others = list.slice(1).reduce((s, x) => s + x.w, 0);
     const t = { ...best.title };
-    delete t.accepted; delete t.tracks;
+    delete t.accepted; delete t.changed; delete t.tracks;
     if (best.names.size) t.name = [...best.names.entries()].sort((a, b) => b[1] - a[1])[0][0];
     const tracks = commonTracks(best.tracks);
     if (tracks) t.tracks = tracks;
@@ -400,8 +406,9 @@ async function admin(req, url, env) {
     const limit = Math.min(200, int(url.searchParams.get("limit")) || 50);
     const { results } = await env.DB.prepare(
       `SELECT id, disc_key, substr(install, 1, 12) install, created, app_version, format, disc_label, kind, title,
-         year, tmdb_id, season, hidden, accepted, titles FROM submissions ORDER BY created DESC LIMIT ?`).bind(limit).all();
-    return json({ submissions: results.map(r => ({ ...r, titles: JSON.parse(r.titles) })) });
+         year, tmdb_id, season, hidden, accepted, proposed, titles FROM submissions ORDER BY created DESC LIMIT ?`).bind(limit).all();
+    return json({ submissions: results.map(r => ({ ...r, titles: JSON.parse(r.titles),
+      proposed: r.proposed ? JSON.parse(r.proposed) : null })) });
   }
   if (p === "reports" && req.method === "GET") {
     const limit = Math.min(200, int(url.searchParams.get("limit")) || 50);
