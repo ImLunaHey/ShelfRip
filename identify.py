@@ -61,6 +61,8 @@ DEFAULTS = {
     "use_community": True,
     "share_discs": True,
     "tmdb_api_key": "",
+    # With no TMDB key of your own, ask TMDB through the Shelfrip server, which has a key (see tmdb_for)
+    "shared_tmdb": True,
     # Optional second opinion on movies (free key: https://www.omdbapi.com/apikey.aspx)
     "omdb_api_key": "",
     # Format names (and folder names, with format_folders on), exactly as in your library
@@ -208,17 +210,22 @@ def parse_label(label: str) -> dict:
 class TMDB:
     BASE = "https://api.themoviedb.org/3"
 
-    def __init__(self, key: str):
+    def __init__(self, key: str, base: str = ""):
+        """key: your own TMDB key. base: the Shelfrip server's /v1/tmdb, which adds its key (no key here)."""
         self.key = key.strip()
+        self.base = base.rstrip("/") or self.BASE
+        self.shared = bool(base)
         self.cache: dict[str, dict] = {}
 
     def get(self, path: str, **params) -> dict:
-        headers = {"Accept": "application/json"}
-        if self.key.startswith("eyJ"):  # v4 "Read Access Token"
+        headers = {"Accept": "application/json", "User-Agent": paths.USER_AGENT}
+        if self.shared:
+            pass
+        elif self.key.startswith("eyJ"):  # v4 "Read Access Token"
             headers["Authorization"] = f"Bearer {self.key}"
         else:
             params["api_key"] = self.key
-        url = f"{self.BASE}{path}?{urllib.parse.urlencode(params)}"
+        url = f"{self.base}{path}" + (f"?{urllib.parse.urlencode(params)}" if params else "")
         if url in self.cache:
             return self.cache[url]
         req = urllib.request.Request(url, headers=headers)
@@ -255,6 +262,26 @@ class TMDB:
             return self.get(f"/tv/{tid}/season/{n}")
         except Exception:
             return {"episodes": []}
+
+
+def own_tmdb_key(cfg: dict) -> str:
+    key = str(cfg.get("tmdb_api_key") or "").strip()
+    return "" if "paste" in key.lower() else key
+
+
+def shared_tmdb_url(cfg: dict) -> str:
+    """The Shelfrip server's TMDB address, when you have no key of your own and haven't turned it off."""
+    base = str(cfg.get("community_url") or paths.COMMUNITY_URL or "").rstrip("/")
+    return f"{base}/v1/tmdb" if base and cfg.get("shared_tmdb", True) else ""
+
+
+def tmdb_for(cfg: dict) -> "TMDB | None":
+    """Your own TMDB key if you added one, else Shelfrip's shared key, else None (names from disc labels only)."""
+    key = own_tmdb_key(cfg)
+    if key:
+        return TMDB(key)
+    url = shared_tmdb_url(cfg)
+    return TMDB("", base=url) if url else None
 
 
 def year_of(date: str | None) -> str:
@@ -1710,10 +1737,9 @@ def main() -> None:
 
     cfg = load_config()
     rip_root = Path(cfg["output_root"])
-    key = cfg.get("tmdb_api_key", "")
-    tmdb = TMDB(key) if key and "paste" not in key else None
+    tmdb = tmdb_for(cfg)
     if not tmdb:
-        print("! No TMDB key in config.json. Titles will come from disc labels only.")
+        print("! No TMDB key in config.json and the shared key is off. Titles will come from disc labels only.")
     print(f"Reading Plex library at {cfg['plex_library_root']} ...")
     lib = index_library(Path(cfg["plex_library_root"]), cfg)
     print(f"  {len(lib['movies'])} movies, {len(lib['shows'])} shows")

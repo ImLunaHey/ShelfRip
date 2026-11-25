@@ -47,8 +47,8 @@ RIP_ROOT = _folder(CFG["output_root"])
 LIB_ROOT = _folder(CFG["plex_library_root"])
 FILED_DIR = RIP_ROOT / "_Filed"
 CONTRIB_DIR = RIP_ROOT / "_Contribute"
-KEY = CFG.get("tmdb_api_key", "")
-TMDB = identify.TMDB(KEY) if KEY and "paste" not in KEY else None
+KEY = identify.own_tmdb_key(CFG)
+TMDB = identify.tmdb_for(CFG)
 
 def reload_config() -> None:
     """Re-read config.json (after the Settings page saves it)."""
@@ -58,8 +58,8 @@ def reload_config() -> None:
     LIB_ROOT = _folder(CFG["plex_library_root"])
     FILED_DIR = RIP_ROOT / "_Filed"
     CONTRIB_DIR = RIP_ROOT / "_Contribute"
-    KEY = CFG.get("tmdb_api_key", "")
-    TMDB = identify.TMDB(KEY) if KEY and "paste" not in KEY else None
+    KEY = identify.own_tmdb_key(CFG)
+    TMDB = identify.tmdb_for(CFG)
     _LIB_CACHE.clear()
 
 

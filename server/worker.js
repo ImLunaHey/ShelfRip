@@ -15,6 +15,8 @@
 //   GET  /v1/disc?h=..&s=..   the agreed answer for a disc (h = content hash, s = title signature)
 //   GET  /v1/export           every disc's agreed answer, CC0 (cached for an hour)
 //   GET  /v1/stats            counts
+//   GET  /v1/tmdb/<path>      TMDB's API with Shelfrip's own key (TMDB_KEY secret), so the app works
+//                             without a key of its own. Only the calls the app makes; cached a day
 //   GET  /v1/admin/recent     latest submissions          (Authorization: Bearer ADMIN_TOKEN)
 //   POST /v1/admin/block      {install, why}: hide everything from one install
 //   POST /v1/admin/hide       {id, hidden}: hide or show one submission
@@ -32,6 +34,11 @@ const PER_INSTALL_PER_DAY = 200;
 const PER_IP_PER_DAY = 400;
 const PER_INSTALL_FEEDBACK = 20;
 const PER_IP_FEEDBACK = 40;
+const PER_IP_TMDB = 3000;       // TMDB calls a day that miss the cache (a disc takes about 5 to 40)
+const TMDB_CACHE_SECONDS = 86400;
+// The TMDB calls the app makes (identify, crosscheck, subcheck, health): nothing else is passed on.
+const TMDB_PATHS = /^\/(?:search\/(?:movie|tv)|configuration|movie\/\d{1,9}(?:\/(?:credits|external_ids))?|tv\/\d{1,9}(?:\/(?:external_ids|aggregate_credits|season\/\d{1,4}))?)$/;
+const TMDB_PARAMS = new Set(["query", "year", "primary_release_year", "first_air_date_year", "include_adult", "language", "page"]);
 const CONFIRM = 2;              // weighted votes that must agree before an answer counts as confirmed
 const ACCEPTED_WEIGHT = 0.5;    // a title filed exactly as our answer showed it (1 for anything else)
 const MAX_AUDIO = 24, MAX_SUBS = 48;
@@ -52,6 +59,7 @@ export default {
       if (url.pathname === "/v1/disc" && req.method === "GET") return await lookup(url, env);
       if (url.pathname === "/v1/export" && req.method === "GET") return await exportAll(req, env, ctx);
       if (url.pathname === "/v1/stats" && req.method === "GET") return await stats(env);
+      if (url.pathname.startsWith("/v1/tmdb/") && req.method === "GET") return await tmdb(req, url, env, ctx);
       if (url.pathname.startsWith("/v1/admin/")) return await admin(req, url, env);
       return json({ error: "not found" }, 404);
     } catch (e) {
@@ -131,12 +139,12 @@ function cleanTracks(x) {
   return Object.keys(out).length ? out : null;
 }
 
-async function bump(env, key, limit) {
+async function bump(env, key, limit, why = "too many submissions today, try again tomorrow") {
   const day = today();
   const row = await env.DB.prepare(
     "INSERT INTO limits (key, day, n) VALUES (?, ?, 1) ON CONFLICT(key, day) DO UPDATE SET n = n + 1 RETURNING n"
   ).bind(key, day).first();
-  if (row && row.n > limit) throw new Refusal("too many submissions today, try again tomorrow", 429);
+  if (row && row.n > limit) throw new Refusal(why, 429);
 }
 
 async function body(req) {
@@ -388,6 +396,44 @@ async function stats(env) {
     `SELECT COUNT(DISTINCT disc_key) discs, COUNT(*) submissions, COUNT(DISTINCT install) installs
        FROM submissions WHERE hidden = 0`).first();
   return json(s, 200, { "Cache-Control": "public, max-age=300" });
+}
+
+// ------------------------------------------------------------------ shared TMDB key
+
+async function tmdb(req, url, env, ctx) {
+  if (!env.TMDB_KEY) throw new Refusal("the shared TMDB key isn't set up on this server", 503);
+  const p = url.pathname.slice("/v1/tmdb".length);
+  if (!TMDB_PATHS.test(p)) throw new Refusal("not a TMDB call Shelfrip makes", 404);
+  const params = new URLSearchParams();
+  for (const [k, v] of [...url.searchParams].sort()) {
+    if (!TMDB_PARAMS.has(k)) throw new Refusal(`unexpected parameter ${k}`, 400);
+    params.set(k, str(v, 200));
+  }
+  const qs = params.toString();
+  // One cache entry per call, whoever asks: popular discs cost TMDB nothing after the first.
+  const cache = typeof caches !== "undefined" ? caches.default : null;
+  const ck = new Request(new URL("/v1/tmdb" + p + (qs ? "?" + qs : ""), req.url).toString());
+  const hit = cache && await cache.match(ck);
+  if (hit) return hit;
+  const ip = req.headers.get("CF-Connecting-IP") || "";
+  await bump(env, await sha(env.SALT + "|tmdbip|" + ip), PER_IP_TMDB,
+    "the shared TMDB key is busy for you today: add your own free key in Settings");
+  const key = String(env.TMDB_KEY).trim(), headers = { Accept: "application/json" };
+  const up = new URLSearchParams(params);
+  if (key.startsWith("eyJ")) headers.Authorization = "Bearer " + key;  // v4 read access token
+  else up.set("api_key", key);
+  const r = await fetch(`https://api.themoviedb.org/3${p}?${up}`, { headers });
+  if (r.status === 429) return json({ error: "TMDB is busy, try again in a moment" }, 429,
+    { "Retry-After": r.headers.get("Retry-After") || "2" });
+  if (r.status === 404) return json({ error: "TMDB has nothing at that address" }, 404, { "Cache-Control": "public, max-age=3600" });
+  if (!r.ok) {
+    console.error("TMDB answered", r.status, p);
+    return json({ error: `TMDB answered ${r.status}` }, 502);
+  }
+  const res = new Response(await r.text(), { status: 200, headers: { "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": `public, max-age=${TMDB_CACHE_SECONDS}`, ...cors() } });
+  if (cache) ctx.waitUntil(cache.put(ck, res.clone()));
+  return res;
 }
 
 // ------------------------------------------------------------------ admin

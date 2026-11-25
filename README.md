@@ -71,8 +71,9 @@ server expects it.
 3. **Open Shelfrip and answer the setup questions:**
    - which media server you use,
    - your media library folder (the one that holds `Movies` and `TV Shows`),
-   - a rip folder with room to spare (about 50 GB per Blu-ray and 100 GB per 4K disc while it works),
-   - your free TMDB key (see below).
+   - a rip folder with room to spare (about 50 GB per Blu-ray and 100 GB per 4K disc while it works).
+
+   You don't need a TMDB key: Shelfrip has a shared one. You can add your own (see below).
 4. **Put a disc in** and click **Rip loaded discs now** (or turn on Auto-rip). When the rip finishes,
    the disc shows up under **Review**.
 
@@ -80,9 +81,12 @@ Optional extras: [MKVToolNix](https://mkvtoolnix.download/downloads.html) to spl
 [cyanrip](https://github.com/cyanreg/cyanrip/releases) for music CDs. Settings › Programs shows
 what Shelfrip has found.
 
-### Getting your TMDB key (2 minutes, free)
+### Your own TMDB key (optional, 2 minutes, free)
 
-TMDB is where Shelfrip gets movie and episode names.
+TMDB is where Shelfrip gets movie and episode names. Out of the box, Shelfrip asks TMDB through its
+own server, which adds Shelfrip's shared key; the server passes the search on and keeps only a day's
+cache of TMDB's answers and a daily count of calls per IP (as a salted hash). With your own key, Shelfrip asks TMDB directly instead, and you're
+never held up if the shared key is busy. To get one:
 
 1. Make an account at [themoviedb.org](https://www.themoviedb.org/signup).
 2. Go to [Settings › API](https://www.themoviedb.org/settings/api) and click **Create** (or "click here"
@@ -212,7 +216,7 @@ The server code, and how answers are decided, are in [server/](server/).
 ## Where the names come from
 
 - [TMDB](https://www.themoviedb.org/): movie and episode names and numbers (always the main source).
-  This product uses the TMDB API but is not endorsed or certified by TMDB.
+  This application uses TMDB and the TMDB APIs but is not endorsed, certified, or otherwise approved by TMDB.
 - [TheDiscDB](https://thediscdb.com/): recognises specific discs and names their titles and extras.
 - [TVmaze](https://www.tvmaze.com/) and, with your own key, [OMDb](https://www.omdbapi.com/): second opinions.
 - [DVDCompare](https://www.dvdcompare.net/): extras lists by release. Off by default; turn it on in Settings.

@@ -58,6 +58,7 @@ SETTINGS = [  # (key, label, kind)
     ("format_folders", "Separate folders per format (Movies\\Blu-Ray\\..., Movies\\DVD\\...)", "bool"),
     ("use_dvdcompare", "Also look up extras names on DVDCompare (reads its web pages)", "bool"),
     ("use_community", "Look discs up in the shared Shelfrip disc database", "bool"),
+    ("shared_tmdb", "With no TMDB key of my own, use Shelfrip's shared key (asks TMDB through the Shelfrip server)", "bool"),
     ("share_discs", "Share what I file with the Shelfrip disc database (anonymous: disc fingerprint, title lengths and names only)", "bool"),
     ("makemkvcon_path", "MakeMKV (makemkvcon64.exe)", "text"),
     ("mkvtoolnix_dir", "MKVToolNix folder", "text"),
@@ -775,12 +776,13 @@ def setup_check() -> list[dict]:
                 "detail": (("bundled copy: " if bundled else "") + os.path.dirname(mm)) if mm else
                           f"not found: needed to split episodes. Install it, or put the portable version in {split.BUNDLED}",
                 "link": "" if mm else split.MKVTOOLNIX_URL, "required": False})
-    key = str(cfg.get("tmdb_api_key") or "")
-    row = {"name": "TMDB key", "ok": bool(key) and "paste" not in key,
-           "detail": "set" if key and "paste" not in key else "not set: needed to name movies and episodes (add it in Settings)",
-           "link": "" if key and "paste" not in key else "https://www.themoviedb.org/settings/api", "required": True}
+    key, shared = identify.own_tmdb_key(cfg), identify.shared_tmdb_url(cfg)
+    row = {"name": "TMDB key", "ok": bool(key or shared), "shared": bool(shared and not key),
+           "detail": "set" if key else "using Shelfrip's shared key" if shared else
+                     "not set: needed to name movies and episodes (add it in Settings)",
+           "link": "" if key or shared else "https://www.themoviedb.org/settings/api", "required": True}
     if row["ok"]:
-        chk = health.tmdb_check(key, wait=8)  # does it actually work?
+        chk = health.tmdb_check(key, wait=8, base="" if key else shared)  # does it actually work?
         if chk and chk.get("ok") is False:
             row.update(ok=False, detail=chk["detail"], link="https://www.themoviedb.org/settings/api")
         elif chk:
