@@ -31,7 +31,7 @@ from pathlib import Path
 
 API = "https://api.opensubtitles.com/api/v1"
 # Shelfrip's own API key (an OpenSubtitles "consumer"). A key in settings takes its place.
-APP_KEY = ""
+APP_KEY = "KgshlMrRXQ2wBrFFlpCSfeerF6zF3orx"
 
 # ISO 639-2 (MKV track languages) -> the codes OpenSubtitles uses
 LANG = {"eng": "en", "fre": "fr", "fra": "fr", "ger": "de", "deu": "de", "spa": "es", "ita": "it", "por": "pt-PT",
