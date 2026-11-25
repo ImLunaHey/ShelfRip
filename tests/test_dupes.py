@@ -58,8 +58,126 @@ class SameContent(unittest.TestCase):
         self.assertEqual(dupes.find(ts), {})
 
     def test_short_titles_are_left_alone(self):
-        ts = [title(0, 1300, "1"), title(1, 1300, "1")]
+        ts = [title(0, 200, "1"), title(1, 200, "1")]
         self.assertEqual(dupes.find(ts), {})
+
+
+def m2ts(tid, secs, clip, size, streams=None):
+    """A raw clip MakeMKV lists next to the playlist that plays it: no chapters."""
+    return title(tid, secs, str(clip), size=size, streams=streams, chapters=None, src=f"{clip:05d}.m2ts")
+
+
+class EpisodeCopies(unittest.TestCase):
+    """TV Blu-rays (Game of Thrones 4K) list every episode twice: its playlist and its raw .m2ts."""
+
+    def got(self):
+        eps = [(3164, 0, 31_936_094_208), (3212, 1, 31_895_617_536), (3167, 6, 31_349_317_632)]
+        return ([title(2 + i, d, str(c), size=s, chapters=8, src=f"{800 + i:05d}.mpls") for i, (d, c, s) in enumerate(eps)]
+                + [m2ts(7 + i, d, c, s) for i, (d, c, s) in enumerate(eps)] + [title(0, 21, "44,45,46", size=50_000_000)])
+
+    def test_raw_clip_copies_are_left_out(self):
+        found = dupes.find(self.got(), tv=True)
+        self.assertEqual(found, {7: (2, "same clips and tracks"), 8: (3, "same clips and tracks"),
+                                 9: (4, "same clips and tracks")})
+
+    def test_raw_clip_with_more_tracks_is_kept_instead(self):
+        ts = [title(2, 3164, "0", chapters=8), m2ts(7, 3164, 0, 30_000_000_000, streams=[ENG51, COMM, SUB])]
+        self.assertEqual(set(dupes.find(ts)), {2})  # never drop the commentary; chapters matter less
+
+    def test_raw_clip_without_segments_uses_its_file_number(self):
+        clip = m2ts(7, 3164, 0, 30_000_000_000)
+        clip["segments"] = ""
+        self.assertEqual(set(dupes.find([title(2, 3164, "0", chapters=8), clip])), {7})
+
+    def test_same_clip_with_other_chapters_keeps_the_first(self):
+        # Spider-Man: Homecoming lists the film as 16 and as 83 chapters
+        ts = [title(19, 8008, "1", chapters=16), title(20, 8008, "1", chapters=83)]
+        self.assertEqual(dupes.find(ts), {20: (19, "same clips and tracks")})
+
+    def test_dvd_episodes_of_the_same_length_are_kept(self):
+        # The Middle: every episode is "cells 1-6", 6 chapters, and several run 21:34
+        ts = [dvd(1, 1294, chapters=6), dvd(3, 1294, chapters=6), dvd(6, 1294, chapters=6)]
+        for t, size in zip(ts, (578_881_536, 576_024_576, 578_457_600)):
+            t["size_bytes"], t["segments"] = size, "1-6"
+        self.assertEqual(dupes.find(ts), {})
+        ts[2]["size_bytes"] = ts[0]["size_bytes"]  # byte for byte the same: a real copy
+        self.assertEqual(set(dupes.find(ts)), {6})
+
+    def test_database_naming_both_differently_keeps_both(self):
+        ts = [title(2, 3164, "0", chapters=8), m2ts(7, 3164, 0, 30_000_000_000)]
+        ep = lambda n: {"itemType": "Episode", "season": "2", "episode": str(n)}
+        known = {"kind": "tv", "pairs": {ts[0]["output_file"]: ep(1), ts[1]["output_file"]: ep(2)}}
+        self.assertEqual(dupes.find(ts, known, tv=True), {})
+        known["pairs"][ts[1]["output_file"]] = ep(1)
+        self.assertEqual(set(dupes.find(ts, known, tv=True)), {7})
+
+    def test_database_named_copy_is_the_one_kept(self):
+        ts = [title(2, 3164, "0", chapters=8), title(5, 3164, "0", chapters=8)]
+        known = {"kind": "tv", "pairs": {ts[1]["output_file"]: {"itemType": "Episode", "season": "2", "episode": "1"}}}
+        self.assertEqual(dupes.find(ts, known, tv=True), {2: (5, "same clips and tracks")})
+
+
+class PlayAlls(unittest.TestCase):
+    """A TV disc's "Play All" is left out when its episodes are ripped on their own."""
+
+    def bd(self, extra_clip=False):
+        eps = [title(1 + i, 1500, str(10 + i), chapters=6) for i in range(3)]
+        segs = "10,11,12" + (",99" if extra_clip else "")
+        return [title(0, 4500 + (20 if extra_clip else 0), segs, chapters=18, src="00100.mpls")] + eps
+
+    def test_bluray_play_all(self):
+        found = dupes.play_alls(self.bd())
+        self.assertEqual(list(found), [0])
+        self.assertEqual(found[0][0], 1)
+        self.assertIn("titles 1, 2, 3", found[0][1])
+
+    def test_play_all_with_clips_of_its_own_is_kept(self):
+        self.assertEqual(dupes.play_alls(self.bd(extra_clip=True)), {})
+
+    def test_only_a_play_all_is_kept(self):
+        # nothing else has the episodes: it's split into episodes on Review
+        self.assertEqual(dupes.play_alls(self.bd()[:1]), {})
+        self.assertEqual(dupes.play_alls(self.bd()[:2]), {})  # one episode doesn't make up the rest
+
+    def test_play_all_with_a_track_the_episodes_lack_is_kept(self):
+        ts = self.bd()
+        ts[0]["streams"] = [VIDEO, ENG51, COMM, SUB]
+        self.assertEqual(dupes.play_alls(ts), {})
+
+    def test_skipped_episode_copies_dont_count(self):
+        ts = self.bd()
+        self.assertEqual(dupes.play_alls(ts, skip={2: (0, "x")}), {})
+
+    def test_database_named_play_all_is_kept(self):
+        ts = self.bd()
+        known = {"kind": "tv", "pairs": {ts[0]["output_file"]: {"itemType": "Extra", "description": "Marathon"}}}
+        self.assertEqual(dupes.play_alls(ts, known), {})
+
+    def middle(self):
+        # The Middle season 4 disc 1: a 2:49:12 Play All, then a double episode and six episodes
+        lens = (2413, 1295, 1293, 1292, 1269, 1293, 1297)
+        ts = [dvd(0, sum(lens), chapters=38)] + [dvd(1 + i, d, chapters=6) for i, d in enumerate(lens)] + [dvd(9, 536)]
+        for t in ts:
+            t["size_bytes"] = 500_000_000 + t["title_id"]
+        return ts
+
+    def test_dvd_play_all(self):
+        self.assertEqual(set(dupes.play_alls(self.middle())), {0})
+
+    def test_dvd_episodes_that_dont_add_up(self):
+        ts = self.middle()
+        ts[3]["duration_seconds"] += 60
+        self.assertEqual(dupes.play_alls(ts), {})
+
+    def test_plan_only_on_tv_discs(self):
+        disc = {"disc_label": "THE_MIDDLE_SEASON_4_DISC_1", "titles": self.middle()}
+        self.assertEqual(set(dupes.plan(disc, {"use_thediscdb": False})), {0})
+        self.assertEqual(disc["titles"][0]["skip_kind"], "play_all")
+        # a movie disc's documentary in parts keeps its long version
+        disc = {"disc_label": "SOME_MOVIE", "titles": [dvd(0, 5400, chapters=4)] + [dvd(1 + i, 1350) for i in range(4)]}
+        for t in disc["titles"]:
+            t["size_bytes"] += t["title_id"]
+        self.assertEqual(dupes.plan(disc, {"use_thediscdb": False}), {})
 
 
 class Decoys(unittest.TestCase):
@@ -199,7 +317,7 @@ class ReviewScenes(unittest.TestCase):
 class RipDisc(unittest.TestCase):
     """rip_disc rips only the titles that are left, one by one, and records what it left out."""
 
-    def run_rip(self, setting, disc=None):
+    def run_rip(self, setting, disc=None, label=""):
         disc = disc or {"titles": [title(0, 7200, "1,2,3"), title(1, 7200, "1,2,3"), title(2, 600, "7")]}
         calls = []
 
@@ -219,7 +337,7 @@ class RipDisc(unittest.TestCase):
         rip_all.run_makemkv, old_run = fake, rip_all.run_makemkv
         rip_all.parse_disc_info, old_parse = (lambda _: json.loads(json.dumps(disc))), rip_all.parse_disc_info
         try:
-            info = rip_all.rip_disc(cfg, {"device": "disc:9", "disc_label": f"DUPES_{setting}_{len(disc['titles'])}", "drive_name": "x", "index": 9})
+            info = rip_all.rip_disc(cfg, {"device": "disc:9", "disc_label": label or f"DUPES_{setting}_{len(disc['titles'])}", "drive_name": "x", "index": 9})
         finally:
             rip_all.run_makemkv, rip_all.parse_disc_info = old_run, old_parse
         return info, [c for c in calls if c[1] == "mkv"]
@@ -258,6 +376,18 @@ class RipDisc(unittest.TestCase):
         self.assertEqual([t["ripped"] for t in info["titles"][1:5]], [False] * 4)  # deleted afterwards
         self.assertTrue(all(t["ripped"] for t in info["titles"][5:]) and info["titles"][0]["ripped"])
         self.assertEqual(info["status"], "ok")
+
+    def test_tv_episode_copies_and_play_all_left_out(self):
+        # each episode as a playlist and a raw clip, plus a Play All of the playlists
+        eps = [title(1 + i, 3164 + i, str(i), size=31_000_000_000 + i, chapters=8) for i in range(3)]
+        disc = {"titles": [title(0, sum(t["duration_seconds"] for t in eps), "0,1,2", size=93_000_000_000, chapters=24,
+                                 src="00100.mpls")] + eps
+                + [m2ts(5 + i, t["duration_seconds"], i, t["size_bytes"]) for i, t in enumerate(eps)]}
+        info, rips = self.run_rip(True, disc, label="SHOW_S2_D1")
+        self.assertEqual([c[3] for c in rips], ["1", "2", "3"])
+        self.assertEqual((info["skipped_duplicates"], info["skipped_play_alls"]), (3, 1))
+        self.assertEqual(info["titles"][0]["skip_kind"], "play_all")
+        self.assertEqual(info["titles"][4]["skipped_duplicate_of"], 1)
 
     def test_setting_off(self):
         info, rips = self.run_rip(False)

@@ -1680,8 +1680,8 @@ function wzBody(id){
         <div class="wz-field"><input type="password" id="wz_tmdb" data-w="tmdb_api_key" autocomplete="off" placeholder="${c.ok ? "Saved: paste a new one to replace it" : "Paste your API key"}" aria-label="TMDB API key">
           <button id="wzkey">Check key</button></div>${wzStatus("TMDB key")}`;
     }
-    case "once": return `<h2>Rip the main feature only once?</h2>
-      <p>Some movie discs list the film several times, often as decoys, and ripping every copy can add half an hour or more per disc.
+    case "once": return `<h2>Rip each movie or episode only once?</h2>
+      <p>Some movie discs list the film several times, often as decoys, and TV discs often list each episode twice or add a "Play All" of every episode. Ripping every copy can add half an hour or more per disc.
         Shelfrip leaves out copies it can prove are the same. Different cuts and language versions are always ripped.</p>
       ${wzTiles("skip_duplicate_features", [{value:true, label:"Yes, rip it once", sub:"Faster rips, less disk space"}, {value:false, label:"No, rip every copy", sub:"Same as MakeMKV on its own"}])}`;
     case "share": return `<h2>Help build the disc database?</h2>
@@ -1829,7 +1829,7 @@ const SET_GROUPS = [
     ["auto_rip", "Start with auto-rip on", "Rip every disc as soon as it's inserted, from the moment Shelfrip opens."],
     ["check_plex_before_rip", "Skip discs you already have", "If your library already has it in the same or better quality, the disc isn't ripped. You can still click Rip anyway."],
     ["retry_failed_titles", "Retry titles that hit read errors", "Tries once more before giving up on a scratched section."],
-    ["skip_duplicate_features", "Rip the main feature only once", "Some discs list the movie several times (often as decoys), or every scene of it as a title of its own. Leaves out copies that are the same video and tracks, copies a disc database says aren't the real one, and scene-by-scene titles. Different cuts, language versions and named extras are still ripped."],
+    ["skip_duplicate_features", "Rip each movie or episode only once", "Some discs list the movie several times (often as decoys) or every scene of it as a title of its own, and TV discs often list each episode twice or add a Play All of every episode. Leaves out copies that are the same video and tracks, copies a disc database says aren't the real one, scene-by-scene titles, and a TV disc's Play All when its episodes are on the disc too. Different cuts, language versions and named extras are still ripped."],
     ["eject_when_done", "Eject as soon as the rip finishes", "Normally the disc stays in until you file it, so you can check its extras."],
     ["min_length_seconds", "Ignore titles shorter than", "Menus, logos and warnings.", {unit:"seconds", adv:1}],
     ["min_free_gb_rips", "Keep this much space free in the rip folder", "A rip waits if there's less than this.", {unit:"GB", adv:1}],

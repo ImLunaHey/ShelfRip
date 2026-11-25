@@ -82,7 +82,7 @@ SETTINGS = [  # (key, label, kind)
     ("forced_subtitles", "Show forced subtitles (foreign-dialogue lines) automatically", "bool"),
     ("retry_failed_titles", "Retry titles that hit read errors once", "bool"),
     ("offer_error_reports", "When something fails, offer to send an error report", "bool"),
-    ("skip_duplicate_features", "Rip only one copy of a movie disc's feature (no duplicate copies, no scene-by-scene titles)", "bool"),
+    ("skip_duplicate_features", "Rip each movie or episode only once (no duplicate copies, scene-by-scene titles or TV Play Alls)", "bool"),
     ("job_total_discs", "Discs you plan to rip, for a progress bar (0 = no goal)", "number"),
     ("min_free_gb_rips", "Don't start a rip with less than this free in the rip folder (GB)", "number"),
     ("tmdb_api_key", "TMDB key", "secret"),

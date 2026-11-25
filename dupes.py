@@ -1,23 +1,30 @@
 r"""
-dupes.py - spot extra copies of a movie's main feature BEFORE ripping, so only one is ripped.
+dupes.py - spot extra copies of a movie or an episode BEFORE ripping, so each is ripped once.
 
-Optional (setting "skip_duplicate_features", off by default). Some discs list the feature more
-than once: DVDs with the same programme reachable through several titles, and Blu-rays that hide
-the real playlist among dozens of same-length decoys ("playlist obfuscation"). Ripping all of them
-costs 20-40 minutes per copy.
+Optional (setting "skip_duplicate_features", off by default). Some discs list the same video more
+than once: DVDs with the same programme reachable through several titles, Blu-rays that hide the
+real playlist among dozens of same-length decoys ("playlist obfuscation"), and TV Blu-rays (Game of
+Thrones in 4K, for one) that list every episode twice, as its playlist and as its raw .m2ts file.
+Ripping all of them costs 20-40 minutes and up to 30 GB per copy.
 
-Only titles at least FEATURE_MIN_SECONDS long and within DURATION_SLACK seconds of each other are
-compared, so different cuts (theatrical / extended / director's) are never touched: their running
-times differ. A copy is skipped only when Shelfrip can be sure it adds nothing:
+Only titles within DURATION_SLACK seconds of each other are compared, so different cuts (theatrical /
+extended / director's) are never touched: their running times differ. A copy is skipped only when
+Shelfrip can be sure it adds nothing:
 
-  1. Same content: the same segment map (the same clips in the same order) and the same chapter
-     count, and every audio and subtitle track it has is also on the copy that is kept. Different-
-     language versions use different clips for their credits or inserts, so their maps differ and
-     they are kept.
-  2. A disc database knows the disc: your own catalog, the shared Shelfrip database or TheDiscDB
-     names exactly one of the same-length titles as the main feature, and the others are unknown
-     or were skipped before. That is how decoy playlists get dropped. If the database's pick can't
-     be told apart from a decoy (same byte size and no playlist name to go by), nothing is skipped.
+  1. Same content (any title COPY_MIN_SECONDS or longer): every audio and subtitle track it has is
+     also on the copy that is kept, and
+       * Blu-ray: it plays the same clips in the same order (a raw .m2ts title plays its own clip).
+         Chapter marks don't count: the playlist, which has them, is the copy kept.
+       * DVD (cell numbers are per title): the same cell map and chapter count, and below feature
+         length the same byte size too, as a TV DVD's episodes all read "cells 1-6".
+     Different-language versions use different clips for their credits or inserts, so their maps
+     differ and they are kept. When a disc database names both copies as different things, both
+     are kept.
+  2. A disc database knows the disc (movies, FEATURE_MIN_SECONDS or longer): your own catalog, the
+     shared Shelfrip database or TheDiscDB names exactly one of the same-length titles as the main
+     feature, and the others are unknown or were skipped before. That is how decoy playlists get
+     dropped. If the database's pick can't be told apart from a decoy (same byte size and no
+     playlist name to go by), nothing is skipped.
 
 The same setting also leaves out scene-by-scene titles: discs that offer every scene (or chapter)
 of the movie as a title of its own, next to the movie itself. Those are the movie a second time,
@@ -33,12 +40,22 @@ cut into pieces, and make Review slow. A short title counts as a scene only when
     (its dubs, commentary and subtitles: extras almost never do) and the feature has at least
     DVD_MIN_TRACKS of them.
 
-TV discs are left alone (their long title is a "Play All" of the episodes). Titles a disc database
-names are always ripped. Nothing is lost: everything in a scene is in the feature that is ripped.
+Scenes are looked for on movie discs only. On TV discs the setting instead leaves out a "Play All"
+title (every episode in one video) when its episodes are also titles of their own and are ripped:
+
+  * Blu-ray: the Play All plays nothing but the episodes' clips, every one of them, and the
+    episodes add up to its length.
+  * DVD: two or more titles in a row (by title number) add up to its length to within a few seconds.
+  * Either way, each episode carries every soundtrack and subtitle the Play All has.
+
+A TV disc with only the Play All keeps it: it's split into episodes on the Review tab. Titles a
+disc database names are always ripped. Nothing is lost: everything in a skipped title is in one
+that is ripped.
 
 Anything else is ripped as before. Skipped titles stay listed in disc_info.json with
-"skipped_duplicate_of" set (and "skip_kind": "scene" for scenes), so the Review tab can say what
-was left out. scene_pieces() is also used by identify.py to set leftover scenes to Skip on Review.
+"skipped_duplicate_of" set and "skip_kind" saying why ("copy", "scene" or "play_all"), so the
+Review tab can say what was left out. scene_pieces() is also used by identify.py to set leftover
+scenes to Skip on Review.
 """
 
 from __future__ import annotations
@@ -46,6 +63,7 @@ from __future__ import annotations
 from collections import Counter
 
 FEATURE_MIN_SECONDS = 60 * 60
+COPY_MIN_SECONDS = 5 * 60     # identical copies (same clips and tracks) are left out from this length up
 DURATION_SLACK = 2
 SCENE_MAX_SECONDS = 15 * 60
 SCENE_MIN_PIECES = 3
@@ -77,21 +95,66 @@ def _groups(titles: list[dict], min_seconds: int) -> list[list[dict]]:
     return [g for g in groups if len(g) > 1]
 
 
-def _same_content(group: list[dict]) -> dict[int, tuple[int, str]]:
+def _clips(t: dict) -> tuple[str, ...] | None:
+    """The Blu-ray clips a title plays, in order. None on DVDs, where segment numbers are per title.
+    A raw .m2ts title plays just its own clip."""
+    src = str(t.get("source_file") or "").split("(")[0].strip().lower()
+    if not src.endswith((".mpls", ".m2ts")):
+        return None
+    clips = tuple(x for x in _seg(t).split(",") if x)
+    if not clips and src.endswith(".m2ts") and src[:-5].isdigit():
+        clips = (str(int(src[:-5])),)
+    return clips or None
+
+
+def _content_key(t: dict) -> tuple | None:
+    """Titles with the same key show the same video. Blu-ray: the same clips in the same order
+    (chapter marks don't matter: a playlist and its raw .m2ts have the same picture, only one has
+    chapters). DVD: the same cells and chapters, and below feature length the same byte size too,
+    since a TV DVD's episodes all read "cells 1-6" and can run to the same second."""
+    clips = _clips(t)
+    if clips is not None:
+        return ("bd", clips)
+    if not _seg(t):
+        return None
+    if t.get("duration_seconds", 0) >= FEATURE_MIN_SECONDS:
+        return ("dvd", _seg(t), t.get("chapters"))
+    return ("dvd", _seg(t), t.get("chapters"), t["size_bytes"]) if t.get("size_bytes") else None
+
+
+def _named(t: dict, known: dict | None) -> dict | None:
+    """The disc database's row for a title it names (and didn't skip), else None."""
+    row = ((known or {}).get("pairs") or {}).get(t.get("output_file"))
+    return row if row and row.get("kept", True) is not False else None
+
+
+def _row_name(row: dict) -> tuple:
+    return tuple(str(row.get(k) or "").strip().lower() for k in ("itemType", "season", "episode", "description", "name"))
+
+
+def _same_content(group: list[dict], known: dict | None = None) -> dict[int, tuple[int, str]]:
     out: dict[int, tuple[int, str]] = {}
-    by_map: dict[tuple, list[dict]] = {}
+    by_key: dict[tuple, list[dict]] = {}
     for t in group:
-        if _seg(t):
-            by_map.setdefault((_seg(t), t.get("chapters")), []).append(t)
-    for same in by_map.values():
+        key = _content_key(t)
+        if key:
+            by_key.setdefault(key, []).append(t)
+    for same in by_key.values():
         if len(same) < 2:
             continue
-        # keep the copy with the most tracks (then the lowest title number); skip only true subsets
-        keep = max(same, key=lambda t: (sum(_tracks(t).values()), -t["title_id"]))
-        have = _tracks(keep)
+        # keep the copy with the most tracks, then one a disc database names, then a playlist (it has
+        # chapters) over a raw clip, then the lowest title number; skip only true subsets
+        keep = max(same, key=lambda t: (sum(_tracks(t).values()), _named(t, known) is not None,
+                                        not str(t.get("source_file") or "").lower().endswith(".m2ts"),
+                                        int(t.get("chapters") or 0) > 0, -t["title_id"]))
+        have, kept_row = _tracks(keep), _named(keep, known)
         for t in same:
-            if t is not keep and not (_tracks(t) - have):
-                out[t["title_id"]] = (keep["title_id"], "same clips and tracks")
+            if t is keep or _tracks(t) - have:
+                continue
+            row = _named(t, known)
+            if row and kept_row and _row_name(row) != _row_name(kept_row):
+                continue  # a database says they're different things: rip both
+            out[t["title_id"]] = (keep["title_id"], "same clips and tracks")
     return out
 
 
@@ -123,18 +186,85 @@ def _from_database(group: list[dict], known: dict) -> dict[int, tuple[int, str]]
 
 
 def find(titles: list[dict], known: dict | None = None,
-         min_seconds: int = FEATURE_MIN_SECONDS) -> dict[int, tuple[int, str]]:
-    """{title_id to skip: (title_id kept instead, reason)} for extra copies of a long feature."""
+         min_seconds: int = FEATURE_MIN_SECONDS, tv: bool = False) -> dict[int, tuple[int, str]]:
+    """{title_id to skip: (title_id kept instead, reason)} for extra copies of a title: any title of
+    COPY_MIN_SECONDS or more shown twice with the same clips and tracks (a TV episode as a playlist
+    and as its raw .m2ts), and look-alike copies of a feature (min_seconds or more) that a disc
+    database tells apart (movie discs only: a TV disc's database rows name episodes)."""
     skip: dict[int, tuple[int, str]] = {}
-    for group in _groups(titles, min_seconds):
-        found = _same_content(group)
-        if known:
+    for group in _groups(titles, min(COPY_MIN_SECONDS, min_seconds)):
+        found = _same_content(group, known)
+        if known and not tv and group[0]["duration_seconds"] >= min_seconds:
             for tid, v in _from_database(group, known).items():
                 found.setdefault(tid, v)
         # never skip the title another one is being kept in place of
         kept = {k for k, _ in found.values()}
         skip.update({tid: v for tid, v in found.items() if tid not in kept})
     return skip
+
+
+# --------------------------------------------------------------------------- TV "Play All" titles
+
+def _bd_play_all(p: dict, ripped: list[dict]) -> list[dict]:
+    """Episodes (2 or more) a Blu-ray "Play All" playlist strings together: every clip it plays is in
+    one of them, they play nothing else, and they add up to its length."""
+    pc = _clips(p)
+    if not pc or len(set(pc)) < 2:
+        return []
+    pieces = [t for t in ripped if t is not p and COPY_MIN_SECONDS <= t.get("duration_seconds", 0) < p["duration_seconds"]
+              and (c := _clips(t)) is not None and set(c) <= set(pc)]
+    by_clips: dict[tuple, dict] = {}
+    for t in pieces:
+        by_clips.setdefault(_clips(t), t)
+    pieces = list(by_clips.values())
+    covered = set().union(*(set(_clips(t)) for t in pieces)) if pieces else set()
+    total = sum(t["duration_seconds"] for t in pieces)
+    if len(pieces) < 2 or covered != set(pc) or abs(total - p["duration_seconds"]) > max(10, 0.01 * p["duration_seconds"]):
+        return []
+    return pieces
+
+
+def _dvd_play_all(p: dict, ripped: list[dict]) -> list[dict]:
+    """Episodes (2 or more, one after another by title number) that add up to a DVD "Play All" title."""
+    if _clips(p) is not None:
+        return []
+    pd = p["duration_seconds"]
+    others = sorted((t for t in ripped if t is not p and _clips(t) is None), key=lambda t: t["title_id"])
+    for i in range(len(others)):
+        total = 0
+        for j in range(i, len(others)):
+            d = others[j].get("duration_seconds", 0)
+            if not COPY_MIN_SECONDS <= d < pd:
+                break
+            total += d
+            n = j - i + 1
+            slack = max(5, 2 * n)
+            if total > pd + slack:
+                break
+            if n >= 2 and abs(total - pd) <= slack:
+                return others[i:j + 1]
+    return []
+
+
+def play_alls(titles: list[dict], known: dict | None = None,
+              skip: dict | None = None) -> dict[int, tuple[int, str]]:
+    """{title_id: (first episode's title_id, reason)} for a TV disc's "Play All" titles whose episodes
+    are also on the disc as titles of their own (and are being ripped). Each episode must carry every
+    soundtrack and subtitle the Play All has. A disc with only the Play All keeps it (it's split into
+    episodes later), and titles a disc database names are always ripped."""
+    skip = skip or {}
+    ripped = [t for t in titles if t.get("output_file") and t["title_id"] not in skip]
+    out: dict[int, tuple[int, str]] = {}
+    for p in sorted(ripped, key=lambda t: -t.get("duration_seconds", 0)):
+        if p.get("duration_seconds", 0) < 2 * COPY_MIN_SECONDS or _named(p, known):
+            continue
+        left = [t for t in ripped if t["title_id"] not in out]
+        pieces = _bd_play_all(p, left) or _dvd_play_all(p, left)
+        if not pieces or any(_tracks(p) - _tracks(t) for t in pieces):
+            continue
+        ids = sorted(t["title_id"] for t in pieces)
+        out[p["title_id"]] = (ids[0], "a Play All of titles " + ", ".join(map(str, ids)) + ", which are ripped on their own")
+    return out
 
 
 # --------------------------------------------------------------------------- scene-by-scene titles
@@ -211,13 +341,13 @@ def scene_pieces(titles: list[dict], features: list[dict], trusted: set[int] | f
     return out
 
 
-def _tv_like(disc: dict, titles: list[dict]) -> bool:
+def _tv_like(disc: dict, titles: list[dict], unsure: bool = True) -> bool:
     try:
         import identify
         info = identify.parse_label(disc.get("disc_label") or disc.get("volume_label") or disc.get("name") or "")
         return identify.looks_like_tv(titles, info, None)
     except Exception:
-        return True  # can't tell: don't touch it
+        return unsure  # can't tell: whichever leaves the disc alone
 
 
 def find_scenes(disc: dict, known: dict | None, skip: dict | None = None) -> dict[int, tuple[int, str]]:
@@ -260,16 +390,17 @@ def lookup_known(disc: dict, cfg: dict, log=print) -> dict | None:
 
 
 def plan(disc: dict, cfg: dict, log=print) -> dict[int, tuple[int, str]]:
-    """Mark extra feature copies and scene-by-scene titles in disc["titles"] (skipped_duplicate_of,
-    skip_reason, skip_kind) and return them all. Movie-ish discs only."""
+    """Mark extra copies, scene-by-scene titles and TV Play Alls in disc["titles"] (skipped_duplicate_of,
+    skip_reason, skip_kind) and return them all."""
     titles = disc.get("titles", [])
-    if not _groups(titles, FEATURE_MIN_SECONDS) and not find_scenes(disc, None):
+    if not _groups(titles, COPY_MIN_SECONDS) and not find_scenes(disc, None) and not play_alls(titles):
         return {}  # nothing to leave out even before asking the databases: no lookup needed
     known = lookup_known(disc, cfg, log=log)
-    if known and known.get("kind") == "tv":
-        return {}
-    skip = find(titles, known)
-    scenes = find_scenes(disc, known, skip)
+    usable = [t for t in titles if t.get("output_file")]
+    is_tv = bool(known and known.get("kind") == "tv")
+    skip = find(titles, known, tv=is_tv or _tv_like(disc, usable))
+    scenes = {} if is_tv else find_scenes(disc, known, skip)
+    plays = play_alls(titles, known, skip) if is_tv or _tv_like(disc, usable, unsure=False) else {}
     for t in titles:
         if t["title_id"] in skip:
             t["skipped_duplicate_of"], t["skip_reason"] = skip[t["title_id"]]
@@ -277,4 +408,7 @@ def plan(disc: dict, cfg: dict, log=print) -> dict[int, tuple[int, str]]:
         elif t["title_id"] in scenes:
             t["skipped_duplicate_of"], t["skip_reason"] = scenes[t["title_id"]]
             t["skip_kind"] = "scene"
-    return {**skip, **scenes}
+        elif t["title_id"] in plays:
+            t["skipped_duplicate_of"], t["skip_reason"] = plays[t["title_id"]]
+            t["skip_kind"] = "play_all"
+    return {**skip, **scenes, **plays}

@@ -9,8 +9,9 @@ MakeMKV's command-line tool (makemkvcon). For each disc it:
              makemkv_info.txt (raw MakeMKV scan, kept for troubleshooting)
              rip.log          (raw MakeMKV rip output)
   * rips     every title at least `min_length_seconds` long to .mkv (no transcoding);
-             with "skip_duplicate_features" on, extra copies of the main feature and scene-by-scene
-             titles (the movie cut into pieces) are left out (dupes.py)
+             with "skip_duplicate_features" on, duplicate copies (of a feature or an episode),
+             scene-by-scene titles (the movie cut into pieces) and TV "Play All" titles whose
+             episodes are on the disc too are left out (dupes.py)
   * ejects   the disc when it's finished
   * appends  a line to <output_root>\rip_history.csv
 
@@ -722,36 +723,43 @@ def rip_disc(cfg: dict, drive: dict) -> dict:
     log(f"{device} [{label}] {n_titles} titles, {total_min} min total. Ripping...")
     st.update(state="ripping", message=f"{n_titles} titles, {total_min} min")
 
-    # 1b. optional: rip only one copy of a feature the disc lists several times (dupes.py)
+    # 1b. optional: rip each feature or episode only once (dupes.py)
     skipped: dict = {}
     if cfg.get("skip_duplicate_features") and not st.get("cancel"):
         try:
             import dupes
-            st["message"] = "Checking for extra copies of the feature"
+            st["message"] = "Checking for duplicate copies"
             skipped = dupes.plan(disc, cfg, log=log)
         except Exception as exc:
-            log(f"{device} [{label}] couldn't check for duplicate features ({exc}), ripping everything")
+            log(f"{device} [{label}] couldn't check for duplicate copies ({exc}), ripping everything")
             skipped = {}
             for t in disc["titles"]:
                 t.pop("skipped_duplicate_of", None)
                 t.pop("skip_reason", None)
+                t.pop("skip_kind", None)
         kinds = {t["title_id"]: t.get("skip_kind") for t in disc["titles"]}
         for tid, (keep, why) in sorted(skipped.items()):
             log(f"{device} [{label}] not ripping title {tid}: "
-                + (why if kinds.get(tid) == "scene" else f"a copy of title {keep} ({why})"))
+                + (why if kinds.get(tid) in ("scene", "play_all") else f"a copy of title {keep} ({why})"))
         if skipped:
             saved_min = sum(t.get("duration_seconds", 0) for t in disc["titles"] if t["title_id"] in skipped) // 60
+            saved_gb = sum(t.get("size_bytes") or 0 for t in disc["titles"] if t["title_id"] in skipped) / 1e9
             n_scenes = sum(1 for tid in skipped if kinds.get(tid) == "scene")
-            n_copies = len(skipped) - n_scenes
+            n_plays = sum(1 for tid in skipped if kinds.get(tid) == "play_all")
+            n_copies = len(skipped) - n_scenes - n_plays
             if n_copies:
                 disc["skipped_duplicates"] = n_copies
             if n_scenes:
                 disc["skipped_scenes"] = n_scenes
-            bits = [f"{n_copies} duplicate cop{'y' if n_copies == 1 else 'ies'}" if n_copies else "",
-                    f"{n_scenes} scene-by-scene title{'' if n_scenes == 1 else 's'}" if n_scenes else ""]
-            what = " and ".join(b for b in bits if b)
+            if n_plays:
+                disc["skipped_play_alls"] = n_plays
+            plural = lambda n, one, many: f"{n} {one if n == 1 else many}"
+            bits = [plural(n_copies, "duplicate copy", "duplicate copies") if n_copies else "",
+                    plural(n_scenes, "scene-by-scene title", "scene-by-scene titles") if n_scenes else "",
+                    plural(n_plays, "Play All", "Play Alls") if n_plays else ""]
+            what = ", ".join(b for b in bits if b)
             st["message"] = f"{n_titles - len(skipped)} titles to rip ({what} left out)"
-            log(f"{device} [{label}] {what} of the feature left out ({saved_min} min of video)")
+            log(f"{device} [{label}] {what} left out ({saved_min} min of video, {saved_gb:.1f} GB)")
 
     # 2. rip the titles
     st["titles"] = title_summary(disc)  # what's on the disc, for the drive card
