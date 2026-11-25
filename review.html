@@ -333,6 +333,7 @@ dialog.disc .fb .chk{display:flex;gap:8px;align-items:center;color:var(--ink)}
   </nav>
   <span class="sub" id="sub"></span>
   <span style="flex:1"></span>
+  <button id="importbtn" class="tab-review" title="Name and file videos you ripped before, with MakeMKV or anything else">Import a folder</button>
   <button id="scan" class="tab-review">Check for new rips</button>
   <a id="upd" class="hide" target="_blank" rel="noopener"></a>
   <div class="hud hide" id="hud"></div>
@@ -671,7 +672,7 @@ function redraw(i){
 }
 function render(){
   const list = $("#list");
-  if (!discs.length){ list.innerHTML = `<p class="empty">Nothing waiting for review. Rip some discs, then click “Check for new rips”.</p>`; return; }
+  if (!discs.length){ list.innerHTML = `<p class="empty">Nothing waiting for review. Rip some discs, then click “Check for new rips”. Ripped some before? Click “Import a folder” to name and file them.</p>`; return; }
   list.innerHTML = discs.map((p, i) => card(p, i)).join("");
   discs.forEach((p, i) => wire(p, i));
 }
@@ -1091,6 +1092,7 @@ function showTab(t){
   $("#libraryTab").classList.toggle("hide", t !== "library");
   if (t === "library"){ renderShelf(); loadReport(false); loadSeasons(); loadProgress(false).then(() => TAB === "library" && renderShelf()); }
   $("#scan").classList.toggle("hide", t !== "review");
+  $("#importbtn").classList.toggle("hide", t !== "review");
   $("#sub").classList.toggle("hide", t !== "review");
   if (t === "settings") loadSettings();
   if (t === "drives") loadTidy(false).then(pollDrives);
@@ -2137,6 +2139,36 @@ function feedbackDialog(pre){
   if (pre){ const m = $("#fbm", d); m.focus(); m.setSelectionRange(18, 18); } else $("#fbt", d).focus();
 }
 $("#fbbtn").onclick = feedbackDialog;
+// Import a folder of videos ripped before: they're moved (or, from another drive, copied) into the
+// rip folder and named like a fresh rip, then wait here for review.
+$("#importbtn").onclick = async () => {
+  const b = $("#importbtn");
+  let r = await api("/api/pick", {kind: "folder", start: "", title: "Choose a folder of videos to import"});
+  let path = r.path;
+  if (r.available === false) path = prompt("Type the folder that holds the videos (MKV files):", "");
+  if (!path) return;
+  const info = await api("/api/import", {path});
+  if (info.error){ alert(info.error); return; }
+  if (!confirm(`Import ${info.count} video${info.count === 1 ? "" : "s"} (${info.gb} GB) from ${info.path}?\n\n`
+    + (info.move ? "They're moved into your rip folder (same drive, so it's instant)."
+                 : "They're copied into your rip folder. The originals stay where they are, so delete them once it's filed.")
+    + "\n\nShelfrip then names them from the folder's name and what's in the files, and they wait here for review.")) return;
+  const go = await api("/api/import", {path: info.path, go: 1});
+  if (go.error){ alert(go.error); return; }
+  b.disabled = true;
+  toast("Importing", info.move ? "Moving the videos in…" : `Copying ${info.gb} GB…`);
+  const tick = async () => {
+    const j = (await api("/api/import", {status: 1})).jobs[info.path] || {};
+    if (j.state === "running" || j.state === "naming"){
+      b.textContent = j.state === "naming" ? "Naming…" : j.total ? `Importing ${Math.round(100 * j.done / j.total)}%` : "Importing…";
+      return setTimeout(tick, 2000);
+    }
+    b.disabled = false; b.textContent = "Import a folder";
+    if (j.state === "error") alert("The import didn't finish: " + j.error);
+    else { toast("Imported", "Named and waiting for review."); await load(false); }
+  };
+  setTimeout(tick, 1000);
+};
 $("#scan").onclick = async () => { $("#scan").disabled = true; const j = await api("/api/scan", {}); $("#scan").disabled = false; await load(false); $("#sub").textContent += ` · ${j.planned} new`; };
 load(false).catch(e => $("#list").innerHTML = `<p class="empty err">${esc(e.message)}</p>`);
 </script>

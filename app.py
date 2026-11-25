@@ -1194,6 +1194,23 @@ class Handler(review.Handler):
             if err:
                 rip_all.log(f"Browse: {err}")
             return self.send(200, {"path": got, "available": got is not None, "error": err})
+        if u.path == "/api/import":  # a folder of videos ripped before, to be named like a fresh rip
+            import importer
+            b = self.body()
+            if b.get("status"):
+                return self.send(200, {"jobs": importer.JOBS})
+            src = Path(str(b.get("path") or "").strip().strip('"'))
+            libs = [identify.lib_path(review.LIB_ROOT, v) for v in identify.library_dirs(review.CFG, review.LIB_ROOT).values()]
+            why = importer.problem(src, review.RIP_ROOT, libs)
+            if why:
+                return self.send(200, {"error": why})
+            if not b.get("go"):  # first ask: what's there, for the confirmation
+                vids = importer.videos(src)
+                return self.send(200, {"path": str(src), "count": len(vids), "gb": round(sum(v.stat().st_size for v in vids) / 1e9, 1),
+                                       "move": importer.same_drive(src, review.RIP_ROOT)})
+            job = importer.start(src, review.RIP_ROOT, review.CFG, log=rip_all.log,
+                                 on_done=lambda _d: review.plan_new_folders())
+            return self.send(200, {"ok": True, "job": job})
         if u.path == "/api/tidy":
             res = tidy.clean(review.RIP_ROOT, [str(x) for x in (self.body().get("ids") or [])], busy_labels())
             if res["done"]:

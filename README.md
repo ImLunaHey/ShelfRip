@@ -38,6 +38,10 @@ server expects it.
   "Play All" titles whose episodes are on the disc are left out before ripping. Different cuts,
   language versions and named extras are always ripped, and a TV disc with only a "Play All" keeps it
   so it can be split into episodes.
+- **Imports videos you ripped before.** On the Review tab, click "Import a folder" and pick a folder
+  of MKVs (from MakeMKV on its own, or anything else). Shelfrip moves them into its rip folder (or
+  copies them, from another drive), reads each file's length and tracks with MKVToolNix, and names
+  them from the folder's name like a fresh rip, ready for review.
 - **Lets you choose the titles first (optional).** Turn on "Let me choose the titles before each rip
   starts" and, once a disc is read, its drive card lists every title with the ones Shelfrip would rip
   already ticked. Tick or untick any, then press Rip.
