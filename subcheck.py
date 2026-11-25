@@ -1,5 +1,5 @@
 r"""
-subcheck.py - check what Shelfrip identified against each video's subtitles (trial).
+subcheck.py - check what Shelfrip identified against each video's subtitles.
 
 For every rip folder (plan.json + its videos) it:
 
@@ -747,15 +747,15 @@ def units(plan: dict, folder: Path) -> list[dict]:
                     a = sp["starts"][k]
                     b = sp["starts"][k + 1] if k + 1 < len(sp["starts"]) else n - int(sp.get("ending") or 0)
                     out.append({"item": it, "video": src, "ranges": [(tm(a), tm(b))], "episode": ep,
-                                "label": f"{it['source']} part {k + 1}"})
+                                "label": f"{it['source']} part {k + 1}", "part": k})
             else:
                 out.append({"item": it, "video": src, "ranges": [(0, total)], "episode": eps[0] if eps else None,
                             "label": it["source"]})
         elif isinstance(filed, list) and len(filed) == len(eps):
-            for f, ep in zip(filed, eps):
+            for k, (f, ep) in enumerate(zip(filed, eps)):
                 if Path(f).is_file():
                     out.append({"item": it, "video": Path(f), "ranges": [(0, 1e9)], "episode": ep,
-                                "label": Path(f).name})
+                                "label": Path(f).name, "part": k if len(eps) > 1 else None})
         elif isinstance(filed, str) and Path(filed).is_file():
             out.append({"item": it, "video": Path(filed), "ranges": [(0, 1e9)],
                         "episode": eps[0] if eps else None, "label": Path(filed).name})
@@ -770,6 +770,10 @@ def check_folder(folder: Path, cfg: dict, tmdb, exe: str | None, langs: set[str]
               "findings": [], "checked_at": time.strftime("%Y-%m-%dT%H:%M:%S")}
     log(f"\n== {folder.name}: {plan.get('title')} ({plan.get('kind')}"
         + (f", season {plan.get('season')}" if plan.get("kind") == "tv" else "") + ")")
+    try:
+        imported = bool(json.loads((folder / "disc_info.json").read_text(encoding="utf-8")).get("imported_from"))
+    except (OSError, ValueError):
+        imported = False
     todo = units(plan, folder)
     if not todo:
         log("   nothing to check (no episode or main-feature videos found)")
@@ -845,7 +849,7 @@ def check_folder(folder: Path, cfg: dict, tmdb, exe: str | None, langs: set[str]
         if tmdb and plan.get("tmdb_id"):
             try:
                 if plan.get("kind") == "tv":
-                    _judge_tv(plan, todo, tmdb, report, log)
+                    _judge_tv(plan, todo, tmdb, report, log, cfg, imported)
                 else:
                     _judge_movie(plan, todo, tmdb, report, log)
             except Exception as exc:
@@ -861,13 +865,22 @@ def check_folder(folder: Path, cfg: dict, tmdb, exe: str | None, langs: set[str]
     return report
 
 
-def _judge_tv(plan, todo, tmdb, report, log):
-    profs = episode_profiles(tmdb, plan["tmdb_id"], int(plan.get("season") or 1))
+def _judge_tv(plan, todo, tmdb, report, log, cfg: dict | None = None, imported: bool = False):
+    """Which episode is each video? Every video is scored against every episode of the season
+    (plot-summary words, and dialogue against downloaded subtitles when that's turned on), then
+    clip shows are matched first and the rest paired one-to-one for the best total (epmatch)."""
+    import epmatch
+    cfg = cfg or {}
+    season = int(plan.get("season") or 1)
+    profs = episode_profiles(tmdb, plan["tmdb_id"], season)
     if not profs:
         log("   TMDB has no episode list for this season")
         return
     weight = weigh(profs)
     report["tmdb"] = {str(k): v["raw"] for k, v in profs.items()}
+    clip_eps = {e for e, p in profs.items() if epmatch.is_clip_show(p["raw"]["title"], p["raw"]["overview"])}
+    if clip_eps:
+        report["clip_show_episodes"] = sorted(clip_eps)
     eps = [u for u in todo if u.get("text") and u["episode"] is not None]
     kept = [k for k, u in enumerate(eps) if u["item"].get("action") != "skip"]
     for u in eps:
@@ -875,26 +888,78 @@ def _judge_tv(plan, todo, tmdb, report, log):
     damp = common_on_disc([eps[k]["m"] for k in kept], profs)
     table: dict[int, dict[int, tuple[float, list[str]]]] = {}
     for idx, u in enumerate(eps):
-        m = u["m"]
-        table[idx] = {e: score(m, p, weight, damp) for e, p in profs.items()}
-        ranked = sorted(table[idx], key=lambda e: -table[idx][e][0])
-        best = ranked[0]
-        planned = u["episode"]
-        sp, sb = table[idx].get(planned, (0.0, []))[0], table[idx][best][0]
-        second = table[idx][ranked[1]][0] if len(ranked) > 1 else 0.0
-        row = u["row"]
+        table[idx] = {e: score(u["m"], p, weight, damp) for e, p in profs.items()}
+    combined = {idx: {e: v[0] for e, v in table[idx].items()} for idx in table}
+
+    # ---- dialogue against reference subtitles (optional, OpenSubtitles)
+    ref_share: dict[int, dict[int, float]] = {}
+    if cfg.get("reference_subtitles") and kept:
+        import refsubs
+        langs = [str(u["row"].get("track", "")).split(" ")[-1] for u in eps if u["row"].get("track")]
+        lang = max(set(langs), key=langs.count) if langs else "eng"
+        want = list(profs) if imported else refsubs.wanted_episodes(
+            [eps[k]["episode"] for k in kept], list(profs), clip_eps)
+        try:
+            import paths
+            texts = refsubs.fetch(cfg, plan["tmdb_id"], season, want, lang, log,
+                                  limit=int(cfg.get("reference_subtitles_per_disc") or 10),
+                                  version=getattr(paths, "APP_VERSION", ""))
+        except Exception as exc:
+            log(f"   reference subtitles skipped: {exc}")
+            texts = {}
+        refs = {e: epmatch.shingles(epmatch.srt_text(t)) for e, t in texts.items()}
+        bad = epmatch.mislabeled(refs)
+        for e in bad:
+            refs.pop(e, None)
+        report["reference"] = {"source": "OpenSubtitles.com", "language": lang, "episodes": sorted(refs),
+                               "dropped_as_mislabeled": sorted(bad)}
+        if refs:
+            for idx, u in enumerate(eps):
+                rs = epmatch.reference_scores(u["text"], refs)
+                sample = epmatch.shingles(u["text"])
+                ref_share[idx] = {e: epmatch.containment(sample, r) for e, r in refs.items()}
+                for e in combined[idx]:
+                    if e in rs:
+                        combined[idx][e] = rs[e] + 0.3 * combined[idx][e]
+            log(f"   compared dialogue with OpenSubtitles for {len(refs)} episode(s)")
+
+    # ---- the whole disc at once
+    planned_of = {k: eps[k]["episode"] for k in kept}
+    result = epmatch.assign({k: combined[k] for k in kept}, planned_of, clip_eps,
+                            prior=0.0 if imported else 0.15)
+    for idx, u in enumerate(eps):
+        row, planned = u["row"], u["episode"]
+        sc = combined[idx]
+        ranked = sorted(sc, key=lambda e: -sc[e])
+        res = result.get(idx) or {"episode": ranked[0], "clip_show": False}
+        best = res["episode"] if res["episode"] is not None else ranked[0]
+        sp, sb = sc.get(planned, 0.0), sc.get(best, 0.0)
+        second = max((v for e, v in sc.items() if e != best), default=0.0)
+        by_ref = idx in ref_share and best in ref_share[idx]
+        words = table[idx].get(best, (0, []))[1]
         row.update(planned_score=round(sp, 2), best_episode=best, best_score=round(sb, 2),
-                   best_words=table[idx][best][1][:8], planned_words=table[idx].get(planned, (0, []))[1][:8])
+                   best_words=words[:8], planned_words=table[idx].get(planned, (0, []))[1][:8],
+                   best_name=profs.get(best, {}).get("name", ""), clip_show=bool(res.get("clip_show")),
+                   source=u["item"].get("source"), part=u.get("part"), by_reference=by_ref)
+        if by_ref:
+            row["reference_share"] = round(ref_share[idx].get(best, 0.0), 3)
+            row["planned_reference_share"] = round(ref_share[idx].get(planned, 0.0), 3)
         if row.get("copy_of", {}).get("timing_match", 0) >= 0.5:
             row["verdict"] = f"copy of {row['copy_of']['title']}"
-        elif best == planned and sb > 0 and sb >= 1.3 * second:
+        elif u["item"].get("action") == "skip":
+            row["verdict"] = "fits" if best == planned and sb > 0 else "unsure"
+        elif best == planned and sb > 0 and (sb >= 1.3 * second or res.get("clip_show")):
             row["verdict"] = "fits"
-        elif best != planned and sb >= 1.5 * max(sp, 0.01) and len(table[idx][best][1]) >= 2:
+        elif best != planned and sb >= 1.5 * max(sp, 0.01) and (by_ref or len(words) >= 2):
             row["verdict"] = f"looks like e{best:02d}"
         else:
             row["verdict"] = "unsure"
+        if res.get("clip_show") and not row["verdict"].startswith("copy"):
+            row["verdict"] += " (clip show)"
+        why = (f"{row.get('reference_share', 0):.0%} of lines in its subtitles" if by_ref
+               else ", ".join(words[:6]))
         log(f"   {u['label']}: planned e{planned:02d} ({profs.get(planned, {}).get('name', '?')}) score {sp:.2f}"
-            f" | best e{best:02d} ({profs[best]['name']}) {sb:.2f} [{', '.join(table[idx][best][1][:6])}]"
+            f" | matched e{best:02d} ({profs.get(best, {}).get('name', '?')}) {sb:.2f} [{why}]"
             f" -> {row['verdict']}")
     # The disc holds a run of episodes: does the whole run fit better shifted?
     if len(kept) >= 2:   # titles set to Skip aren't part of the run
@@ -902,7 +967,7 @@ def _judge_tv(plan, todo, tmdb, report, log):
         lo, hi = min(profs), max(profs)
         totals = {}
         for d in range(lo - min(planned), hi - max(planned) + 1):
-            totals[d] = sum(table[k].get(p + d, (0.0,))[0] for k, p in zip(kept, planned))
+            totals[d] = sum(combined[k].get(p + d, 0.0) for k, p in zip(kept, planned))
         best_d = max(totals, key=totals.get)
         report["run"] = {"planned_total": round(totals.get(0, 0), 2), "best_shift": best_d,
                          "best_total": round(totals[best_d], 2)}
@@ -911,13 +976,13 @@ def _judge_tv(plan, todo, tmdb, report, log):
                 f"The episodes look shifted: subtitles fit e{min(planned) + best_d:02d}-e{max(planned) + best_d:02d} "
                 f"better than the planned e{min(planned):02d}-e{max(planned):02d} "
                 f"(score {totals[best_d]:.1f} vs {totals.get(0, 0):.1f}).")
-    shifted = report.get("run", {}).get("best_shift", 0) != 0 and report["findings"]
     for u in eps:
-        v = u["row"].get("verdict", "")
-        if v.startswith("looks like") and not shifted and u["item"].get("action") != "skip":
+        r = u["row"]
+        if r.get("verdict", "").startswith("looks like") and u["item"].get("action") != "skip":
+            why = (f"{r['reference_share']:.0%} of its lines match that episode's subtitles"
+                   if r.get("by_reference") else ", ".join(r["best_words"][:5]))
             report["findings"].append(f"{u['label']} is planned as e{u['episode']:02d} but its dialogue fits "
-                                      f"e{u['row']['best_episode']:02d} better "
-                                      f"({', '.join(u['row']['best_words'][:5])}).")
+                                      f"e{r['best_episode']:02d} {r['best_name']} better ({why}).")
 
 
 def _judge_movie(plan, todo, tmdb, report, log):
