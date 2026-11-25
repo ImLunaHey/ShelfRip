@@ -519,6 +519,27 @@ def append_history(cfg: dict, row: dict) -> None:
 
 # --------------------------------------------------------------------------- rip one disc
 
+def claim_new_file(out_dir: Path, t: dict, since: float, disc: dict) -> None:
+    """After ripping one title on its own: if MakeMKV wrote it under another name than the scan gave
+    (its file name template, see ripfiles.py), give the new file the title's own name."""
+    want = out_dir / t["output_file"]
+    if want.exists() and want.stat().st_mtime >= since:
+        return
+    others = {o.get("output_file") for o in disc.get("titles", []) if o is not t}
+    try:
+        new = [p for p in out_dir.glob("*.mkv") if p.stat().st_mtime >= since and p.name != want.name
+               and p.name not in others]
+    except OSError:
+        return
+    if len(new) == 1:
+        try:
+            want.unlink(missing_ok=True)
+            new[0].rename(want)
+            log(f"title {t['title_id']}: MakeMKV saved it as {new[0].name}, renamed to {want.name}")
+        except OSError as exc:
+            log(f"title {t['title_id']}: couldn't rename {new[0].name} ({exc})")
+
+
 def partial_rip(cfg: dict, label: str) -> Path | None:
     """An unfinished rip of this disc (no disc_info.json yet, nothing written for 10 minutes)."""
     root, prefix = Path(cfg["output_root"]), safe_folder_name(label) + "__"
@@ -744,6 +765,11 @@ def rip_disc(cfg: dict, drive: dict) -> dict:
         scan_secs = time.time() - scan_start
         (out_dir / "makemkv_info.txt").write_text(info, encoding="utf-8")
         disc = parse_disc_info(info)
+    import ripfiles
+    if ripfiles.unclash(disc):
+        log(f"{device} [{label}] MakeMKV's file name template gives several titles the same file name; "
+            f"Shelfrip tells them apart itself (MakeMKV Preferences > Advanced > Default output file name "
+            f"template: keep {{_t:N2}} at the end)")
     disc.update({
         "drive": device,
         "drive_name": drive["drive_name"],
@@ -846,9 +872,11 @@ def rip_disc(cfg: dict, drive: dict) -> dict:
             except OSError:
                 pass
             share = (t.get("size_bytes") or 0) / total
+            began = time.time() - 2
             r, o = run_makemkv(cfg, [f"--minlength={min_len}", "mkv", src, str(t["title_id"]), str(out_dir)],
                                logfile=out_dir / "rip.log", device=device, on_phase=phase,
                                on_progress=lambda f, b=before / total, s=share: progress(b + f * s))
+            claim_new_file(out_dir, t, began, disc)
             before += t.get("size_bytes") or 0
             rc, outs = rc or r, outs + [o]
         return rc, "\n".join(outs)
@@ -858,6 +886,7 @@ def rip_disc(cfg: dict, drive: dict) -> dict:
     wanted = [t for t in listed if "skipped_duplicate_of" not in t]
     todo = list(wanted)
     if resume:
+        ripfiles.match_files(out_dir, disc, cfg)
         done = [t for t in todo if title_complete(cfg, out_dir / t["output_file"], t)]
         todo = [t for t in todo if t not in done]
         log(f"{device} [{label}] continuing an unfinished rip: {len(done)} title(s) already done, "
@@ -875,6 +904,8 @@ def rip_disc(cfg: dict, drive: dict) -> dict:
             cfg, [f"--minlength={min_len}", "mkv", src, "all", str(out_dir)],
             logfile=out_dir / "rip.log", on_progress=progress, device=device, on_phase=phase,
         )
+        if ripfiles.match_files(out_dir, disc, cfg):
+            log(f"{device} [{label}] matched the ripped files to their titles by length")
         keep = {t["output_file"] for t in wanted}
         for t in listed:
             if t["output_file"] not in keep:

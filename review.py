@@ -127,10 +127,16 @@ def _plan_new_folders() -> int:
                 old = json.loads(pj.read_text(encoding="utf-8"))
             except Exception:
                 continue
-            if (old.get("status") != "proposed" or old.get("edited")
-                    or old.get("planner_version", 1) >= identify.PLANNER_VERSION):
+            if old.get("status") != "proposed" or JOBS.get(folder.name, {}).get("state") == "running":
+                continue
+            # a rip whose titles all pointed at one file (MakeMKV's file name template): its names
+            # were made for the wrong files, so they're made again even if you edited them
+            if not _repair_files(folder) and (old.get("edited")
+                                               or old.get("planner_version", 1) >= identify.PLANNER_VERSION):
                 continue
             shutil.copy2(pj, folder / "plan.old.json")
+        else:
+            _repair_files(folder)
         try:
             if _is_music(folder):
                 import music
@@ -145,6 +151,18 @@ def _plan_new_folders() -> int:
             save_plan(folder, plan)
             n += 1
     return n
+
+
+def _repair_files(folder: Path) -> bool:
+    """Point each title of a rip at its real file (ripfiles.py). True if anything changed."""
+    try:
+        import ripfiles
+        if ripfiles.repair(folder, CFG):
+            print(f"{folder.name}: titles matched to their ripped files again (they shared one file name)")
+            return True
+    except Exception as exc:
+        print(f"{folder.name}: couldn't check the ripped files ({exc})")
+    return False
 
 
 def unnamed_folders() -> list[str]:
@@ -689,6 +707,10 @@ def check_plan(folder: Path, plan: dict) -> list[str]:
             problems.append(f"Not enough space in {where}: needs {need / 1e9:.1f} GB, {free / 1e9:.1f} GB free.")
     except OSError:
         pass
+    srcs = [it["source"] for it in plan["items"] if it.get("action") == "move" and not item_done(it)]
+    for src in sorted({s for s in srcs if srcs.count(s) > 1}):
+        problems.append(f"{srcs.count(src)} titles point at the same ripped file, {src}, so this disc can't be "
+                        f"filed as it is. Click “Check for new rips” to match the titles to their files again.")
     for it in plan["items"]:
         if it.get("action") != "move" or item_done(it):  # done = copied by a filing that was interrupted
             continue
