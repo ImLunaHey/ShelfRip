@@ -46,8 +46,9 @@ JOB_DEFAULTS = {"auto_file": True, "auto_file_minutes": 15, "audio_language": "e
                 "forced_subtitles": True, "retry_failed_titles": True, "job_total_discs": 0,
                 "min_free_gb_rips": 60, "app_window": True, "tray_icon": True, "sounds": True,
                 "skip_clutter": True, "skip_duplicate_features": False, "choose_titles": False,
-                "offer_error_reports": True}
-SECRETS = ("tmdb_api_key", "omdb_api_key", "plex_token")
+                "offer_error_reports": True, "subtitle_check": False, "reference_subtitles": False,
+                "reference_subtitles_per_disc": 10}
+SECRETS = ("tmdb_api_key", "omdb_api_key", "plex_token", "opensubtitles_password", "opensubtitles_api_key")
 SETTINGS = [  # (key, label, kind)
     ("output_root", "Rip folder (where discs are ripped to before review)", "text"),
     ("plex_library_root", "Media library folder (holds your Movies and TV Shows folders)", "text"),
@@ -93,6 +94,13 @@ SETTINGS = [  # (key, label, kind)
     ("min_free_gb_rips", "Don't start a rip with less than this free in the rip folder (GB)", "number"),
     ("tmdb_api_key", "TMDB key", "secret"),
     ("omdb_api_key", "OMDb key", "secret"),
+    ("subtitle_check", "Check episode numbers against what is said in each episode (reads the subtitles)", "bool"),
+    ("reference_subtitles", "Compare with each episode's subtitles from OpenSubtitles.com (free account)", "bool"),
+    ("opensubtitles_username", "OpenSubtitles.com username", "text"),
+    ("opensubtitles_password", "OpenSubtitles.com password", "secret"),
+    ("opensubtitles_api_key", "OpenSubtitles API key (optional: replaces Shelfrip's)", "secret"),
+    ("reference_subtitles_per_disc", "Most subtitle downloads per disc", "number"),
+    ("tesseract_path", "Tesseract OCR (tesseract.exe), for reading Blu-ray and DVD subtitles", "text"),
     ("plex_token", "Plex token (Plex only, optional)", "secret"),
     ("check_updates", "Tell me when a new version of Shelfrip is out", "bool"),
     ("sounds", "Play sounds (a chime when a disc is filed, a fanfare when you level up)", "bool"),
@@ -809,6 +817,18 @@ def setup_check() -> list[dict]:
                 "detail": str(mr) if mr.is_dir() else f"{mr} doesn't exist yet: it's created when you file your first CD. "
                           "Then add it to Plex as a Music library.",
                 "link": "" if mr.is_dir() else "https://support.plex.tv/articles/200288926-creating-libraries/", "required": False})
+    if cfg.get("subtitle_check"):
+        import subcheck
+        tess = subcheck.tesseract(cfg)
+        out.append({"name": "Tesseract OCR (subtitle check)", "ok": bool(tess),
+                    "detail": tess or "not found: needed to read Blu-ray and DVD picture subtitles. "
+                              "Install it with: winget install UB-Mannheim.TesseractOCR",
+                    "link": "" if tess else subcheck.TESSERACT_URL, "required": False})
+        if cfg.get("reference_subtitles"):
+            import refsubs
+            why = refsubs.OpenSubtitles(cfg).ready()
+            out.append({"name": "OpenSubtitles.com", "ok": not why, "detail": why or "signed in",
+                        "link": "https://www.opensubtitles.com/en/users/sign_up" if why else "", "required": False})
     plex = bool(cfg.get("plex_url")) and bool(cfg.get("plex_token")) and "paste" not in str(cfg.get("plex_token")).lower()
     out.append({"name": "Plex check", "ok": plex, "detail": "on" if plex else "off (optional: add the Plex address and token in Settings)",
                 "link": "" if plex else "https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/",
@@ -1138,6 +1158,9 @@ def _save_settings(values: dict) -> None:
         if kind == "secret":
             if isinstance(v, str) and v.strip():  # empty = keep the current key
                 raw[key] = v.strip()
+                if key == "opensubtitles_password":  # encrypted for this Windows account
+                    import refsubs
+                    raw[key] = refsubs.protect(v.strip())
             elif v is None:
                 raw[key] = ""
             continue

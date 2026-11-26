@@ -49,6 +49,17 @@ server expects it.
   scenes of the movie (made only of its video, or carrying exactly its soundtracks and subtitles)
   start as Skip on the Review tab.
 - **Splits TV discs** where several episodes were mastered as one long video, by chapter.
+- **Checks episode numbers against the dialogue (optional).** Turn on "Check episode numbers
+  against the subtitles" (Settings > Names and lookups) and, after a TV disc is named, Shelfrip
+  reads each episode's subtitles and matches the whole disc to the season at once, clip shows
+  first, so discs that list episodes out of order and folders of files in any order get the right
+  numbers. It only reads. Episodes whose dialogue says another number show it on the Review tab with
+  a button to use it, and the disc isn't filed automatically. Blu-ray and DVD subtitles are pictures,
+  so this needs the free [Tesseract OCR](https://github.com/UB-Mannheim/tesseract/wiki)
+  (`winget install UB-Mannheim.TesseractOCR`). For much stronger matches, also turn on "Compare with
+  subtitles from OpenSubtitles.com" and sign in with a free account (20 downloads a day): each
+  episode's subtitles are downloaded once, kept on your PC, used only for matching, and never shared
+  or added to your rips.
 - **Keeps every audio and subtitle track**, names commentary tracks, and makes your language the
   default.
 - **Lets you check everything first.** Nothing moves until you've seen the names. You can change the
@@ -230,6 +241,8 @@ The server code, and how answers are decided, are in [server/](server/).
 
 - [TMDB](https://www.themoviedb.org/): movie and episode names and numbers (always the main source).
   This application uses TMDB and the TMDB APIs but is not endorsed, certified, or otherwise approved by TMDB.
+- [OpenSubtitles.com](https://www.opensubtitles.com/) (optional, your own free account): episode
+  subtitles to check which episode a video is. Never used for names.
 - [TheDiscDB](https://thediscdb.com/): recognises specific discs and names their titles and extras.
 - [TVmaze](https://www.tvmaze.com/) and, with your own key, [OMDb](https://www.omdbapi.com/): second opinions.
 - [DVDCompare](https://www.dvdcompare.net/): extras lists by release. Off by default; turn it on in Settings.

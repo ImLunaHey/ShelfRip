@@ -623,6 +623,53 @@ function splitRow(p, it, j){
     <div class="note" style="color:var(--muted)">Use ▶ to watch the video and check where episodes begin. Nothing is re-encoded; cuts land on chapter marks.</div>
   </div></td></tr>`;
 }
+// The subtitle check (Settings > Names and lookups): what the episodes' dialogue says.
+function subLine(p){
+  const sc = p.subcheck;
+  if (!sc) return "";
+  const muted = t => `<div class="sub" style="color:var(--muted);font-size:12px">${t}</div>`;
+  if (sc.state === "queued" || sc.state === "running")
+    return muted(`Checking the episode numbers against the subtitles… (${sc.state === "running" ? "reading them now" : "waiting its turn"})`);
+  if (sc.state === "error") return muted(`Couldn't check the subtitles: ${esc(sc.error || "unknown problem")}`);
+  const refs = ((sc.reference || {}).episodes || []).length;
+  const how = refs ? ` (compared with OpenSubtitles for ${refs} episode${refs === 1 ? "" : "s"})` : "";
+  const moves = dialogueMoves(p);
+  // per-episode disagreements show under each episode; the card says how many, plus anything else
+  const other = (sc.findings || []).filter(f => !/ is planned as e\d+ but its dialogue fits /.test(f));
+  const lines = other.map(f => `<div class="warn">Subtitle check: ${esc(f)}</div>`);
+  if (moves.length) lines.unshift(`<div class="warn">Subtitle check${esc(how)}: the dialogue says ${moves.length === 1 ? "one episode has" : moves.length + " episodes have"} another number (below).
+    ${moves.length > 1 ? `<button class="usedlgall">Use the subtitle check's numbers for all ${moves.length}</button>` : ""}</div>`);
+  if (lines.length) return lines.join("");
+  const fits = (sc.titles || []).filter(r => /^fits/.test(r.verdict || "")).length;
+  return fits ? muted(`✓ Subtitle check: the dialogue fits the episode numbers${esc(how)}.`) : "";
+}
+// every video (or part) whose dialogue says another episode than it has now
+function dialogueMoves(p){
+  const sc = p.subcheck, out = [];
+  if (!sc || sc.state !== "done") return out;
+  p.items.forEach((it, j) => {
+    if (it.role !== "episode" || it.action === "skip") return;
+    (sc.titles || []).filter(r => r.source === it.source && /^looks like/.test(r.verdict || "")).forEach(r => {
+      const k = r.part ?? null, cur = k === null ? it.episode : (it.episodes || [])[k];
+      if (r.best_episode && r.best_episode !== cur) out.push({j, k, ep: r.best_episode});
+    });
+  });
+  return out;
+}
+function dialogueLine(p, it, j){
+  const sc = p.subcheck;
+  if (!sc || sc.state !== "done" || it.role !== "episode" || it.action === "skip") return "";
+  return (sc.titles || []).filter(r => r.source === it.source).map(r => {
+    const k = r.part ?? null;
+    const cur = k === null ? it.episode : (it.episodes || [])[k];
+    if (r.clip_show && /^fits/.test(r.verdict || "")) return `<div class="sub" style="color:var(--muted);font-size:12px">Clip show: its dialogue comes from several episodes.</div>`;
+    if (!r.best_episode || !/^looks like/.test(r.verdict || "") || r.best_episode === cur) return "";
+    const why = r.by_reference ? `${Math.round(100 * (r.reference_share || 0))}% of its lines match that episode's subtitles`
+                               : (r.best_words || []).slice(0, 4).join(", ");
+    return `<div class="note">The dialogue${k === null ? "" : ` in part ${k + 1}`} says this is e${pad(r.best_episode)}${r.best_name ? " " + esc(r.best_name) : ""} (${esc(why)}).
+      <button class="usedlg" data-j="${j}" data-k="${k === null ? "" : k}" data-e="${r.best_episode}">Use e${pad(r.best_episode)}</button></div>`;
+  }).join("");
+}
 // how sure the shared disc database is about this title (weighted votes, less disagreement and reports)
 function sharedLine(it){
   const c = it.shared_confidence;
@@ -717,6 +764,7 @@ function card(p, i){
         <div class="dest">${it.action==="skip" ? "not filed" : (it.needs_split && it.split) ? `cut into ${it.split.starts.length} episodes (below)` : esc(destOf(p, it))}</div>
         ${attachLine(p, it, j)}
         ${it.note ? `<div class="note">${esc(it.note)}</div>` : ""}
+        ${dialogueLine(p, it, j)}
         ${sharedLine(it)}
         ${audioLine(it, j)}</td>
       <td class="src">${esc(it.source)}</td></tr>` + (it.needs_split && it.split ? splitRow(p, it, j) : "");
@@ -747,6 +795,7 @@ function card(p, i){
       </div>
       ${autoLine(p)}
       ${liveWarnings(p).map(w => `<div class="warn${PH.test(w) ? " phwarn" : ""}">${esc(w)}</div>`).join("")}
+      ${subLine(p)}
       ${(p.editions||[]).length > 1 ? `<div class="row"><label class="f" style="flex:1">Release${p.edition_sure ? "" : ` <span class="err">(not sure which, please check)</span>`}
         <select class="edition" style="max-width:100%">${p.editions.map(e => `<option value="${esc(e.id)}" ${e.id===p.edition?"selected":""}>${esc(e.name)}</option>`).join("")}</select></label>
         ${p.dvdcompare_url ? `<a href="${esc(p.dvdcompare_url)}" target="_blank" rel="noopener" style="font-size:12px">DVDCompare page</a>` : ""}</div>` : ""}
@@ -977,6 +1026,40 @@ function wire(p, i){
       if (it.note && /TMDB|check the episode number/i.test(it.note)) it.note = "";
       reflow(p); rerender();
     });
+  });
+  const useAll = $(".usedlgall", el);
+  if (useAll) useAll.onclick = async () => {
+    const moves = dialogueMoves(p);
+    el.dispatchEvent(new Event("change"));
+    try {
+      const r = await api("/api/epnames", {folder:p.folder, plan:{title:p.title, year:p.year, tmdb_id:p.tmdb_id}, season:p.season, episodes:moves.map(m => m.ep)});
+      moves.forEach(m => {
+        const it = p.items[m.j], full = r.names[m.ep];
+        if (!full) return;
+        if (m.k === null) Object.assign(it, {name: full, season: p.season, episode: m.ep, episodes: [m.ep]});
+        else { it.split.names[m.k] = full; if (it.episodes) it.episodes[m.k] = m.ep; }
+        delete it.library_copy;
+      });
+      reflow(p); rerender();
+    } catch(e){ msg.textContent = e.message; }
+  };
+  el.querySelectorAll(".usedlg").forEach(b => b.onclick = async () => {
+    const it = p.items[b.dataset.j], ep = +b.dataset.e, k = b.dataset.k === "" ? null : +b.dataset.k;
+    const season = it.season ?? p.season;
+    el.dispatchEvent(new Event("change"));
+    try {
+      const r = await api("/api/epnames", {folder:p.folder, plan:{title:p.title, year:p.year, tmdb_id:p.tmdb_id}, season, episodes:[ep]});
+      const full = r.names[ep];
+      if (!full) { msg.textContent = `TMDB has no s${pad(season)}e${pad(ep)} for this show.`; return; }
+      if (k === null) {
+        Object.assign(it, {name: full, season, episode: ep, episodes: [ep]});
+        if (it.note && /TMDB|check the episode number/i.test(it.note)) it.note = "";
+      } else {
+        it.split.names[k] = full;
+        if (it.episodes) it.episodes[k] = ep;
+      }
+      delete it.library_copy; reflow(p); rerender();
+    } catch(e){ msg.textContent = e.message; }
   });
   el.querySelectorAll(".snm").forEach(n => n.onchange = () => {
     const it = p.items[n.dataset.j], k = +n.dataset.k;
@@ -1948,6 +2031,12 @@ const SET_GROUPS = [
     ["share_discs", "Share what I file", "Anonymous: only the disc's fingerprint, title lengths and the names you chose. Makes the next person's rip of the same disc more reliable."],
     ["use_dvdcompare", "Also look up extras on DVDCompare", "Reads DVDCompare's web pages for extras lists by release."],
     ["omdb_api_key", "OMDb key", "Optional second opinion on a movie's year and length.", {link:"https://www.omdbapi.com/apikey.aspx", linkText:"Get a free key", adv:1}],
+    ["subtitle_check", "Check episode numbers against the subtitles", "After a TV disc is named, Shelfrip reads each episode's subtitles and checks the numbers against what is said, so discs that list episodes out of order and clip shows get the right numbers. It only reads: your files and tracks don't change. A disc whose dialogue disagrees waits for you instead of filing automatically. Blu-ray and DVD subtitles are pictures, so this needs the free Tesseract OCR (winget install UB-Mannheim.TesseractOCR)."],
+    ["reference_subtitles", "Compare with subtitles from OpenSubtitles.com", "Much more reliable than plot summaries: each episode's dialogue is compared with that episode's subtitles. Needs a free OpenSubtitles.com account (20 downloads a day). Each episode is downloaded once and kept on this PC; the files are only used for matching and are never shared or added to your rips."],
+    ["opensubtitles_username", "OpenSubtitles.com username", "", {link:"https://www.opensubtitles.com/en/users/sign_up", linkText:"Make a free account", short:1}],
+    ["opensubtitles_password", "OpenSubtitles.com password", "Kept in your settings file, encrypted for your Windows account."],
+    ["reference_subtitles_per_disc", "Most subtitle downloads per disc", "Leaves the rest of the day's downloads for other discs.", {unit:"files", adv:1}],
+    ["opensubtitles_api_key", "Your own OpenSubtitles API key", "Optional: only if Shelfrip's own key stops working.", {link:"https://www.opensubtitles.com/en/consumers", linkText:"Get one", adv:1}],
   ]},
   {id:"plex", name:"Plex", icon:"M8 5l10 7-10 7z", intro:"Optional: lets Shelfrip check what Plex matched after filing.", only:"plex", items:[
     ["plex_url", "Plex address", "For example http://localhost:32400"],
@@ -1961,6 +2050,7 @@ const SET_GROUPS = [
   {id:"tools", name:"Programs", icon:"M14 7l3 3l4-4l-3-3zM3 21l9-9", intro:"Shelfrip finds these by itself; change them only if it can't.", items:[
     ["makemkvcon_path", "MakeMKV (makemkvcon64.exe)", "Does the ripping.", {pick:"file"}],
     ["mkvtoolnix_dir", "MKVToolNix folder", "Splits TV discs that hold several episodes in one video.", {pick:"folder"}],
+    ["tesseract_path", "Tesseract OCR (tesseract.exe)", "Reads Blu-ray and DVD subtitles for the subtitle check. Leave empty to find it by itself.", {pick:"file", adv:1}],
   ]},
   {id:"alerts", name:"Notifications", icon:"M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10 21h4", intro:"", items:[
     ["notifications", "Windows notifications", "When a rip finishes or a disc is filed."],
