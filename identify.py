@@ -50,6 +50,11 @@ DEFAULTS = {
     # "Movies" / "TV Shows". See library_dirs().
     "movies_folder": "",
     "tv_folder": "",
+    # "Use multiple libraries": other library folders (a separate 4K library, say), each
+    # {"name", "path", "formats": ["4k", ...]}. Discs of those formats go there by default, and the
+    # Review tab lets you pick the library for each disc. Off = everything goes into plex_library_root.
+    "multiple_libraries": False,
+    "libraries": [],
     # plex, jellyfin, emby or kodi: how filed files are named (naming.py)
     "media_server": "plex",
     "extras_style": "folders",  # special features in Featurettes\, Trailers\... folders, or "suffix": Name-featurette.mkv
@@ -403,6 +408,113 @@ def library_dirs(cfg: dict, root: Path | None = None) -> dict:
                 break
         out[kind] = found or default
     return out
+
+
+DISC_FORMATS = ("4k", "bluray", "dvd")
+
+
+def _same_dir(a: str, b: str) -> bool:
+    def key(x):
+        anchor, parts = _split_abs(x)
+        return (anchor.lower(), [p.lower() for p in parts])
+    return bool(str(a or "").strip()) and key(a) == key(b)
+
+
+def extra_libraries(cfg: dict) -> list[dict]:
+    """The other libraries chosen in Settings ("Use multiple libraries"), tidied: [{"name", "path",
+    "formats"}]. [] when that setting is off. Entries with no folder, or the main library's, are left out."""
+    if not cfg.get("multiple_libraries"):
+        return []
+    main = str(cfg.get("plex_library_root") or "").strip()
+    out: list[dict] = []
+    for x in cfg.get("libraries") or []:
+        if not isinstance(x, dict):
+            continue
+        path = str(x.get("path") or "").strip()
+        path = path if re.fullmatch(r"[A-Za-z]:[\\/]*|[\\/]+", path) else path.rstrip("\\/")
+        if not path or _same_dir(path, main) or any(_same_dir(path, o["path"]) for o in out):
+            continue
+        name = str(x.get("name") or "").strip() or (_split_abs(path)[1] or [path])[-1]
+        out.append({"name": name, "path": path,
+                    "formats": [f for f in DISC_FORMATS if f in (x.get("formats") or [])]})
+    return out
+
+
+def library_choices(cfg: dict) -> list[dict]:
+    """The libraries a disc can be filed into, main first ({"name", "path", "formats", "main"}).
+    Just the main library unless "Use multiple libraries" is on and another one is set."""
+    main = str(cfg.get("plex_library_root") or "").strip()
+    return [{"name": "Main library", "path": main, "formats": [], "main": True}] + extra_libraries(cfg)
+
+
+def default_library(cfg: dict, fmt: str) -> str:
+    """The library a disc of this format ("4k", "bluray", "dvd") goes into by default: the first
+    other library set to take that format, else "" (the main library)."""
+    return next((x["path"] for x in extra_libraries(cfg) if fmt in x["formats"]), "")
+
+
+def known_library(cfg: dict, root: str) -> str:
+    """root if it's one of the other libraries set now, else "" (the main library)."""
+    return next((x["path"] for x in extra_libraries(cfg) if _same_dir(x["path"], root)), "")
+
+
+def library_cfg(cfg: dict, root: str | Path | None) -> dict:
+    """The settings as seen from another library: its folder in place of plex_library_root. A
+    Movies/TV folder setting that's a name ("Films") is used inside it too; one kept outside the
+    main library (a full path) belongs to the main library only, so the other library's own folder
+    (or Movies / TV Shows) is used."""
+    main = str(cfg.get("plex_library_root") or "").strip()
+    if not root or _same_dir(str(root), main):
+        return cfg
+    out = dict(cfg, plex_library_root=str(root))
+    for key in ("movies_folder", "tv_folder"):
+        v = clean_lib_dir(cfg.get(key, ""), main)
+        out[key] = "" if v and is_full_path(v) else v
+    return out
+
+
+def _under(path: str, prefix: str) -> str | None:
+    """What follows prefix in path ("" if they're the same folder), comparing folder names
+    without case; None if path isn't inside prefix."""
+    pa, pp = _split_abs(path)
+    qa, qp = _split_abs(prefix)
+    if pa.lower() != qa.lower() or len(pp) < len(qp) or [x.lower() for x in pp[:len(qp)]] != [x.lower() for x in qp]:
+        return None
+    return "\\".join(pp[len(qp):])
+
+
+def retarget_library(plan: dict, cfg: dict, root: str) -> str:
+    """Point a plan at another library (root "" = the main one): its show/movie folder moves from the
+    old library's Movies/TV folder to the new one's, keeping the format folder and name, and each
+    item's folder follows. Returns "" or why it can't be changed."""
+    if plan.get("kind") not in ("movie", "tv"):
+        return "Music CDs always go into the music folder."
+    if plan.get("filing") or any(it.get("filed_to") for it in plan.get("items", [])):
+        return "This disc has started filing, so its library can't change now."
+    main = str(cfg.get("plex_library_root") or "").strip()
+    root = "" if not root or _same_dir(root, main) else root
+    old = plan.get("library_root") or ""
+    key = "tv" if plan["kind"] == "tv" else "movies"
+    old_top = library_dirs(library_cfg(cfg, old or main), Path(old or main) if (old or main) else None)[key]
+    new_top = library_dirs(library_cfg(cfg, root or main), Path(root or main) if (root or main) else None)[key]
+    old_dir = str(plan.get("library_dir") or "").replace("/", "\\").rstrip("\\")
+    rest = _under(old_dir, old_top)
+    if rest is None and is_full_path(old_dir) and (old or main):  # a full path inside the old library
+        inside = _under(old_dir, old or main)
+        rest = _under(inside, old_top) if inside is not None and not is_full_path(old_top) else None
+    if rest is None:  # somewhere else (an existing movie's folder): same name in the new library
+        rest = (_split_abs(old_dir)[1] or [""])[-1]
+    new_dir = "\\".join(x for x in (new_top, rest) if x)
+    for it in plan.get("items", []):
+        tail = _under(str(it.get("dest_dir") or ""), old_dir)
+        it["dest_dir"] = new_dir + ("\\" + tail if tail else "") if tail is not None else new_dir
+    plan["library_dir"] = new_dir
+    if root:
+        plan["library_root"] = root
+    else:
+        plan.pop("library_root", None)
+    plan["warnings"] = [w for w in plan.get("warnings") or [] if not w.startswith("Extras will go into the movie's existing folder")]
+    return ""
 
 
 def index_library(root: Path, cfg: dict) -> dict:

@@ -123,11 +123,38 @@ def stop_filing(folder: Path) -> str:
 _LIB_CACHE: dict = {}
 
 
-def library(refresh: bool = False) -> dict:
-    if refresh or not _LIB_CACHE:
-        _LIB_CACHE.clear()
-        _LIB_CACHE.update(identify.index_library(LIB_ROOT, CFG))
-    return _LIB_CACHE
+def library(refresh: bool = False, root: Path | str | None = None) -> dict:
+    """What's already in a library (the main one unless root is another one's folder)."""
+    root = Path(root) if root else LIB_ROOT
+    key = str(root).lower()
+    if refresh:
+        _LIB_CACHE.pop(key, None)
+    if key not in _LIB_CACHE:
+        _LIB_CACHE[key] = identify.index_library(root, identify.library_cfg(CFG, root))
+    return _LIB_CACHE[key]
+
+
+def root_of(plan: dict) -> Path:
+    """The library a disc is filed into: the one picked on the Review tab ("Use multiple
+    libraries"), else the main library."""
+    return Path(plan["library_root"]) if plan.get("library_root") else LIB_ROOT
+
+
+def plan_disc(folder: Path, override: dict | None = None, root: str | None = None) -> dict | None:
+    """Name a ripped disc (identify.plan_folder) for the library it goes into: root, or by default
+    the library set for its format (a separate 4K library, say), else the main one."""
+    if root is None:
+        try:
+            info = json.loads((folder / "disc_info.json").read_text(encoding="utf-8"))
+            root = identify.default_library(CFG, identify.disc_format(info))
+        except (OSError, ValueError, KeyError):
+            root = ""
+    root = identify.known_library(CFG, root or "")
+    plan = identify.plan_folder(folder, RIP_ROOT, TMDB, library(root=root or None),
+                                identify.library_cfg(CFG, root), override=override)
+    if plan and root:
+        plan["library_root"] = root
+    return plan
 
 
 # --------------------------------------------------------------------------- planning
@@ -154,15 +181,16 @@ def save_plan(folder: Path, plan: dict) -> None:
             time.sleep(0.25)
 
 
-def library_reachable() -> str:
+def library_reachable(root: Path | None = None) -> str:
     """'' if the library folder can be reached, else a sentence saying it can't."""
+    root = root or LIB_ROOT
     try:
-        if LIB_ROOT.is_dir():
-            next(LIB_ROOT.iterdir(), None)  # a dropped network drive can pass is_dir() but fail here
+        if root.is_dir():
+            next(root.iterdir(), None)  # a dropped network drive can pass is_dir() but fail here
             return ""
     except OSError:
         pass
-    return (f"Your library ({LIB_ROOT}) can't be reached right now. If it's on a NAS or network drive, check it's "
+    return (f"Your library ({root}) can't be reached right now. If it's on a NAS or network drive, check it's "
             "on and connected. Shelfrip tries again by itself.")
 
 
@@ -174,10 +202,10 @@ def plan_new_folders() -> int:
 def _plan_new_folders() -> int:
     """Make a plan.json (proposed names) for each finished rip that doesn't have one yet.
     Returns how many were planned. Folders still ripping (no disc_info.json) are left alone."""
-    lib = library(refresh=True)
     n = 0
     if not RIP_ROOT.is_dir():
         return 0
+    _LIB_CACHE.clear()  # read the libraries afresh for this round of naming
     for folder in sorted(p for p in RIP_ROOT.iterdir() if p.is_dir() and not p.name.startswith("_")):
         # disc_info.json is written when a rip finishes, so folders still ripping are skipped
         if not (folder / "disc_info.json").exists():
@@ -189,16 +217,22 @@ def _plan_new_folders() -> int:
                 old = json.loads(pj.read_text(encoding="utf-8"))
             except Exception:
                 continue
-            if (old.get("status") != "proposed" or old.get("edited")
-                    or old.get("planner_version", 1) >= identify.PLANNER_VERSION):
+            if old.get("status") != "proposed" or JOBS.get(folder.name, {}).get("state") == "running":
+                continue
+            # a rip whose titles all pointed at one file (MakeMKV's file name template): its names
+            # were made for the wrong files, so they're made again even if you edited them
+            if not _repair_files(folder) and (old.get("edited")
+                                               or old.get("planner_version", 1) >= identify.PLANNER_VERSION):
                 continue
             shutil.copy2(pj, folder / "plan.old.json")
+        else:
+            _repair_files(folder)
         try:
             if _is_music(folder):
                 import music
                 plan = music.plan_folder(folder, CFG, identify.PLANNER_VERSION)
             else:
-                plan = identify.plan_folder(folder, RIP_ROOT, TMDB, lib, CFG)
+                plan = plan_disc(folder)
         except Exception as exc:
             print(f"{folder.name}: could not plan ({exc})")
             continue
@@ -295,6 +329,18 @@ def subcheck_view(folder: Path, plan: dict) -> dict | None:
             "reference": rep.get("reference"), "checked_at": rep.get("checked_at")}
 
 
+def _repair_files(folder: Path) -> bool:
+    """Point each title of a rip at its real file (ripfiles.py). True if anything changed."""
+    try:
+        import ripfiles
+        if ripfiles.repair(folder, CFG):
+            print(f"{folder.name}: titles matched to their ripped files again (they shared one file name)")
+            return True
+    except Exception as exc:
+        print(f"{folder.name}: couldn't check the ripped files ({exc})")
+    return False
+
+
 def start_over(folder: Path) -> dict:
     """Name a disc again from scratch, as if it had just been ripped: your edits and any match you
     picked are dropped (the old plan is kept as plan.old.json). Returns {plan} or {error}."""
@@ -317,7 +363,9 @@ def start_over(folder: Path) -> dict:
             import music
             plan = music.plan_folder(folder, CFG, identify.PLANNER_VERSION)
         else:
-            plan = identify.plan_folder(folder, RIP_ROOT, TMDB, library(refresh=True), CFG)
+            _repair_files(folder)
+            _LIB_CACHE.clear()  # read the library afresh
+            plan = plan_disc(folder)  # into the library set for its format, as when it was ripped
         if not plan:
             return {"error": "Couldn't name this disc again: its ripped files or disc_info.json are missing."}
         if pj.exists():
@@ -365,6 +413,9 @@ def list_plans() -> list[dict]:
         job = JOBS.get(p.parent.name)
         if job:
             plan["job"] = job_view(job)
+        if plan.get("library_root") and plan.get("kind") in ("movie", "tv") and not plan.get("filing") \
+                and not identify.known_library(CFG, plan["library_root"]):
+            identify.retarget_library(plan, CFG, "")  # that library was removed in Settings (or the option turned off)
         if plan.get("kind") == "tv":  # episodes already in the library, for "belongs to episode"
             plan["season_files"] = season_files(plan)
             sc = subcheck_view(p.parent, plan)
@@ -380,7 +431,7 @@ def list_plans() -> list[dict]:
 def season_files(plan: dict) -> list[str]:
     """Names (without .mkv) of the episode files already in this season's library folder."""
     try:
-        d = identify.lib_path(LIB_ROOT, f"{plan['library_dir']}\\Season {plan.get('season')}")
+        d = identify.lib_path(root_of(plan), f"{plan['library_dir']}\\Season {plan.get('season')}")
         return sorted(f.stem for f in d.glob("*.mkv") if re.search(r" - s\d+e\d+", f.stem, re.I)
                       and not re.search(r"-(?:" + "|".join(EXTRA_SUFFIX.values()) + r")\d*$", f.stem))
     except (OSError, KeyError):
@@ -560,7 +611,7 @@ def refile_movie(name: str, tmdb_id: str, log=print) -> dict:
         return {"error": "Add your TMDB key in Settings first."}
     if not tmdb_id.isdigit():
         return {"error": "Pick a movie from the search results."}
-    away = library_reachable()
+    away = library_reachable(root_of(plan))
     if away:
         return {"error": away}
     m = TMDB.movie(int(tmdb_id))
@@ -576,7 +627,7 @@ def refile_movie(name: str, tmdb_id: str, log=print) -> dict:
     new_rel = old_rel[: len(old_rel) - len(old_base)] + new_base
 
     def where(rel):
-        return identify.lib_path(LIB_ROOT, rel)
+        return identify.lib_path(root_of(plan), rel)
     old_dir, new_dir = where(old_rel), where(new_rel)
     if new_dir.exists():
         return {"error": f"{new_dir} already exists. Is that movie already in your library?"}
@@ -626,7 +677,7 @@ def _after_refile(rec: Path, plan: dict, name: str, log=print) -> None:
         except Exception as exc:
             log(f"re-matching {name}: couldn't update the {step} ({exc})")
     _forget_progress()
-    library(refresh=True)
+    library(refresh=True, root=root_of(plan))
 
 
 def refile_tv(name: str, tmdb_id: str, season, shift=0, log=print) -> dict:
@@ -647,7 +698,7 @@ def refile_tv(name: str, tmdb_id: str, season, shift=0, log=print) -> dict:
         return {"error": "Pick a season."}
     if not str(tmdb_id).isdigit() or season < 0:
         return {"error": "Pick a show from the search results."}
-    away = library_reachable()
+    away = library_reachable(root_of(plan))
     if away:
         return {"error": away}
     show = TMDB.tv(int(tmdb_id))
@@ -670,7 +721,7 @@ def refile_tv(name: str, tmdb_id: str, season, shift=0, log=print) -> dict:
         return {"error": "That would number an episode below 1."}
 
     def where(rel):
-        return identify.lib_path(LIB_ROOT, rel)
+        return identify.lib_path(root_of(plan), rel)
     old_show, new_show = where(old_rel), where(new_rel)
     sdir = "Specials" if season == 0 else f"Season {season}"
 
@@ -828,7 +879,7 @@ def dest_for(item: dict, plan: dict | None = None) -> Path:
             name = f"{name}-{EXTRA_SUFFIX.get(cat, 'other')}"
         else:
             parts.append(folder)
-    return identify.lib_path(LIB_ROOT, "\\".join(parts)) / (identify.fs_safe(naming.episode_code(CFG, name)) + ".mkv")
+    return identify.lib_path(root_of(plan or {}), "\\".join(parts)) / (identify.fs_safe(naming.episode_code(CFG, name)) + ".mkv")
 
 
 def split_ok(it: dict) -> str:
@@ -872,7 +923,7 @@ def check_plan(folder: Path, plan: dict) -> list[str]:
         import music
         return music.check_plan(folder, plan, CFG)
     problems, seen = [], set()
-    away = library_reachable()
+    away = library_reachable(root_of(plan))
     if away:
         return [away]
     if plan.get("filing"):  # finishing an interrupted filing
@@ -883,7 +934,7 @@ def check_plan(folder: Path, plan: dict) -> list[str]:
     # Has the library gained a copy since this disc was named? Skip those, same as the namer does.
     try:
         mine = identify.quality_rank(plan.get("format") or "", CFG)
-        copies = identify.library_copies(plan, library(refresh=True), CFG)
+        copies = identify.library_copies(plan, library(refresh=True, root=root_of(plan)), CFG)
         newly = 0
         for it in plan["items"]:
             have = copies.get(it["source"])
@@ -904,7 +955,7 @@ def check_plan(folder: Path, plan: dict) -> list[str]:
     try:  # room in the library for it?
         need = sum((folder / it["source"]).stat().st_size for it in plan["items"]
                    if it.get("action") == "move" and not item_done(it) and (folder / it["source"]).exists())
-        where = identify.lib_path(LIB_ROOT, plan.get("library_dir") or "")  # Movies/TV can be on another drive
+        where = identify.lib_path(root_of(plan), plan.get("library_dir") or "")  # Movies/TV can be on another drive
         while not where.exists() and where.parent != where:
             where = where.parent
         free = shutil.disk_usage(where).free
@@ -912,6 +963,10 @@ def check_plan(folder: Path, plan: dict) -> list[str]:
             problems.append(f"Not enough space in {where}: needs {need / 1e9:.1f} GB, {free / 1e9:.1f} GB free.")
     except OSError:
         pass
+    srcs = [it["source"] for it in plan["items"] if it.get("action") == "move" and not item_done(it)]
+    for src in sorted({s for s in srcs if srcs.count(s) > 1}):
+        problems.append(f"{srcs.count(src)} titles point at the same ripped file, {src}, so this disc can't be "
+                        f"filed as it is. Click “Check for new rips” to match the titles to their files again.")
     for it in plan["items"]:
         if it.get("action") != "move" or item_done(it):  # done = copied by a filing that was interrupted
             continue
@@ -1256,7 +1311,7 @@ def file_job(folder: Path, plan: dict) -> None:
                 job["note"] = "; ".join(x for x in (job.get("note"), f"Disc {ej[8:]} ejected") if x)
         job.update(state="done", current=f"Filed {len(filed)} files")
         _forget_progress()
-        library(refresh=True)
+        library(refresh=True, root=root_of(plan))
         # ask Plex to scan the new files and check it matched them to the right TMDB entry
         import plex
         job["plex"] = {"state": "starting", "summary": "Asking Plex to scan…"}
@@ -1322,7 +1377,8 @@ class Handler(BaseHTTPRequestHandler):
                     page = Path(getattr(sys, "_MEIPASS", HERE)) / "review.html"
                 return self.send(200, page.read_bytes(), "text/html; charset=utf-8")
             if u.path == "/api/discs":
-                return self.send(200, {"discs": list_plans(), "library": str(LIB_ROOT), "ripped": str(RIP_ROOT), **naming.page_info(CFG),
+                return self.send(200, {"discs": list_plans(), "library": str(LIB_ROOT), "ripped": str(RIP_ROOT),
+                                       "libraries": identify.library_choices(CFG) if identify.extra_libraries(CFG) else [], **naming.page_info(CFG),
                                        "tmdb": bool(TMDB), "jobs": {k: job_view(j) for k, j in JOBS.items()}})
             if u.path == "/api/poster":  # box art, so you can see the match is the right one
                 import progress
@@ -1398,10 +1454,11 @@ class Handler(BaseHTTPRequestHandler):
                 try:  # keep what the shared database said, so filing can report it was wrong
                     old = json.loads((folder / "plan.json").read_text(encoding="utf-8"))
                 except (OSError, ValueError):
-                    old = {}
-                was, proposed = old.get("community_answer"), old.get("proposed")
-                plan = identify.plan_folder(folder, RIP_ROOT, TMDB, library(), CFG, override={
-                    "kind": b.get("kind"), "tmdb_id": b.get("tmdb_id"), "season": b.get("season")})
+                    old = None
+                was, proposed = (old or {}).get("community_answer"), (old or {}).get("proposed")
+                root = (old.get("library_root") or "") if old is not None else None  # stay in the library it was going into
+                plan = plan_disc(folder, override={
+                    "kind": b.get("kind"), "tmdb_id": b.get("tmdb_id"), "season": b.get("season")}, root=root)
                 if was and not plan.get("community_answer"):
                     plan["community_answer"] = was
                 if proposed:  # Shelfrip's first suggestion, so filing can say you picked another
@@ -1450,6 +1507,22 @@ class Handler(BaseHTTPRequestHandler):
                 eps = list(range(first, first + count))
                 sp["names"] = identify.split_names(plan, int(it.get("season") or 0), eps, TMDB)
                 return self.send(200, {"split": sp, "episodes": eps})
+            if u.path == "/api/library":  # "Use multiple libraries": file this disc into another library
+                plan = b["plan"]
+                plan.pop("job", None)
+                plan.pop("folder", None)
+                root = identify.known_library(CFG, str(b.get("root") or ""))
+                if b.get("root") and not root and not identify._same_dir(str(b.get("root")), str(LIB_ROOT)):
+                    return self.send(200, {"error": "That library isn't in Settings any more."})
+                why = identify.retarget_library(plan, CFG, root)
+                if why:
+                    return self.send(200, {"error": why})
+                plan["edited"] = True
+                save_plan(folder, plan)
+                plan["folder"] = folder.name
+                if plan.get("kind") == "tv":
+                    plan["season_files"] = season_files(plan)
+                return self.send(200, {"plan": plan})
             if u.path == "/api/file":
                 plan = b["plan"]
                 plan["edited"] = True
