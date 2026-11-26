@@ -262,6 +262,23 @@ const tests = {
       assert.match((await over.json()).error, /own free key/);
     } finally { globalThis.fetch = realFetch; }
   },
+
+  async "a problem report can carry logs, fetched one report at a time"() {
+    const env = freshEnv();
+    const logs = Buffer.from("x".repeat(400_000)).toString("base64");  // over the usual 256 KB
+    const sent = await call(env, "POST", "/v1/feedback", { install_id: install(1), kind: "problem", title: "t", body: "b", logs });
+    assert.equal(sent.status, 200);
+    assert.equal((await call(env, "POST", "/v1/feedback", { install_id: install(2), title: "t", logs: "not base64!" })).status, 400);
+    assert.equal((await call(env, "POST", "/v1/feedback", { install_id: install(3), title: "t", logs: "A".repeat(1_500_000) })).status, 413);
+    const admin = p => worker.fetch(new Request("http://db.test/v1/admin/" + p, { headers: { Authorization: "Bearer admin" } }), env, {});
+    const list = await (await admin("feedback")).json();
+    assert.equal(list.feedback.length, 1);
+    assert.equal(list.feedback[0].logs_size, logs.length);
+    assert.equal(list.feedback[0].logs, undefined);  // the list stays small
+    const one = await (await admin("feedback/logs?id=" + list.feedback[0].id)).json();
+    assert.equal(one.logs, logs);
+    assert.equal((await admin("feedback/logs?id=999")).status, 404);
+  },
 };
 
 let failed = 0;
