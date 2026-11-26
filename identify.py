@@ -53,6 +53,7 @@ DEFAULTS = {
     # plex, jellyfin, emby or kodi: how filed files are named (naming.py)
     "media_server": "plex",
     "extras_style": "folders",  # special features in Featurettes\, Trailers\... folders, or "suffix": Name-featurette.mkv
+    "episode_style": "lower",  # episode codes in file names: "lower" s01e02, or "upper" S01E02
     # Put each format in its own folder (Movies\Blu-Ray\Title ...)? Off: Movies\Title ...
     "format_folders": False,
     # DVDCompare has no API; looking extras up there means reading its web pages. Off unless you turn it on.

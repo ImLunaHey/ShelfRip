@@ -56,6 +56,7 @@ SETTINGS = [  # (key, label, kind)
     ("music_library_root", "Music folder (empty = the music folder in the media library, else Music)", "text"),
     ("media_server", "Media server (decides how files are named)", "select"),
     ("extras_style", "How special features are filed", "select"),
+    ("episode_style", "How episode numbers are written in file names", "select"),
     ("format_folders", "Separate folders per format (Movies\\Blu-Ray\\..., Movies\\DVD\\...)", "bool"),
     ("use_dvdcompare", "Also look up extras names on DVDCompare (reads its web pages)", "bool"),
     ("use_community", "Look discs up in the shared Shelfrip disc database", "bool"),
@@ -97,7 +98,9 @@ SETTINGS = [  # (key, label, kind)
 ]
 CHOICES = {"media_server": [{"value": k, "label": v} for k, v in naming.SERVERS.items()],
            "extras_style": [{"value": "folders", "label": "In folders: Featurettes\\Making Of.mkv"},
-                            {"value": "suffix", "label": "Tagged in the name: Making Of-featurette.mkv"}]}
+                            {"value": "suffix", "label": "Tagged in the name: Making Of-featurette.mkv"}],
+           "episode_style": [{"value": "lower", "label": "s01e02 (as in Plex's guide)"},
+                             {"value": "upper", "label": "S01E02"}]}
 
 
 # --------------------------------------------------------------------------- alerts
