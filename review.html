@@ -1357,7 +1357,7 @@ function damagedBox(st){
     : `Discs that didn't rip completely (${st.damaged.length}): see what MakeMKV said, then click Rip again`}</summary>${dmg}</details>` : "";
 }
 const OPENT = new Set();  // drive cards whose title list is open (kept open across refreshes)
-const TSCROLL = {};  // how far each drive's title list is scrolled sideways (kept across refreshes)
+const TSCROLL = {};  // how far each drive's title list is scrolled, sideways and down (kept across refreshes)
 let DRIVES_HELD = null, DRIVES_DRAG = false;  // a refresh that came while you were dragging a scroll bar
 const PICK = {};  // drives waiting for you to choose titles: {device: {label, ids: Set}} (kept across refreshes)
 const choosing = d => d.ripping && d.state === "choosing" && d.rip_label === d.label;
@@ -1497,7 +1497,11 @@ function renderDrives(j){
   el.querySelectorAll("details[data-tdev]").forEach(x => {
     x.ontoggle = () => x.open ? OPENT.add(x.dataset.tdev) : OPENT.delete(x.dataset.tdev);
     const sc = $(".tscroll", x), dev = x.dataset.tdev;
-    if (sc){ sc.scrollLeft = TSCROLL[dev] || 0; sc.onscroll = () => { TSCROLL[dev] = sc.scrollLeft; }; }
+    if (sc){
+      const at = TSCROLL[dev] || {};
+      sc.scrollLeft = at.x || 0; sc.scrollTop = at.y || 0;
+      sc.onscroll = () => { TSCROLL[dev] = {x: sc.scrollLeft, y: sc.scrollTop}; };
+    }
   });
   if (!el.dataset.dragWatch){  // once: hold refreshes while a mouse button is down in a title list
     el.dataset.dragWatch = "1";
