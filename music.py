@@ -790,7 +790,6 @@ def _index(cfg: dict, strict: bool = False) -> dict:
     except Exception:
         if strict:
             try:
-                import shutil
                 shutil.copy2(path, path.with_name("music_index.broken.json"))
             except OSError:
                 pass
