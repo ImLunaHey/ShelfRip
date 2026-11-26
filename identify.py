@@ -50,6 +50,11 @@ DEFAULTS = {
     # "Movies" / "TV Shows". See library_dirs().
     "movies_folder": "",
     "tv_folder": "",
+    # "Use multiple libraries": other library folders (a separate 4K library, say), each
+    # {"name", "path", "formats": ["4k", ...]}. Discs of those formats go there by default, and the
+    # Review tab lets you pick the library for each disc. Off = everything goes into plex_library_root.
+    "multiple_libraries": False,
+    "libraries": [],
     # plex, jellyfin, emby or kodi: how filed files are named (naming.py)
     "media_server": "plex",
     "extras_style": "folders",  # special features in Featurettes\, Trailers\... folders, or "suffix": Name-featurette.mkv
@@ -69,6 +74,8 @@ DEFAULTS = {
     "use_community": True,
     "share_discs": True,
     "tmdb_api_key": "",
+    # With no TMDB key of your own, ask TMDB through the Shelfrip server, which has a key (see tmdb_for)
+    "shared_tmdb": True,
     # Optional second opinion on movies (free key: https://www.omdbapi.com/apikey.aspx)
     "omdb_api_key": "",
     # Format names (and folder names, with format_folders on), exactly as in your library
@@ -108,9 +115,13 @@ NOISE_WORDS = {
 }
 
 
+NUMBER_WORDS = {w: i for i, w in enumerate(
+    "ZERO ONE TWO THREE FOUR FIVE SIX SEVEN EIGHT NINE TEN ELEVEN TWELVE THIRTEEN FOURTEEN FIFTEEN "
+    "SIXTEEN SEVENTEEN EIGHTEEN NINETEEN TWENTY".split()) if i}
+
 # --------------------------------------------------------------------------- utils
 
-PLANNER_VERSION = 11  # bump when naming improves, so untouched proposals get redone
+PLANNER_VERSION = 12  # bump when naming improves, so untouched proposals get redone
 
 
 # Settings you fill in yourself: added to config.json (empty) if they're missing, so you can see where they go
@@ -179,12 +190,23 @@ def mmss(seconds: int) -> str:
 
 
 def parse_label(label: str) -> dict:
-    """'TRANSFORMERS_G1_S2_D7' -> {'query': 'Transformers G1', 'season': 2, 'disc': 7}"""
+    """'TRANSFORMERS_G1_S2_D7' -> {'query': 'Transformers G1', 'season': 2, 'disc': 7}. A label ending in an
+    episode range ('SAILOR MOON CRYSTAL 27_32') also gets 'episodes': (27, 32)."""
     label = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", label)        # 'HaikyuDub' -> 'Haikyu Dub'
     label = re.sub(r"(?<=[A-Za-z])(?='\d)", " ", label)        # "Dub'17" -> "Dub '17"
     label = re.sub(r"(?<=\d)(?=(?:BD|DVD)(?:\b|[-_\s\d]))", " ", label, flags=re.I)  # "'17BD-3" -> "'17 BD-3"
     label = re.sub(r"(?<=[A-Za-z]{3})(?=\d{1,2}(?:\b|_))", " ", label)  # 'TRANSFORMERS2' -> 'TRANSFORMERS 2'
     up = label.upper().replace("_", " ").replace("-", " ").replace(".", " ")
+    up = re.sub(r"\bS(\d{1,2}) ?D(\d{1,2})\b", r"S\1 D\2", up)  # 'KNIGHT_RIDER_S1D1' -> 'S1 D1'
+    # 'Season Two Disc 1' -> 'SEASON 2 DISC 1'
+    up = re.sub(r"\b(SEASON|SERIES|DISC|DISK|VOLUME|VOL)\s+(" + "|".join(NUMBER_WORDS) + r")\b",
+                lambda m: f"{m.group(1)} {NUMBER_WORDS[m.group(2)]}", up)
+    first_ep = last_ep = None
+    m = re.search(r"\b(\d{1,3}) (\d{1,3})$", up.strip())  # 'SAILOR MOON CRYSTAL 27_32': episodes 27 to 32
+    if m and 2 <= int(m.group(2)) - int(m.group(1)) <= 40:  # "1_2" is more likely season 1, disc 2
+        first_ep, last_ep = int(m.group(1)), int(m.group(2))
+        up = up.strip()[:m.start()]
+    up = re.sub(r"\s(?:DE|SE|CE|UE)\s*$", " ", up)  # Diamond / Special / Collector's / Ultimate Edition
     season = disc = None
     m = re.search(r"\b(?:S|SEASON|SERIES)\s?(\d{1,2})\b", up)
     if m:
@@ -208,7 +230,10 @@ def parse_label(label: str) -> dict:
         words.append(w)
     query = " ".join(words).title()
     query = re.sub(r"\bG1\b", "G1", query, flags=re.I)
-    return {"query": query.strip(), "season": season, "disc": disc}
+    out = {"query": query.strip(), "season": season, "disc": disc}
+    if first_ep:
+        out["episodes"] = (first_ep, last_ep)
+    return out
 
 
 # --------------------------------------------------------------------------- TMDB
@@ -216,17 +241,22 @@ def parse_label(label: str) -> dict:
 class TMDB:
     BASE = "https://api.themoviedb.org/3"
 
-    def __init__(self, key: str):
+    def __init__(self, key: str, base: str = ""):
+        """key: your own TMDB key. base: the Shelfrip server's /v1/tmdb, which adds its key (no key here)."""
         self.key = key.strip()
+        self.base = base.rstrip("/") or self.BASE
+        self.shared = bool(base)
         self.cache: dict[str, dict] = {}
 
     def get(self, path: str, **params) -> dict:
-        headers = {"Accept": "application/json"}
-        if self.key.startswith("eyJ"):  # v4 "Read Access Token"
+        headers = {"Accept": "application/json", "User-Agent": paths.USER_AGENT}
+        if self.shared:
+            pass
+        elif self.key.startswith("eyJ"):  # v4 "Read Access Token"
             headers["Authorization"] = f"Bearer {self.key}"
         else:
             params["api_key"] = self.key
-        url = f"{self.BASE}{path}?{urllib.parse.urlencode(params)}"
+        url = f"{self.base}{path}" + (f"?{urllib.parse.urlencode(params)}" if params else "")
         if url in self.cache:
             return self.cache[url]
         req = urllib.request.Request(url, headers=headers)
@@ -263,6 +293,26 @@ class TMDB:
             return self.get(f"/tv/{tid}/season/{n}")
         except Exception:
             return {"episodes": []}
+
+
+def own_tmdb_key(cfg: dict) -> str:
+    key = str(cfg.get("tmdb_api_key") or "").strip()
+    return "" if "paste" in key.lower() else key
+
+
+def shared_tmdb_url(cfg: dict) -> str:
+    """The Shelfrip server's TMDB address, when you have no key of your own and haven't turned it off."""
+    base = str(cfg.get("community_url") or paths.COMMUNITY_URL or "").rstrip("/")
+    return f"{base}/v1/tmdb" if base and cfg.get("shared_tmdb", True) else ""
+
+
+def tmdb_for(cfg: dict) -> "TMDB | None":
+    """Your own TMDB key if you added one, else Shelfrip's shared key, else None (names from disc labels only)."""
+    key = own_tmdb_key(cfg)
+    if key:
+        return TMDB(key)
+    url = shared_tmdb_url(cfg)
+    return TMDB("", base=url) if url else None
 
 
 def year_of(date: str | None) -> str:
@@ -365,6 +415,113 @@ def library_dirs(cfg: dict, root: Path | None = None) -> dict:
                 break
         out[kind] = found or default
     return out
+
+
+DISC_FORMATS = ("4k", "bluray", "dvd")
+
+
+def _same_dir(a: str, b: str) -> bool:
+    def key(x):
+        anchor, parts = _split_abs(x)
+        return (anchor.lower(), [p.lower() for p in parts])
+    return bool(str(a or "").strip()) and key(a) == key(b)
+
+
+def extra_libraries(cfg: dict) -> list[dict]:
+    """The other libraries chosen in Settings ("Use multiple libraries"), tidied: [{"name", "path",
+    "formats"}]. [] when that setting is off. Entries with no folder, or the main library's, are left out."""
+    if not cfg.get("multiple_libraries"):
+        return []
+    main = str(cfg.get("plex_library_root") or "").strip()
+    out: list[dict] = []
+    for x in cfg.get("libraries") or []:
+        if not isinstance(x, dict):
+            continue
+        path = str(x.get("path") or "").strip()
+        path = path if re.fullmatch(r"[A-Za-z]:[\\/]*|[\\/]+", path) else path.rstrip("\\/")
+        if not path or _same_dir(path, main) or any(_same_dir(path, o["path"]) for o in out):
+            continue
+        name = str(x.get("name") or "").strip() or (_split_abs(path)[1] or [path])[-1]
+        out.append({"name": name, "path": path,
+                    "formats": [f for f in DISC_FORMATS if f in (x.get("formats") or [])]})
+    return out
+
+
+def library_choices(cfg: dict) -> list[dict]:
+    """The libraries a disc can be filed into, main first ({"name", "path", "formats", "main"}).
+    Just the main library unless "Use multiple libraries" is on and another one is set."""
+    main = str(cfg.get("plex_library_root") or "").strip()
+    return [{"name": "Main library", "path": main, "formats": [], "main": True}] + extra_libraries(cfg)
+
+
+def default_library(cfg: dict, fmt: str) -> str:
+    """The library a disc of this format ("4k", "bluray", "dvd") goes into by default: the first
+    other library set to take that format, else "" (the main library)."""
+    return next((x["path"] for x in extra_libraries(cfg) if fmt in x["formats"]), "")
+
+
+def known_library(cfg: dict, root: str) -> str:
+    """root if it's one of the other libraries set now, else "" (the main library)."""
+    return next((x["path"] for x in extra_libraries(cfg) if _same_dir(x["path"], root)), "")
+
+
+def library_cfg(cfg: dict, root: str | Path | None) -> dict:
+    """The settings as seen from another library: its folder in place of plex_library_root. A
+    Movies/TV folder setting that's a name ("Films") is used inside it too; one kept outside the
+    main library (a full path) belongs to the main library only, so the other library's own folder
+    (or Movies / TV Shows) is used."""
+    main = str(cfg.get("plex_library_root") or "").strip()
+    if not root or _same_dir(str(root), main):
+        return cfg
+    out = dict(cfg, plex_library_root=str(root))
+    for key in ("movies_folder", "tv_folder"):
+        v = clean_lib_dir(cfg.get(key, ""), main)
+        out[key] = "" if v and is_full_path(v) else v
+    return out
+
+
+def _under(path: str, prefix: str) -> str | None:
+    """What follows prefix in path ("" if they're the same folder), comparing folder names
+    without case; None if path isn't inside prefix."""
+    pa, pp = _split_abs(path)
+    qa, qp = _split_abs(prefix)
+    if pa.lower() != qa.lower() or len(pp) < len(qp) or [x.lower() for x in pp[:len(qp)]] != [x.lower() for x in qp]:
+        return None
+    return "\\".join(pp[len(qp):])
+
+
+def retarget_library(plan: dict, cfg: dict, root: str) -> str:
+    """Point a plan at another library (root "" = the main one): its show/movie folder moves from the
+    old library's Movies/TV folder to the new one's, keeping the format folder and name, and each
+    item's folder follows. Returns "" or why it can't be changed."""
+    if plan.get("kind") not in ("movie", "tv"):
+        return "Music CDs always go into the music folder."
+    if plan.get("filing") or any(it.get("filed_to") for it in plan.get("items", [])):
+        return "This disc has started filing, so its library can't change now."
+    main = str(cfg.get("plex_library_root") or "").strip()
+    root = "" if not root or _same_dir(root, main) else root
+    old = plan.get("library_root") or ""
+    key = "tv" if plan["kind"] == "tv" else "movies"
+    old_top = library_dirs(library_cfg(cfg, old or main), Path(old or main) if (old or main) else None)[key]
+    new_top = library_dirs(library_cfg(cfg, root or main), Path(root or main) if (root or main) else None)[key]
+    old_dir = str(plan.get("library_dir") or "").replace("/", "\\").rstrip("\\")
+    rest = _under(old_dir, old_top)
+    if rest is None and is_full_path(old_dir) and (old or main):  # a full path inside the old library
+        inside = _under(old_dir, old or main)
+        rest = _under(inside, old_top) if inside is not None and not is_full_path(old_top) else None
+    if rest is None:  # somewhere else (an existing movie's folder): same name in the new library
+        rest = (_split_abs(old_dir)[1] or [""])[-1]
+    new_dir = "\\".join(x for x in (new_top, rest) if x)
+    for it in plan.get("items", []):
+        tail = _under(str(it.get("dest_dir") or ""), old_dir)
+        it["dest_dir"] = new_dir + ("\\" + tail if tail else "") if tail is not None else new_dir
+    plan["library_dir"] = new_dir
+    if root:
+        plan["library_root"] = root
+    else:
+        plan.pop("library_root", None)
+    plan["warnings"] = [w for w in plan.get("warnings") or [] if not w.startswith("Extras will go into the movie's existing folder")]
+    return ""
 
 
 def index_library(root: Path, cfg: dict) -> dict:
@@ -681,7 +838,7 @@ def mark_duplicates(titles: list[dict]) -> None:
 def looks_like_tv(titles: list[dict], label_info: dict, lib_show: dict | None) -> bool:
     """Is this a TV disc? Yes if the label names a season or the show is in the library;
     otherwise judged from the run times (several similar episode-length titles, no feature)."""
-    if label_info["season"] is not None or lib_show:
+    if label_info["season"] is not None or label_info.get("episodes") or lib_show:
         return True
     longs = [t["duration_seconds"] for t in titles if t["duration_seconds"] >= 15 * 60]
     if not longs:
@@ -1011,7 +1168,8 @@ def plan_tv(folder: Path, rip_root: Path, disc: dict, titles: list[dict], label_
             tmdb: TMDB | None, lib: dict, lib_show: dict | None, cfg: dict,
             warnings: list[str]) -> dict:
     season = label_info["season"] or 1
-    if label_info["season"] is None:
+    ep_range = label_info.get("episodes")
+    if label_info["season"] is None and not ep_range:
         warnings.append("Season number not in the disc label. Assumed Season 1.")
 
     # --- identify the show
@@ -1045,6 +1203,31 @@ def plan_tv(folder: Path, rip_root: Path, disc: dict, titles: list[dict], label_
         id_tag = naming.id_tag(cfg, tid)
         show_dir_name = fs_safe(f"{title} ({year})" if year else title) + (f" {id_tag}" if id_tag else "")
         source = "TMDB search"
+
+    # A label with an episode range ('SAILOR MOON CRYSTAL 27_32') counts across the whole show:
+    # find the season it falls in from TMDB's episode counts.
+    first_ep = None
+    if ep_range:
+        first_ep = ep_range[0]
+        counts = []
+        if tmdb and tid:
+            try:
+                counts = [(x["season_number"], x.get("episode_count") or 0) for x in tmdb.tv(int(tid)).get("seasons", [])
+                          if x.get("season_number")]
+            except Exception:
+                counts = []
+        here = dict(counts).get(season, 0)
+        if counts and (label_info["season"] is None or first_ep > here):
+            before = 0
+            for n, cnt in sorted(counts):
+                if first_ep <= before + cnt:
+                    season, first_ep = n, first_ep - before
+                    break
+                before += cnt
+        if label_info["season"] is None and not counts:
+            warnings.append("Season number not in the disc label. Assumed Season 1.")
+        source_range = (f"; episodes {ep_range[0]}-{ep_range[1]} from the disc label"
+                        + (f" (season {season}, e{first_ep:02d} on)" if first_ep != ep_range[0] or season != 1 else ""))
 
     fmt_folder = cfg["tv_format_folders"][disc_format(disc)]
     top = library_dirs(cfg)["tv"]
@@ -1138,10 +1321,24 @@ def plan_tv(folder: Path, rip_root: Path, disc: dict, titles: list[dict], label_
     if claimed:
         source += f"; other ripped discs claim up to e{max(claimed):02d}"
 
+    n_here = sum(t.get("_multi", 1) for t in episode_titles)
+    disc_no = label_info.get("disc") or 0
     if label_info.get("continue_from"):
         # another disc of this set was filed: carry on from its last episode
         next_ep = max([label_info["continue_from"] + 1] + [e + 1 for e in claimed if e > label_info["continue_from"]])
         source += f"; continues after e{label_info['continue_from']:02d} from an earlier disc of this set"
+    elif first_ep:  # the label says which episodes these are
+        next_ep = first_ep
+        source += source_range
+    elif not have and not claimed and disc_no > 1 and n_here and (
+            not tmdb_eps or (disc_no - 1) * n_here + n_here <= max(tmdb_eps)):
+        # disc 4 of a set with nothing earlier filed: before, it started at e01. Discs of a season
+        # usually hold the same number of episodes, so guess from that and say so.
+        next_ep = (disc_no - 1) * n_here + 1
+        source += f"; first episode guessed from the disc number (disc {disc_no}, {n_here} a disc)"
+        warnings.append(f"No earlier disc of this season is filed, so the episodes are numbered from e{next_ep:02d}, "
+                        f"guessed from the disc number (disc {disc_no} with {n_here} episodes). Check the first "
+                        f"episode on the disc case, or file the earlier discs first.")
     # Box-set seasons (e.g. Funimation's "Season 2 Part 5") often don't match TMDB's seasons.
     # If this disc continues past the end of TMDB's season, move on to TMDB's next season.
     elif tmdb and tid and tmdb_eps and episode_titles and next_ep > max(tmdb_eps):
@@ -1472,6 +1669,12 @@ def plan_folder(folder: Path, rip_root: Path, tmdb: TMDB | None, lib: dict, cfg:
     if plan.get("community_answer"):
         import community
         community.note_shown(plan, disc)  # so filing it unchanged counts as half a vote
+    if not override.get("kind") and not override.get("tmdb_id"):
+        try:
+            import community
+            community.note_proposed(plan, disc)  # what you change in review is told apart when filing
+        except Exception:
+            pass
     return plan
 
 
@@ -1718,10 +1921,9 @@ def main() -> None:
 
     cfg = load_config()
     rip_root = Path(cfg["output_root"])
-    key = cfg.get("tmdb_api_key", "")
-    tmdb = TMDB(key) if key and "paste" not in key else None
+    tmdb = tmdb_for(cfg)
     if not tmdb:
-        print("! No TMDB key in config.json. Titles will come from disc labels only.")
+        print("! No TMDB key in config.json and the shared key is off. Titles will come from disc labels only.")
     print(f"Reading Plex library at {cfg['plex_library_root']} ...")
     lib = index_library(Path(cfg["plex_library_root"]), cfg)
     print(f"  {len(lib['movies'])} movies, {len(lib['shows'])} shows")

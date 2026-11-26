@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS submissions (
   titles      TEXT NOT NULL,     -- JSON list of titles, with their tracks (see worker.js: cleanTitle)
   hidden      INTEGER NOT NULL DEFAULT 0,
   accepted    INTEGER NOT NULL DEFAULT 0,  -- 1: every title filed just as our answer showed it (half a vote)
+  proposed    TEXT,                        -- what Shelfrip suggested: {} = same match, else {kind,title,year,tmdb_id,season}; NULL = older app
   UNIQUE (disc_key, install)
 );
 CREATE INDEX IF NOT EXISTS submissions_alt ON submissions(alt_key);

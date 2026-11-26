@@ -54,6 +54,38 @@ def plan():
             ]}
 
 
+class Proposed(unittest.TestCase):
+    """What Shelfrip suggested before review goes along, so its wrong guesses can be told from edits."""
+
+    def test_nothing_changed(self):
+        p, d = plan(), disc()
+        community.note_proposed(p, d)
+        body = community.submission(p, d, CFG)
+        self.assertEqual(body["proposed"], {"known": True})
+        self.assertFalse(any(t.get("changed") for t in body["titles"]))
+
+    def test_renamed_extra_is_changed(self):
+        p, d = plan(), disc()
+        community.note_proposed(p, d)
+        p["items"][1]["name"] = "Behind the Matrix"
+        p["items"][2]["action"] = "move"
+        body = community.submission(p, d, CFG)
+        self.assertEqual([bool(t.get("changed")) for t in body["titles"]], [False, True, True])
+
+    def test_other_match_sends_the_suggestion(self):
+        p, d = plan(), disc()
+        community.note_proposed(p, d)
+        p.update(title="The Matrix Reloaded", year="2003", tmdb_id="604")
+        body = community.submission(p, d, CFG)
+        self.assertEqual(body["proposed"], {"known": True, "kind": "movie", "title": "The Matrix", "year": "1999",
+                                            "tmdb_id": "603", "season": None})
+
+    def test_plans_from_before_say_nothing(self):
+        body = community.submission(plan(), disc(), CFG)
+        self.assertNotIn("proposed", body)
+        self.assertFalse(any(t.get("changed") for t in body["titles"]))
+
+
 class Tracks(unittest.TestCase):
     def test_tracks_sent_for_kept_titles(self):
         body = community.submission(plan(), disc(), CFG)

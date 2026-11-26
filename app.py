@@ -53,6 +53,8 @@ SETTINGS = [  # (key, label, kind)
     ("plex_library_root", "Media library folder (holds your Movies and TV Shows folders)", "text"),
     ("movies_folder", "Movies folder (inside the media library or anywhere; empty = find it, else Movies)", "text"),
     ("tv_folder", "TV shows folder (inside the media library or anywhere; empty = find it, else TV Shows)", "text"),
+    ("multiple_libraries", "Use multiple libraries (pick which library each disc is filed into)", "bool"),
+    ("libraries", "Other libraries", "libraries"),
     ("music_library_root", "Music folder (empty = the music folder in the media library, else Music)", "text"),
     ("media_server", "Media server (decides how files are named)", "select"),
     ("extras_style", "How special features are filed", "select"),
@@ -66,6 +68,7 @@ SETTINGS = [  # (key, label, kind)
     ("format_folders", "Separate folders per format (Movies\\Blu-Ray\\..., Movies\\DVD\\...)", "bool"),
     ("use_dvdcompare", "Also look up extras names on DVDCompare (reads its web pages)", "bool"),
     ("use_community", "Look discs up in the shared Shelfrip disc database", "bool"),
+    ("shared_tmdb", "With no TMDB key of my own, use Shelfrip's shared key (asks TMDB through the Shelfrip server)", "bool"),
     ("share_discs", "Share what I file with the Shelfrip disc database (anonymous: disc fingerprint, title lengths and names only)", "bool"),
     ("makemkvcon_path", "MakeMKV (makemkvcon64.exe)", "text"),
     ("mkvtoolnix_dir", "MKVToolNix folder", "text"),
@@ -225,7 +228,8 @@ def in_plex_already(dev: str, label: str, cfg: dict, ident: dict | None = None) 
     else:
         plan["items"] = [{"source": "main", "role": "main", "name": ""}]
     mine = identify.quality_rank(fmt, full)
-    copies = identify.library_copies(plan, review.library(), full)
+    root = identify.default_library(full, kind)  # the library a disc like this is filed into
+    copies = identify.library_copies(plan, review.library(root=root or None), full)
     have = [max(c, key=lambda h: h["rank"]) for c in copies.values()]
     if not mine or len(copies) < len(plan["items"]) or any(h["rank"] < mine for h in have):
         return ""
@@ -677,8 +681,9 @@ def job_stats(waiting: int, ripping: int) -> dict:
         filed["hours"] = round(filed["hours"], 1)
         _STATS.update(t=time.time(), filed=filed)
     space = []
+    others = [(x["name"], x["path"], 100.0) for x in identify.extra_libraries({**identify.DEFAULTS, **cfg})]
     for name, path, need in (("Rip folder", cfg["output_root"], float(cfg.get("min_free_gb_rips") or 60)),
-                             ("Library", cfg["plex_library_root"], 100.0)):
+                             ("Library", cfg["plex_library_root"], 100.0), *others):
         try:
             du = shutil.disk_usage(path)
             space.append({"name": name, "path": path, "free_gb": round(du.free / 1e9), "total_gb": round(du.total / 1e9),
@@ -750,6 +755,7 @@ def rip_folder_in_library(rip: str, cfg: dict) -> str:
     r = norm(rip)
     lib = str(cfg.get("plex_library_root") or "").strip()
     places = [lib] + [str(cfg.get(k) or "") for k in ("movies_folder", "tv_folder") if identify.is_full_path(str(cfg.get(k) or ""))]
+    places += [x["path"] for x in identify.extra_libraries(cfg)]  # "Use multiple libraries"
     for place in places:
         q = norm(place)
         if q and r and (r == q or r.startswith(q.rstrip("\\/") + os.sep)):
@@ -789,12 +795,13 @@ def setup_check() -> list[dict]:
                 "detail": (("bundled copy: " if bundled else "") + os.path.dirname(mm)) if mm else
                           f"not found: needed to split episodes. Install it, or put the portable version in {split.BUNDLED}",
                 "link": "" if mm else split.MKVTOOLNIX_URL, "required": False})
-    key = str(cfg.get("tmdb_api_key") or "")
-    row = {"name": "TMDB key", "ok": bool(key) and "paste" not in key,
-           "detail": "set" if key and "paste" not in key else "not set: needed to name movies and episodes (add it in Settings)",
-           "link": "" if key and "paste" not in key else "https://www.themoviedb.org/settings/api", "required": True}
+    key, shared = identify.own_tmdb_key(cfg), identify.shared_tmdb_url(cfg)
+    row = {"name": "TMDB key", "ok": bool(key or shared), "shared": bool(shared and not key),
+           "detail": "set" if key else "using Shelfrip's shared key" if shared else
+                     "not set: needed to name movies and episodes (add it in Settings)",
+           "link": "" if key or shared else "https://www.themoviedb.org/settings/api", "required": True}
     if row["ok"]:
-        chk = health.tmdb_check(key, wait=8)  # does it actually work?
+        chk = health.tmdb_check(key, wait=8, base="" if key else shared)  # does it actually work?
         if chk and chk.get("ok") is False:
             row.update(ok=False, detail=chk["detail"], link="https://www.themoviedb.org/settings/api")
         elif chk:
@@ -1114,6 +1121,25 @@ def save_settings(values: dict) -> None:
         RIPPER.wake.set()
 
 
+def _clean_libraries(v, main: str) -> list[dict]:
+    """The "Other libraries" list from the Settings page, checked: [{"name", "path", "formats"}].
+    A row still being filled in (no folder yet) is kept so it isn't lost while you type."""
+    if not isinstance(v, list):
+        raise ValueError("Couldn't read that list of libraries.")
+    out = []
+    for x in v[:20]:
+        if not isinstance(x, dict):
+            continue
+        path = str(x.get("path") or "").strip().strip('"')
+        if path and not identify.is_full_path(path):
+            raise ValueError(f"{path} isn't a full folder path. Pick the folder with Browse.")
+        if path and identify._same_dir(path, main):
+            raise ValueError("That's your main media library already. Pick the other library's folder.")
+        out.append({"name": str(x.get("name") or "").strip()[:60], "path": path,
+                    "formats": [f for f in identify.DISC_FORMATS if f in (x.get("formats") or [])]})
+    return out
+
+
 def _save_settings(values: dict) -> None:
     raw = _read_config(strict=True)
     if values.get("setup_done"):
@@ -1133,6 +1159,10 @@ def _save_settings(values: dict) -> None:
                 raw[key] = v.strip()
             elif v is None:
                 raw[key] = ""
+            continue
+        if kind == "libraries":
+            v = _clean_libraries(v, str(values.get("plex_library_root", raw.get("plex_library_root")) or ""))
+            raw[key] = v
             continue
         if kind == "number":
             try:
@@ -1223,6 +1253,8 @@ class Handler(review.Handler):
                 return self.send(200, {"jobs": importer.JOBS})
             src = Path(str(b.get("path") or "").strip().strip('"'))
             libs = [identify.lib_path(review.LIB_ROOT, v) for v in identify.library_dirs(review.CFG, review.LIB_ROOT).values()]
+            for x in identify.extra_libraries(review.CFG):  # the other libraries, for "Use multiple libraries"
+                libs += [identify.lib_path(Path(x["path"]), v) for v in identify.library_dirs(identify.library_cfg(review.CFG, x["path"]), Path(x["path"])).values()]
             why = importer.problem(src, review.RIP_ROOT, libs)
             if why:
                 return self.send(200, {"error": why})

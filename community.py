@@ -23,6 +23,10 @@ through can't confirm an answer on its own. Anything you changed, or identified 
 database, counts fully. Each title's answer comes back with a confidence (0-100) built from
 those weighted votes, less any disagreement and "this disc is wrong" reports.
 
+Each filing also says what Shelfrip itself suggested before you reviewed it: which film or show and
+season (sent only when you picked another), and for each title whether you changed it ("changed").
+That shows whether a wrong answer was Shelfrip's guess or someone's edit, so the namer can be fixed.
+
 The server is in server/ (a Cloudflare Worker); its address is paths.COMMUNITY_URL, or
 "community_url" in config.json.
 """
@@ -232,6 +236,21 @@ def note_shown(plan: dict, disc: dict) -> None:
     ca["shown"] = shown
 
 
+def note_proposed(plan: dict, disc: dict) -> None:
+    """Remember what Shelfrip suggested for this disc before you reviewed it (the match, and each
+    title as the database would store it), so filing can say what you changed. Kept across a
+    re-match on the review page: it's the first suggestion that counts."""
+    by_file = {t.get("output_file"): t for t in disc.get("titles", [])}
+    titles = {}
+    for it in plan.get("items", []):
+        row = _title_row(it, by_file.get(it.get("source"), {}))
+        if row and it.get("source"):
+            titles[it["source"]] = answer_key(row)
+    plan["proposed"] = {"kind": plan.get("kind"), "tmdb_id": str(plan.get("tmdb_id") or ""),
+                        "season": plan.get("season"), "title": plan.get("title") or "",
+                        "year": str(plan.get("year") or ""), "titles": titles}
+
+
 def tracks(t: dict, it: dict) -> dict | None:
     """A title's video, audio and subtitle tracks, compactly. Commentary names come from the
     review page (it["audio"]); "Commentary" or "Commentary 2" on its own isn't worth sending."""
@@ -277,6 +296,7 @@ def submission(plan: dict, disc: dict, cfg: dict) -> dict | None:
     by_file = {t.get("output_file"): t for t in disc.get("titles", [])}
     ca = plan.get("community_answer") or {}
     shown = ca.get("shown") if isinstance(ca.get("shown"), dict) and _ident(ca) == _ident(plan) else {}
+    proposed = plan.get("proposed") if isinstance(plan.get("proposed"), dict) else {}
     out = []
     for it in plan.get("items", []):
         t = by_file.get(it.get("source"), {})
@@ -289,6 +309,9 @@ def submission(plan: dict, disc: dict, cfg: dict) -> dict | None:
                 row["tracks"] = tr
         if shown.get(it.get("source")) == answer_key(row):
             row["accepted"] = True   # filed just as the database's answer was shown: counts as half a vote
+        was = (proposed.get("titles") or {}).get(it.get("source"))
+        if proposed and was != answer_key(row):
+            row["changed"] = True    # you changed what Shelfrip suggested for this title
         out.append(row)
     if not out:
         return None
@@ -301,6 +324,9 @@ def submission(plan: dict, disc: dict, cfg: dict) -> dict | None:
                   "tmdb_id": str(plan["tmdb_id"]), "imdb_id": plan.get("imdb_id") or "",
                   "season": plan.get("season") if plan["kind"] == "tv" else None},
         "titles": out,
+        # what Shelfrip suggested before review: the match only if you picked another one
+        **({"proposed": {"known": True, **({k: proposed.get(k) for k in ("kind", "title", "year", "tmdb_id", "season")}
+                                           if _ident(proposed) != _ident(plan) else {})}} if proposed else {}),
     }
 
 
