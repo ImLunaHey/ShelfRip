@@ -349,7 +349,7 @@ dialog.disc .fb .chk{display:flex;gap:8px;align-items:center;color:var(--ink)}
 
 <script>
 const CATS = ["Featurettes","Behind the Scenes","Deleted Scenes","Interviews","Scenes","Shorts","Trailers","Other"];
-let discs = [], LIB = "", LIB_RIPPED = "", SERVER = "plex", SERVER_NAME = "Plex", EXTRAS_SUFFIX = false, EP_UPPER = false;
+let discs = [], LIB = "", LIB_RIPPED = "", SERVER = "plex", SERVER_NAME = "Plex", EXTRAS_SUFFIX = false, EP_UPPER = false, HB = null;
 // name parts the same way naming.py does for the chosen media server
 const idTag = id => !id ? "" : SERVER === "plex" ? ` {tmdb-${id}}` : SERVER === "jellyfin" ? ` [tmdbid-${id}]` : SERVER === "emby" ? ` [tmdbid=${id}]` : "";
 const editionName = (base, ed) => SERVER === "plex" ? `${base} {edition-${ed}}` : `${base} - ${ed}`;
@@ -499,7 +499,9 @@ const SUFFIX = {"Behind the Scenes":"behindthescenes","Deleted Scenes":"deleted"
 const inLib = rel => /^([A-Za-z]:|[\\/]{2})/.test(rel || "") ? [rel] : [LIB, rel];
 // mirrors naming.episode_code: the file in the library gets S01E02 when that's chosen in Settings
 const epCode = path => EP_UPPER ? path.replace(/([^\\]*)$/, f => f.replace(/( - )s(\d+)e(\d+)(?:-e(\d+))?/i, (m, a, s, e, e2) => `${a}S${s}E${e}` + (e2 ? `-E${e2}` : ""))) : path;
-function destOf(p, it){ return epCode(destOf0(p, it)); }
+// mirrors handbrake.applies: with HandBrake on, encoded titles may become .mp4
+const hbOn = it => HB && (HB.scope === "all" || it.role === "main" || it.role === "episode");
+function destOf(p, it){ const d = epCode(destOf0(p, it)); return hbOn(it) && p.kind !== "music" ? d.replace(/\.mkv$/, HB.ext) : d; }
 function destOf0(p, it){
   // TV extras can belong to the whole show, a season (default) or one episode (Plex's TV extras guide)
   const cat = it.category || "Other";
@@ -1071,7 +1073,8 @@ function wire(p, i){
   $(".save", el).onclick = async () => { await api("/api/save", {folder:p.folder, plan:p}); msg.textContent = "Saved."; };
   $(".file", el).onclick = async () => {
     const keep = p.items.reduce((s, it) => s + filesOf(it), 0);
-    if (!confirm(`Move ${keep} file(s) into ${LIB}?`)) return;
+    const enc = p.items.filter(it => it.action === "move" && hbOn(it)).length;
+    if (!confirm(`Move ${keep} file(s) into ${LIB}?` + (enc ? `\n\nHandBrake re-encodes ${enc} of them first with your "${HB.preset}" preset, which can take a while.` : ""))) return;
     const j = await api("/api/file", {folder:p.folder, plan:p});
     if (j.problems){ if (j.plan){ discs[i] = Object.assign(j.plan, {job: p.job}); p = discs[i]; rerender(); }
       const m2 = $(".msg", $("#c"+i)) || msg;
@@ -1089,7 +1092,7 @@ function poll(){
 
 async function load(keepEdits){
   const j = await api("/api/discs");
-  LIB = j.library; LIB_RIPPED = j.ripped; SERVER = j.server || "plex"; SERVER_NAME = j.server_name || "Plex"; EXTRAS_SUFFIX = !!j.extras_suffix; EP_UPPER = !!j.episodes_upper;
+  LIB = j.library; LIB_RIPPED = j.ripped; SERVER = j.server || "plex"; SERVER_NAME = j.server_name || "Plex"; EXTRAS_SUFFIX = !!j.extras_suffix; EP_UPPER = !!j.episodes_upper; HB = j.handbrake || null;
   $("#sub").textContent = `${j.discs.length} disc${j.discs.length === 1 ? "" : "s"} waiting` + (j.tmdb ? "" : " · no TMDB key"); $("#sub").title = `Library: ${LIB}`;
   if (keepEdits){ // only refresh job status, keep unsaved edits
     // Redraw just the cards whose filing status changed, so typing or a dropdown open on
@@ -1918,6 +1921,14 @@ const SET_GROUPS = [
     ["music_lyrics", "Save lyrics next to tracks", "From LRCLIB, as .lrc (synced) or .txt files."],
     ["cyanrip_path", "cyanrip", "Leave empty to use the copy in Shelfrip's tools folder.", {pick:"file", adv:1}],
     ["cd_offsets", "CD drive read offsets", "For AccurateRip, for example D:6, E:667.", {adv:1}],
+  ]},
+  {id:"handbrake", name:"HandBrake", icon:"M4 7h16M4 12h16M4 17h10", intro:"Optional. Shelfrip files an exact copy of the disc (no quality lost). Turn this on to shrink files with one of your own HandBrake presets as they're filed. Encoding takes a while, and the originals are deleted once the disc is filed.", items:[
+    ["handbrake_enabled", "Re-encode with HandBrake while filing", "Off by default: files are filed exactly as ripped."],
+    ["handbrake_cli", "HandBrakeCLI", "The command line version of HandBrake, a separate download from handbrake.fr.", {pick:"file", link:"https://handbrake.fr/downloads2.php", linkText:"Download HandBrakeCLI"}],
+    ["handbrake_preset_file", "Presets file", "In HandBrake, pick your preset and use Presets > Export, then choose that file. Leave empty to use the presets saved in the HandBrake app.", {pick:"file"}],
+    ["handbrake_preset", "Preset", "Its name exactly as HandBrake shows it."],
+    ["handbrake_scope", "What gets encoded", ""],
+    ["handbrake_keep_tracks", "Keep every audio and subtitle track", "HandBrake presets usually keep only the first audio track. On, every track is kept (commentaries and other languages), each encoded like the preset's first audio track."],
   ]},
   {id:"tools", name:"Programs", icon:"M14 7l3 3l4-4l-3-3zM3 21l9-9", intro:"Shelfrip finds these by itself; change them only if it can't.", items:[
     ["makemkvcon_path", "MakeMKV (makemkvcon64.exe)", "Does the ripping.", {pick:"file"}],
