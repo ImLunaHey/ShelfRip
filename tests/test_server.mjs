@@ -27,7 +27,7 @@ function d1(db) {
 function freshEnv({ oldSchema = false } = {}) {
   const db = new DatabaseSync(":memory:");
   let schema = fs.readFileSync(path.join(ROOT, "server", "schema.sql"), "utf8");
-  if (oldSchema) schema = schema.replace(/\n\s*accepted\s+INTEGER[^\n]*/, "");
+  if (oldSchema) schema = schema.replace(/\n\s*accepted\s+INTEGER[^\n]*/, "").replace(/\n\s*proposed\s+TEXT[^\n]*/, "");
   db.exec(schema);
   for (const f of fs.readdirSync(path.join(ROOT, "server", "migrations")).sort()) {
     try { db.exec(fs.readFileSync(path.join(ROOT, "server", "migrations", f), "utf8")); }
@@ -174,6 +174,28 @@ const tests = {
     const { body } = await look(env);
     assert.equal(body.weight, 0.5);
     assert.equal(body.confidence, 29);
+  },
+
+  async "what Shelfrip suggested is kept, and changed titles are marked"() {
+    const env = freshEnv();
+    const kept = filing(1);
+    kept.proposed = { known: true };
+    kept.titles[1].changed = true;               // renamed the extra
+    const picked = filing(2);
+    picked.disc.content_hash = "cd".repeat(16);
+    picked.proposed = { known: true, kind: "movie", title: "The Matrix Reloaded", year: "2003", tmdb_id: "604", season: null };
+    const old = filing(3);
+    old.disc.content_hash = "ef".repeat(16);
+    for (const f of [kept, picked, old]) assert.equal((await call(env, "POST", "/v1/submit", f)).status, 200);
+    const recent = await worker.fetch(new Request("http://db.test/v1/admin/recent", {
+      headers: { Authorization: "Bearer admin" } }), env, {});
+    const rows = (await recent.json()).submissions;
+    const by = h => rows.find(r => r.disc_key === "h:" + h);
+    assert.deepEqual(by(HASH).proposed, {});
+    assert.equal(by(HASH).titles[1].changed, 1);
+    assert.equal(by(HASH).titles[0].changed, undefined);
+    assert.deepEqual(by("cd".repeat(16)).proposed, { kind: "movie", title: "The Matrix Reloaded", year: "2003", tmdb_id: "604", season: null });
+    assert.equal(by("ef".repeat(16)).proposed, null);  // an older app: not known
   },
 
   async "a locked answer is 100% sure"() {

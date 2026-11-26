@@ -215,7 +215,8 @@ shared answer showed it counts as half a vote, so people clicking through withou
 confirm an answer on their own; anything you changed or identified yourself counts fully.
 
 Only the disc's fingerprint, its label, the title lengths and sizes, each title's tracks (video
-format, audio and subtitle languages, commentary names) and the names chosen are sent.
+format, audio and subtitle languages, commentary names), the names chosen, and whether you changed
+what Shelfrip suggested (so its wrong guesses can be found and fixed) are sent.
 Nothing about you, your files or your library is sent. Your install is identified by a random id,
 which is stored only as a salted hash. The whole database can be downloaded (CC0) from `/v1/export`.
 The server code, and how answers are decided, are in [server/](server/).

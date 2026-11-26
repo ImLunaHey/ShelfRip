@@ -1301,13 +1301,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, {"ok": True})
             if u.path == "/api/rematch":
                 try:  # keep what the shared database said, so filing can report it was wrong
-                    was = json.loads((folder / "plan.json").read_text(encoding="utf-8")).get("community_answer")
+                    old = json.loads((folder / "plan.json").read_text(encoding="utf-8"))
                 except (OSError, ValueError):
-                    was = None
+                    old = {}
+                was, proposed = old.get("community_answer"), old.get("proposed")
                 plan = identify.plan_folder(folder, RIP_ROOT, TMDB, library(), CFG, override={
                     "kind": b.get("kind"), "tmdb_id": b.get("tmdb_id"), "season": b.get("season")})
                 if was and not plan.get("community_answer"):
                     plan["community_answer"] = was
+                if proposed:  # Shelfrip's first suggestion, so filing can say you picked another
+                    plan["proposed"] = proposed
                 save_plan(folder, plan)
                 plan["folder"] = folder.name
                 return self.send(200, {"plan": plan})
