@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -97,8 +98,12 @@ class Core(unittest.TestCase):
         self.assertIsNone(review.filing_status({"folder": "X__1"}))
         review.JOBS["X__1"] = {"state": "running", "done_bytes": 250, "total_bytes": 1000, "current": "1/2: a.mkv",
                                "label": "X"}
+        busy = threading.Event()  # a worker still at it (one that has ended is reaped, see test_filing.py)
+        review.THREADS["X__1"] = threading.Thread(target=busy.wait, daemon=True)
+        review.THREADS["X__1"].start()
         self.assertEqual(review.filing_status({"folder": "X__1"}),
                          {"state": "running", "pct": 25, "current": "1/2: a.mkv"})
+        busy.set()
         self.assertFalse(review.filed_label("X"))
         review.JOBS["X__1"].update(state="done")
         self.assertTrue(review.filed_label("X"))
