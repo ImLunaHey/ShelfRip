@@ -1689,13 +1689,14 @@ const WZ_ICON = {
   makemkv: "M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0-18 0M12 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0M12 3a9 9 0 0 1 9 9",
   tmdb: "M15 7a4 4 0 1 1-3.5 6L4 20.5V17h3v-3h3l1.5-1.5A4 4 0 0 1 15 7zM16 10h.01",
   once: "M4 5h16v14H4zM9 9l6 3-6 3z",
+  choose: "M4 6l2 2 4-4M4 14l2 2 4-4M13 7h7M13 15h7M4 21h16",
   share: "M17 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6M7 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6M17 22a3 3 0 1 0 0-6 3 3 0 0 0 0 6M9.6 13.5l4.8 2.9M14.4 6.6l-4.8 2.9",
   split: "M6 4v16M18 4v16M6 12h12M10 8l-4 4 4 4M14 8l4 4-4 4",
   done: "M12 2l2.9 6.3 6.9.8-5.1 4.7 1.4 6.8L12 17.3 5.9 20.6l1.4-6.8L2.2 9.1l6.9-.8z",
 };
 const WZ_STEPS = [
   {id:"hello"}, {id:"server"}, {id:"library", need:"Media library folder"}, {id:"rips", need:"Rip folder"},
-  {id:"makemkv", need:"MakeMKV"}, {id:"tmdb", need:"TMDB key"}, {id:"once"}, {id:"share"}, {id:"split", optional:true}, {id:"done"},
+  {id:"makemkv", need:"MakeMKV"}, {id:"tmdb", need:"TMDB key"}, {id:"once"}, {id:"choose"}, {id:"share"}, {id:"split", optional:true}, {id:"done"},
 ];
 let WZSTEP = 0, WZRESUMED = false;
 const wzVal = k => ((SETS.settings || []).find(s => s.key === k) || {}).value;
@@ -1771,6 +1772,10 @@ function wzBody(id){
       <p>Some movie discs list the film several times, often as decoys, and TV discs often list each episode twice or add a "Play All" of every episode. Ripping every copy can add half an hour or more per disc.
         Shelfrip leaves out copies it can prove are the same. Different cuts and language versions are always ripped.</p>
       ${wzTiles("skip_duplicate_features", [{value:true, label:"Yes, rip it once", sub:"Faster rips, less disk space"}, {value:false, label:"No, rip every copy", sub:"Same as MakeMKV on its own"}])}`;
+    case "choose": return `<h2>Choose the titles before each rip?</h2>
+      <p>After reading a disc, Shelfrip can wait on its drive card with the titles it would rip already ticked, so you can leave out ones you don't want before any time or space goes on them.
+        Or it can rip straight away and you pick what to keep while naming.</p>
+      ${wzTiles("choose_titles", [{value:true, label:"Yes, let me choose", sub:"Press Rip on each disc"}, {value:false, label:"No, rip straight away", sub:"Hands-off: load discs and walk away"}])}`;
     case "share": return `<h2>Help build the disc database?</h2>
       <p>When you file a disc, Shelfrip shares what each title turned out to be, so the next person with the same disc gets it named right straight away.
         Only the disc's fingerprint, title lengths and sizes, and the names you chose are sent. Nothing about you or your files.</p>
