@@ -27,7 +27,7 @@ function d1(db) {
 function freshEnv({ oldSchema = false } = {}) {
   const db = new DatabaseSync(":memory:");
   let schema = fs.readFileSync(path.join(ROOT, "server", "schema.sql"), "utf8");
-  if (oldSchema) schema = schema.replace(/\n\s*accepted\s+INTEGER[^\n]*/, "");
+  if (oldSchema) schema = schema.replace(/\n\s*accepted\s+INTEGER[^\n]*/, "").replace(/\n\s*proposed\s+TEXT[^\n]*/, "");
   db.exec(schema);
   for (const f of fs.readdirSync(path.join(ROOT, "server", "migrations")).sort()) {
     try { db.exec(fs.readFileSync(path.join(ROOT, "server", "migrations", f), "utf8")); }
@@ -176,6 +176,28 @@ const tests = {
     assert.equal(body.confidence, 29);
   },
 
+  async "what Shelfrip suggested is kept, and changed titles are marked"() {
+    const env = freshEnv();
+    const kept = filing(1);
+    kept.proposed = { known: true };
+    kept.titles[1].changed = true;               // renamed the extra
+    const picked = filing(2);
+    picked.disc.content_hash = "cd".repeat(16);
+    picked.proposed = { known: true, kind: "movie", title: "The Matrix Reloaded", year: "2003", tmdb_id: "604", season: null };
+    const old = filing(3);
+    old.disc.content_hash = "ef".repeat(16);
+    for (const f of [kept, picked, old]) assert.equal((await call(env, "POST", "/v1/submit", f)).status, 200);
+    const recent = await worker.fetch(new Request("http://db.test/v1/admin/recent", {
+      headers: { Authorization: "Bearer admin" } }), env, {});
+    const rows = (await recent.json()).submissions;
+    const by = h => rows.find(r => r.disc_key === "h:" + h);
+    assert.deepEqual(by(HASH).proposed, {});
+    assert.equal(by(HASH).titles[1].changed, 1);
+    assert.equal(by(HASH).titles[0].changed, undefined);
+    assert.deepEqual(by("cd".repeat(16)).proposed, { kind: "movie", title: "The Matrix Reloaded", year: "2003", tmdb_id: "604", season: null });
+    assert.equal(by("ef".repeat(16)).proposed, null);  // an older app: not known
+  },
+
   async "a locked answer is 100% sure"() {
     const env = freshEnv();
     await worker.fetch(new Request("http://db.test/v1/admin/lock", { method: "POST",
@@ -185,6 +207,60 @@ const tests = {
     const { body } = await look(env);
     assert.equal(body.locked, true);
     assert.equal(body.confidence, 100);
+  },
+
+  async "shared TMDB key: passes allowed calls on with the server's key"() {
+    const env = { ...freshEnv(), TMDB_KEY: "secretkey" };
+    const seen = [], realFetch = globalThis.fetch;
+    globalThis.fetch = async (u, o) => { seen.push({ u: String(u), o });
+      return new Response(JSON.stringify({ results: [{ id: 603 }] }), { status: 200 }); };
+    try {
+      const r = await call(env, "GET", "/v1/tmdb/search/movie?query=The%20Matrix&include_adult=false");
+      assert.equal(r.status, 200);
+      assert.equal(r.body.results[0].id, 603);
+      assert.equal(seen.length, 1);
+      const u = new URL(seen[0].u);
+      assert.equal(u.origin + u.pathname, "https://api.themoviedb.org/3/search/movie");
+      assert.equal(u.searchParams.get("api_key"), "secretkey");
+      assert.equal(u.searchParams.get("query"), "The Matrix");
+      for (const p of ["/v1/tmdb/movie/603", "/v1/tmdb/tv/1399/season/2", "/v1/tmdb/tv/1399/external_ids",
+                       "/v1/tmdb/movie/603/credits", "/v1/tmdb/tv/1399/aggregate_credits", "/v1/tmdb/configuration"])
+        assert.equal((await call(env, "GET", p)).status, 200, p);
+      // anything else is refused before TMDB is asked
+      const before = seen.length;
+      assert.equal((await call(env, "GET", "/v1/tmdb/account")).status, 404);
+      assert.equal((await call(env, "GET", "/v1/tmdb/movie/603/account_states")).status, 404);
+      assert.equal((await call(env, "GET", "/v1/tmdb/search/movie?query=x&api_key=mine")).status, 400);
+      assert.equal(seen.length, before);
+      // a v4 token goes in the header, never the address
+      env.TMDB_KEY = "eyJabc";
+      await call(env, "GET", "/v1/tmdb/movie/603");
+      assert.equal(seen.at(-1).o.headers.Authorization, "Bearer eyJabc");
+      assert.equal(new URL(seen.at(-1).u).searchParams.get("api_key"), null);
+    } finally { globalThis.fetch = realFetch; }
+  },
+
+  async "shared TMDB key: missing key, TMDB errors and the daily limit"() {
+    const env = freshEnv();
+    assert.equal((await call(env, "GET", "/v1/tmdb/movie/603")).status, 503);
+    env.TMDB_KEY = "k";
+    const realFetch = globalThis.fetch;
+    let status = 429;
+    globalThis.fetch = async () => new Response("{}", { status, headers: { "Retry-After": "3" } });
+    try {
+      assert.equal((await call(env, "GET", "/v1/tmdb/movie/603")).status, 429);
+      status = 404;
+      assert.equal((await call(env, "GET", "/v1/tmdb/movie/999999")).status, 404);
+      status = 500;
+      assert.equal((await call(env, "GET", "/v1/tmdb/movie/603")).status, 502);
+      status = 200;
+      const req = () => worker.fetch(new Request("http://db.test/v1/tmdb/movie/603",
+        { headers: { "CF-Connecting-IP": "10.9.9.9" } }), env, { waitUntil() {} });
+      for (let i = 0; i < 3000; i++) assert.equal((await req()).status, 200);
+      const over = await req();
+      assert.equal(over.status, 429);
+      assert.match((await over.json()).error, /own free key/);
+    } finally { globalThis.fetch = realFetch; }
   },
 };
 

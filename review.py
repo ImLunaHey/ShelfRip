@@ -47,8 +47,8 @@ RIP_ROOT = _folder(CFG["output_root"])
 LIB_ROOT = _folder(CFG["plex_library_root"])
 FILED_DIR = RIP_ROOT / "_Filed"
 CONTRIB_DIR = RIP_ROOT / "_Contribute"
-KEY = CFG.get("tmdb_api_key", "")
-TMDB = identify.TMDB(KEY) if KEY and "paste" not in KEY else None
+KEY = identify.own_tmdb_key(CFG)
+TMDB = identify.tmdb_for(CFG)
 
 def reload_config() -> None:
     """Re-read config.json (after the Settings page saves it)."""
@@ -58,8 +58,8 @@ def reload_config() -> None:
     LIB_ROOT = _folder(CFG["plex_library_root"])
     FILED_DIR = RIP_ROOT / "_Filed"
     CONTRIB_DIR = RIP_ROOT / "_Contribute"
-    KEY = CFG.get("tmdb_api_key", "")
-    TMDB = identify.TMDB(KEY) if KEY and "paste" not in KEY else None
+    KEY = identify.own_tmdb_key(CFG)
+    TMDB = identify.tmdb_for(CFG)
     _LIB_CACHE.clear()
 
 
@@ -1334,17 +1334,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, {"ok": True})
             if u.path == "/api/rematch":
                 try:  # keep what the shared database said, so filing can report it was wrong
-                    was = json.loads((folder / "plan.json").read_text(encoding="utf-8")).get("community_answer")
+                    old = json.loads((folder / "plan.json").read_text(encoding="utf-8"))
                 except (OSError, ValueError):
-                    was = None
-                try:  # stay in the library this disc was going into
-                    root = json.loads((folder / "plan.json").read_text(encoding="utf-8")).get("library_root") or ""
-                except (OSError, ValueError):
-                    root = None
+                    old = None
+                was, proposed = (old or {}).get("community_answer"), (old or {}).get("proposed")
+                root = (old.get("library_root") or "") if old is not None else None  # stay in the library it was going into
                 plan = plan_disc(folder, override={
                     "kind": b.get("kind"), "tmdb_id": b.get("tmdb_id"), "season": b.get("season")}, root=root)
                 if was and not plan.get("community_answer"):
                     plan["community_answer"] = was
+                if proposed:  # Shelfrip's first suggestion, so filing can say you picked another
+                    plan["proposed"] = proposed
                 save_plan(folder, plan)
                 plan["folder"] = folder.name
                 return self.send(200, {"plan": plan})
