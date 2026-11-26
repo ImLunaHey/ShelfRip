@@ -2283,8 +2283,7 @@ async function loadInbox(el){
         <span style="flex:1"></span><small style="color:var(--muted)">${esc(when(f.created))}</small>
         <button data-done="${f.id}" data-v="${f.done ? 0 : 1}">${f.done ? "Not done" : "Done"}</button></div>
       ${f.body ? `<div style="white-space:pre-wrap;font-size:13px">${esc(f.body)}</div>` : ""}
-      <small style="color:var(--muted)">${[f.contact ? `Reply to ${esc(f.contact)}` : "", f.app_version ? `Shelfrip ${esc(f.app_version)}` : "", esc(f.os || "")].filter(Boolean).join(" · ")}</small>
-      ${f.logs ? `<details><summary style="font-size:13px;cursor:pointer">Logs (${Math.round(f.logs.length / 1000) || 1}k characters)</summary><pre style="max-height:320px;overflow:auto;font-size:11px;white-space:pre-wrap;word-break:break-all">${esc(f.logs)}</pre></details>` : ""}</div>`).join("");
+      <small style="color:var(--muted)">${[f.contact ? `Reply to ${esc(f.contact)}` : "", f.app_version ? `Shelfrip ${esc(f.app_version)}` : "", esc(f.os || "")].filter(Boolean).join(" · ")}</small></div>`).join("");
   const rp = (j.reports || []).map(r => `<div class="ti" style="font-size:13px">
       <b>${esc(r.title || `tmdb-${r.tmdb_id}`)}${r.season != null ? ` season ${r.season}` : ""}</b> reported wrong ${r.n > 1 ? `${r.n} times` : "once"}${r.disc_label ? ` (disc ${esc(r.disc_label)})` : ""}.
       ${r.better && r.better.title ? `Filed instead as ${esc(r.better.title)}${r.better.year ? ` (${esc(r.better.year)})` : ""}${r.better.season != null ? ` season ${r.better.season}` : ""}.` : ""}
@@ -2302,7 +2301,7 @@ async function loadInbox(el){
 }
 // Feedback: sent to the Shelfrip disc database's server (no account needed), or posted on GitHub
 const FB_KINDS = [["idea","Idea"],["problem","Something's wrong"],["other","Other"]];
-let FBKIND = "idea", FBLOGS = true;  // FBLOGS: send recent logs with "Something's wrong" and "Other"
+let FBKIND = "idea";
 function feedbackDialog(pre){
   pre = pre && pre.trouble ? pre : null;  // (a click event when opened from the Feedback button)
   let d = $("#fbdlg");
@@ -2318,25 +2317,12 @@ function feedbackDialog(pre){
       <label>Details<textarea id="fbm" maxlength="5000" placeholder="${FBKIND === "problem" ? "What did you do, what happened, and what did you expect?" : "Tell us more"}">${esc(keep.m)}</textarea></label>
       <label>Your email, if you'd like a reply (optional)<input type="text" id="fbc" maxlength="200" value="${esc(keep.c)}" autocomplete="email"></label>
       <label class="chk"><input type="checkbox" id="fbv" checked> Add my Shelfrip and Windows versions</label>
-      ${FBKIND !== "idea" ? `<label class="chk"><input type="checkbox" id="fbl" ${FBLOGS ? "checked" : ""}> Send recent logs (your Windows user name and keys are removed) · <a href="#" id="fblv">See what's sent</a></label>
-      <pre id="fblp" hidden style="max-height:220px;overflow:auto;font-size:11px;white-space:pre-wrap;word-break:break-all;margin:0;padding:8px;border:1px solid var(--line2);border-radius:6px"></pre>` : ""}
-      ${FBKIND === "problem" ? `<div id="fbprob" style="font-size:13px;color:var(--muted)">Need the full set of files? <button id="fbrep">Make a problem report</button> and attach it to a <a href="#" id="fbgh2">GitHub issue</a>.</div>` : ""}
+      ${FBKIND === "problem" ? `<div id="fbprob" style="font-size:13px;color:var(--muted)">Need to send logs? <button id="fbrep">Make a problem report</button> and attach it to a <a href="#" id="fbgh2">GitHub issue</a>.</div>` : ""}
       <div id="fbmsg" style="font-size:13px"></div>
       <div class="row" style="align-items:center"><button class="primary" id="fbgo">Send</button><button id="fbx">Cancel</button>
         <span style="flex:1"></span><a href="#" id="fbgh" style="font-size:13px">Post on GitHub instead</a></div></div>`;
     d.querySelectorAll("[data-k]").forEach(b => b.onclick = () => { FBKIND = b.dataset.k; draw(); });
     $("#fbx", d).onclick = () => d.close();
-    if ($("#fbl", d)){
-      $("#fbl", d).onchange = e => { FBLOGS = e.target.checked; };
-      $("#fblv", d).onclick = async e => {
-        e.preventDefault();
-        const pre = $("#fblp", d);
-        if (!pre.hidden){ pre.hidden = true; return; }
-        pre.hidden = false; pre.textContent = "Gathering the logs…";
-        const r = await api("/api/feedback-logs").catch(() => ({}));
-        pre.textContent = r.logs || r.error || "Couldn't gather the logs.";
-      };
-    }
     const rep = $("#fbrep", d);
     if (rep) rep.onclick = async () => {
       rep.disabled = true; rep.textContent = "Making the report…";
@@ -2362,7 +2348,7 @@ function feedbackDialog(pre){
       if (!f.t && !f.m){ $("#fbt", d).focus(); return; }
       if (f.c && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.c)){ $("#fbmsg", d).innerHTML = `<span class="err">That email doesn't look right.</span>`; $("#fbc", d).focus(); return; }
       $("#fbgo", d).disabled = true; $("#fbmsg", d).textContent = "Sending…";
-      const r = await api("/api/feedback", {kind: FBKIND, title: f.t, body: f.m, contact: f.c, versions: f.v, logs: FBKIND !== "idea" && FBLOGS});
+      const r = await api("/api/feedback", {kind: FBKIND, title: f.t, body: f.m, contact: f.c, versions: f.v});
       if (r.error){ $("#fbgo", d).disabled = false; $("#fbmsg", d).innerHTML = `<span class="err">${esc(r.error)}</span>`; return; }
       if (pre) api("/api/trouble", {id: pre.trouble, action: "dismiss"});  // sent: don't offer it again
       d.close(); $("#fbt", d).value = ""; $("#fbm", d).value = "";

@@ -1055,69 +1055,6 @@ def make_problem_report() -> Path:
     return dst
 
 
-FEEDBACK_LOG_LIMIT = 50_000  # characters; the server keeps up to 60,000
-
-
-def _tail(path: Path, n: int) -> list[str]:
-    """The last n lines of a text file ([] if it's missing)."""
-    try:
-        with open(path, "rb") as f:
-            f.seek(0, 2)
-            f.seek(max(0, f.tell() - 400_000))
-            return f.read().decode("utf-8", "replace").splitlines()[-n:]
-    except OSError:
-        return []
-
-
-def scrub(text: str, cfg: dict) -> str:
-    """Logs safe to send: no Windows user name or home folder, and no keys, tokens or passwords."""
-    import trouble
-    secret = ("key", "token", "secret", "password", "notify_url", "install_id")
-    for k, v in cfg.items():  # the actual values, wherever they turn up
-        if any(x in k.lower() for x in secret) and isinstance(v, str) and len(v) >= 6:
-            text = text.replace(v, "(removed)")
-    text = re.sub(r"(?i)((?:api_key|apikey|token|x-plex-token|password|secret)[\"']?\s*[=:]\s*[\"']?)[^\s&\"',;]+",
-                  r"\1(removed)", text)
-    text = re.sub(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{8,}", r"\1(removed)", text)
-    return trouble._redact(text)
-
-
-def feedback_logs() -> str:
-    """Recent logs to send with "Something's wrong" or "Other" feedback (user name and keys removed):
-    version and setup, the activity log, the app log, and the latest rip's MakeMKV log."""
-    import platform
-    cfg = {**rip_all.DEFAULT_CONFIG, **JOB_DEFAULTS, **_read_config()}
-    parts = [f"Shelfrip {paths.APP_VERSION}, Python {platform.python_version()} on {platform.platform()}, "
-             f"installed: {installed_copy()}"]
-    try:
-        parts.append("== Setup ==\n" + "\n".join(f"{x['name']}: {'ok' if x['ok'] else 'NOT OK'} ({x['detail']})"
-                                                for x in setup_check()))
-    except Exception as exc:
-        parts.append(f"== Setup ==\ncouldn't check: {exc}")
-    try:
-        parts.append("== Drives ==\n" + "\n".join(f"{d['device']} {d.get('label') or '(empty)'}: {d.get('state') or ''} "
-                                                  f"{d.get('message') or ''} {d.get('stuck') or ''}".rstrip()
-                                                  for d in RIPPER.state()["drives"]))
-    except Exception:
-        pass
-    parts.append("== Activity ==\n" + "\n".join(list(rip_all.LOG_LINES)[-150:]))
-    app_log = _tail(desktop.LOG_PATH, 200)
-    if app_log:
-        parts.append("== shelfrip.log (end) ==\n" + "\n".join(app_log))
-    try:
-        rip_root = review.RIP_ROOT
-        rips = sorted([d / "rip.log" for d in list(rip_root.iterdir()) + list((rip_root / "_Filed").glob("*"))
-                       if d.is_dir() and (d / "rip.log").exists()], key=lambda f: f.stat().st_mtime)
-        if rips:
-            parts.append(f"== Latest rip: {rips[-1].parent.name} (end of rip.log) ==\n" + "\n".join(_tail(rips[-1], 120)))
-    except OSError:
-        pass
-    text = scrub("\n\n".join(parts), cfg)
-    if len(text) > FEEDBACK_LOG_LIMIT:  # keep the start (version, setup) and the most recent lines
-        text = text[:8000] + "\n\n[... cut ...]\n\n" + text[-(FEEDBACK_LOG_LIMIT - 8100):]
-    return text
-
-
 def check_update() -> None:
     """Ask GitHub once, at start, whether there's a newer release. Never blocks or fails loudly."""
     if not paths.UPDATE_REPO or not _read_config().get("check_updates", True):
@@ -1306,8 +1243,6 @@ class Handler(review.Handler):
                 return self.send(200, settings_view())
             if u.path == "/api/report":
                 return self.send(200, REPORT)
-            if u.path == "/api/feedback-logs":  # what "Send recent logs" would send, to look at first
-                return self.send(200, {"logs": feedback_logs()})
             if u.path == "/api/version":
                 import platform
                 return self.send(200, {**UPDATE, "os": platform.platform(terse=True), "donate": paths.DONATE_URL})
@@ -1387,15 +1322,7 @@ class Handler(review.Handler):
         if u.path == "/api/feedback":
             import community
             cfg = {**rip_all.DEFAULT_CONFIG, **JOB_DEFAULTS, **_read_config()}
-            fb = self.body()
-            if fb.get("logs") and fb.get("kind") in ("problem", "other"):
-                try:
-                    fb["logs"] = feedback_logs()
-                except Exception as exc:
-                    fb["logs"] = f"(couldn't gather the logs: {exc})"
-            else:
-                fb["logs"] = ""
-            return self.send(200, community.send_feedback(fb, cfg))
+            return self.send(200, community.send_feedback(self.body(), cfg))
         if u.path == "/api/inbox":  # mark feedback done
             import community
             cfg = {**rip_all.DEFAULT_CONFIG, **JOB_DEFAULTS, **_read_config()}

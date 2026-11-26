@@ -29,7 +29,6 @@
 // IPs only inside daily rate-limit counters.
 
 const MAX_BODY = 256 * 1024;
-const MAX_FEEDBACK_LOGS = 60000;  // characters of logs kept with one piece of feedback
 const MAX_TITLES = 300;
 const PER_INSTALL_PER_DAY = 200;
 const PER_IP_PER_DAY = 400;
@@ -242,11 +241,9 @@ async function feedback(req, env) {
   await bump(env, await sha(env.SALT + "|fbip|" + ip), PER_IP_FEEDBACK);
   await bump(env, await sha(env.SALT + "|fb|" + install), PER_INSTALL_FEEDBACK);
   const kind = ["idea", "problem", "other"].includes(b.kind) ? b.kind : "other";
-  // Recent app logs, only with "Something's wrong" and "Other" (the app removes user names and keys)
-  const logs = kind === "idea" ? "" : str(b.logs, MAX_FEEDBACK_LOGS);
   await env.DB.prepare(
-    `INSERT INTO feedback (created, install, kind, title, body, contact, app_version, os, logs) VALUES (?,?,?,?,?,?,?,?,?)`
-  ).bind(now(), install, kind, title, text, str(b.contact, 200), str(b.app_version, 20), str(b.os, 120), logs || null).run();
+    `INSERT INTO feedback (created, install, kind, title, body, contact, app_version, os) VALUES (?,?,?,?,?,?,?,?)`
+  ).bind(now(), install, kind, title, text, str(b.contact, 200), str(b.app_version, 20), str(b.os, 120)).run();
   return json({ ok: true });
 }
 
@@ -475,7 +472,7 @@ async function admin(req, url, env) {
     const limit = Math.min(200, int(url.searchParams.get("limit")) || 100);
     const all = url.searchParams.get("all") === "1";
     const { results } = await env.DB.prepare(
-      `SELECT id, created, substr(install, 1, 12) install, kind, title, body, contact, app_version, os, logs, done FROM feedback
+      `SELECT id, created, substr(install, 1, 12) install, kind, title, body, contact, app_version, os, done FROM feedback
          ${all ? "" : "WHERE done = 0"} ORDER BY created DESC LIMIT ?`).bind(limit).all();
     return json({ feedback: results });
   }
