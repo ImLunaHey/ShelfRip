@@ -84,6 +84,23 @@ def episode_extras_inline(cfg: dict) -> bool:
     return server(cfg) != "kodi"
 
 
+EPISODE_CODE = re.compile(r"( - )s(\d+)e(\d+)(?:-e(\d+))?", re.I)
+
+
+def episodes_upper(cfg: dict) -> bool:
+    """Episode codes written S01E02 instead of s01e02. Plex, Jellyfin, Emby and Kodi read both."""
+    return str(cfg.get("episode_style") or "lower").lower() == "upper"
+
+
+def episode_code(cfg: dict, name: str) -> str:
+    """A file name with its episode code in the style chosen in Settings. Names are kept with
+    lower-case codes everywhere else; this is only applied to the file written to the library."""
+    if not episodes_upper(cfg):
+        return name
+    return EPISODE_CODE.sub(lambda m: f"{m[1]}S{m[2]}E{m[3]}" + (f"-E{m[4]}" if m[4] else ""), name, count=1)
+
+
 def page_info(cfg: dict) -> dict:
     """What the review page needs to build names the same way."""
-    return {"server": server(cfg), "server_name": server_name(cfg), "extras_suffix": extras_suffixed(cfg)}
+    return {"server": server(cfg), "server_name": server_name(cfg), "extras_suffix": extras_suffixed(cfg),
+            "episodes_upper": episodes_upper(cfg)}

@@ -349,7 +349,7 @@ dialog.disc .fb .chk{display:flex;gap:8px;align-items:center;color:var(--ink)}
 
 <script>
 const CATS = ["Featurettes","Behind the Scenes","Deleted Scenes","Interviews","Scenes","Shorts","Trailers","Other"];
-let discs = [], LIB = "", LIB_RIPPED = "", SERVER = "plex", SERVER_NAME = "Plex", EXTRAS_SUFFIX = false;
+let discs = [], LIB = "", LIB_RIPPED = "", SERVER = "plex", SERVER_NAME = "Plex", EXTRAS_SUFFIX = false, EP_UPPER = false;
 // name parts the same way naming.py does for the chosen media server
 const idTag = id => !id ? "" : SERVER === "plex" ? ` {tmdb-${id}}` : SERVER === "jellyfin" ? ` [tmdbid-${id}]` : SERVER === "emby" ? ` [tmdbid=${id}]` : "";
 const editionName = (base, ed) => SERVER === "plex" ? `${base} {edition-${ed}}` : `${base} - ${ed}`;
@@ -497,7 +497,10 @@ const KIND = {"Featurettes":"Featurette","Behind the Scenes":"Behind the scenes"
 const SUFFIX = {"Behind the Scenes":"behindthescenes","Deleted Scenes":"deleted","Featurettes":"featurette","Interviews":"interview","Scenes":"scene","Shorts":"short","Trailers":"trailer","Other":"other"};
 // a plan's folder in the library, or a full path for Movies/TV folders kept somewhere else
 const inLib = rel => /^([A-Za-z]:|[\\/]{2})/.test(rel || "") ? [rel] : [LIB, rel];
-function destOf(p, it){
+// mirrors naming.episode_code: the file in the library gets S01E02 when that's chosen in Settings
+const epCode = path => EP_UPPER ? path.replace(/([^\\]*)$/, f => f.replace(/( - )s(\d+)e(\d+)(?:-e(\d+))?/i, (m, a, s, e, e2) => `${a}S${s}E${e}` + (e2 ? `-E${e2}` : ""))) : path;
+function destOf(p, it){ return epCode(destOf0(p, it)); }
+function destOf0(p, it){
   // TV extras can belong to the whole show, a season (default) or one episode (Plex's TV extras guide)
   const cat = it.category || "Other";
   const folder = SERVER === "kodi" ? "Extras" : cat;   // Kodi keeps all extras in one Extras folder
@@ -801,6 +804,7 @@ function card(p, i){
       <span class="chip xp">+${xpOf(p)} XP</span>
       <button class="save">Save without filing</button>
       <span style="flex:1"></span>
+      <button class="startover" title="Throw away the names on this disc and work them out again from scratch, as if it had just been ripped">Start naming over</button>
       <button class="discard" title="Delete this rip (for example when your library already has it)">Discard rip</button>
       ${job ? `<span class="${job.state==="error"?"err":job.state==="done"?"ok":""}">${esc(job.current)}${job.note?" · "+esc(job.note):""}</span>
                ${job.state==="running" ? `<div class="bar"><i style="width:${pct}%"></i></div><span>${pct}%</span>` : ""}` : ""}
@@ -823,6 +827,8 @@ function filingCard(p, i){  // while filing, the names can't change: just show h
       <div class="filing-bar"><div class="bar"><i style="width:${pct}%"></i></div><b>${pct}%</b></div>
       <span class="filing-now">Moving ${n} ${music ? "track" : "file"}${n === 1 ? "" : "s"} into ${SERVER_NAME}: ${esc(job.current || "starting")}</span>
       ${job.note ? `<span class="filing-now">${esc(job.note)}</span>` : ""}
+      ${job.idle >= 300 ? `<span class="filing-now" style="color:var(--err)">No progress for ${Math.round(job.idle / 60)} minutes. If it's stuck, stop it: nothing is lost, and you can file it again or discard the rip.</span>` : ""}
+      <button class="stopfile" title="Stop filing this disc. What's already moved stays in the library; the rest stays in the rip.">Stop filing</button>
     </div></div></section>`;
 }
 
@@ -896,6 +902,7 @@ function musicCard(p, i){
       <span class="chip xp">+${xpOf(p)} XP</span>
       <button class="save">Save without filing</button>
       <span style="flex:1"></span>
+      <button class="startover" title="Throw away the names on this disc and work them out again from scratch, as if it had just been ripped">Start naming over</button>
       <button class="discard" title="Delete this rip">Discard rip</button>
       ${job ? `<span class="${job.state==="error"?"err":job.state==="done"?"ok":""}">${esc(job.current)}${job.note?" · "+esc(job.note):""}</span>
                ${job.state==="running" ? `<div class="bar"><i style="width:${pct}%"></i></div><span>${pct}%</span>` : ""}` : ""}
@@ -947,11 +954,30 @@ function wire(p, i){
   const nx = el && $("[data-next]", el);
   if (nx) nx.onclick = () => { const next = discs.find(d => !(d.job && d.job.state === "done")); if (next){ const c = $("#c" + discs.indexOf(next)); c && c.scrollIntoView({behavior:"smooth"}); } else showTab("drives"); };
   if (p._justFiled){ p._justFiled = false; chime("file"); loadProgress(true); }
-  if (!msg) return; // filed
+  const sf = el && $(".stopfile", el);
+  if (sf) sf.onclick = async () => {
+    if (!confirm(`Stop filing ${p.kind === "music" ? p.album : p.title || p.folder}? Anything already moved stays in ${SERVER_NAME}; the rest stays in the rip, ready to file again or discard.`)) return;
+    sf.disabled = true;
+    const j = await api("/api/stopfiling", {folder:p.folder}).catch(e => ({error: e.message}));
+    if (j.error){ toast("Couldn't stop it", j.error); sf.disabled = false; }
+    await load(true);
+  };
+  if (!msg) return; // filed or filing
   const rerender = () => { const cur = $("#c"+i); if (cur){ cur.outerHTML = card(p, i); wire(p, i); } };
   const hold = () => { if (p.auto && !p.hold){ p.hold = true; p.auto.blocked = ["you chose to review it"]; api("/api/hold", {folder:p.folder}).catch(()=>{}); } };
   el.addEventListener("input", hold); el.addEventListener("change", hold);
   const hb = $(".hold", el); if (hb) hb.onclick = () => { hold(); rerender(); };
+  const so = $(".startover", el);
+  if (so) so.onclick = async () => {
+    if (!confirm(`Start naming ${p.kind === "music" ? p.album || p.disc_label : p.title || p.disc_label} over? Your changes to its names are replaced by fresh ones, worked out as if the disc had just been ripped.`)) return;
+    so.disabled = true; msg.textContent = "Naming it again…";
+    try {
+      const j = await api("/api/startover", {folder:p.folder});
+      if (j.error){ msg.textContent = j.error; so.disabled = false; return; }
+      discs[i] = j.plan; p = j.plan; rerender();
+      toast("Named again", "Fresh names are ready to check.");
+    } catch(e){ msg.textContent = e.message; so.disabled = false; }
+  };
   if (p.kind === "music") return wireMusic(p, i, msg, rerender);
   el.querySelectorAll(".play").forEach(b => b.onclick = () => api("/api/play", {folder:p.folder, source:p.items[b.dataset.j].source}).catch(e => msg.textContent = e.message));
   el.querySelectorAll(".actb").forEach(b => b.onclick = () => { el.dispatchEvent(new Event("change")); p.items[b.dataset.j].action = b.dataset.v; rerender(); });
@@ -1146,7 +1172,7 @@ function poll(){
 
 async function load(keepEdits){
   const j = await api("/api/discs");
-  LIB = j.library; LIB_RIPPED = j.ripped; SERVER = j.server || "plex"; SERVER_NAME = j.server_name || "Plex"; EXTRAS_SUFFIX = !!j.extras_suffix;
+  LIB = j.library; LIB_RIPPED = j.ripped; SERVER = j.server || "plex"; SERVER_NAME = j.server_name || "Plex"; EXTRAS_SUFFIX = !!j.extras_suffix; EP_UPPER = !!j.episodes_upper;
   $("#sub").textContent = `${j.discs.length} disc${j.discs.length === 1 ? "" : "s"} waiting` + (j.tmdb ? "" : " · no TMDB key"); $("#sub").title = `Library: ${LIB}`;
   if (keepEdits){ // only refresh job status, keep unsaved edits
     // Redraw just the cards whose filing status changed, so typing or a dropdown open on
@@ -1934,6 +1960,7 @@ const SET_GROUPS = [
     ["tv_folder", "TV shows folder", "Can be anywhere, even another drive. Leave empty and Shelfrip uses the one already in your media library (tv, TVShows, TV_Shows…), or makes TV Shows there.", {pick:"folder", under:"plex_library_root"}],
     ["output_root", "Rip folder", "Discs are ripped here first, then moved into your library once you've checked the names. Needs room: about 50 GB per Blu-ray, 100 GB per 4K disc.", {pick:"folder"}],
     ["media_server", "Media server", "Files are named the way it expects."],
+    ["episode_style", "How episode numbers are written", "In file names: s01e02, as in Plex's naming guide, or S01E02. Every media server reads both. Only changes files filed from now on."],
     ["extras_style", "How special features are filed", "Plex, Jellyfin and Emby read both: in folders (Movie\\Featurettes\\Making Of.mkv) or tagged in the file name next to the film (Movie\\Making Of-featurette.mkv). Kodi always uses an Extras folder."],
     ["format_folders", "Keep each format in its own folder", "Movies\\Blu-Ray\\…, Movies\\DVD\\… instead of one Movies folder."],
     ["music_library_root", "Music folder", "Where ripped CDs go. It can be anywhere. Leave empty to use the music folder already in your media library (any case), or make Music there.", {pick:"folder"}],
