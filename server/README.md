@@ -16,8 +16,9 @@ It runs on Cloudflare's free tier (100,000 requests a day), so it costs nothing 
 Running **Deploy Database.bat** again later is how updates go out: it re-applies `schema.sql`, applies
 anything new in `migrations/` (ones already in are skipped), then deploys the new `worker.js`.
 
-`.secrets.json` (created by the deploy, never committed) holds the `SALT` that hashes install ids and
-the `ADMIN_TOKEN` for the admin calls. Keep it: a new SALT makes every install look new.
+`.secrets.json` (created by the deploy, never committed) holds the `SALT` that hashes install ids,
+the `ADMIN_TOKEN` for the admin calls and the shared `TMDB_KEY` (asked for once during the deploy;
+press Enter to leave it out, and delete the `TMDB_KEY` line to be asked again). Keep it: a new SALT makes every install look new.
 
 ## API
 
@@ -29,6 +30,7 @@ the `ADMIN_TOKEN` for the admin calls. Keep it: a new SALT makes every install l
 | `GET /v1/disc?h=<content hash>&s=<signature>` | The agreed answer for a disc, title by title, with vote counts (`votes`: installs, `weight`: weighted votes), the tracks most people saw, and a `confidence` from 0 to 100 for the disc and each title |
 | `GET /v1/export` | Every disc's agreed answer as one JSON file (CC0) |
 | `GET /v1/stats` | How many discs, submissions and installs |
+| `GET /v1/tmdb/<path>?...` | TMDB's API with Shelfrip's shared key (`TMDB_KEY` secret), for installs without a key of their own. Only the calls the app makes (`search/movie`, `search/tv`, `movie/<id>`, `tv/<id>`, `tv/<id>/season/<n>`, credits, external ids, `configuration`) and their usual parameters are passed on. Answers are cached for a day at Cloudflare, shared by everyone; misses are limited to 3,000 a day per IP. 503 when no key is set |
 | `GET /v1/admin/recent?limit=50` | Latest submissions (header `Authorization: Bearer <ADMIN_TOKEN>`) |
 | `POST /v1/admin/block` `{install, why}` | Hide everything from one install (first 12 characters of its id as shown in `recent`) |
 | `POST /v1/admin/hide` `{id, hidden}` | Hide or show one submission |
