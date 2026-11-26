@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS feedback (
   contact  TEXT,               -- only if they chose to give an email for a reply
   app_version TEXT,
   os       TEXT,
-  done     INTEGER NOT NULL DEFAULT 0
+  done     INTEGER NOT NULL DEFAULT 0,
+  logs     TEXT                -- the latest rips' logs, if they chose to send them (gzip, base64)
 );
 CREATE INDEX IF NOT EXISTS feedback_created ON feedback(created);

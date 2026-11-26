@@ -7,11 +7,15 @@ error report to Shelfrip's developer. Nothing is sent unless you click Send.
                                exact text that would be sent ("preview")
   send(id, note, contact, cfg) send one through the Feedback channel (community.send_feedback)
   dismiss(id)                  don't offer it again
+  gather_logs(cfg, label)      the latest rips' logs (MakeMKV's title list, rip log, names), sent
+                               with a problem report only if you leave "Include logs" ticked
 """
 
 from __future__ import annotations
 
+import base64
 import datetime as dt
+import gzip
 import hashlib
 import os
 import re
@@ -63,6 +67,65 @@ def record(what: str, label: str, error: str, detail: str = "", with_trace: bool
     return key
 
 
+MAX_LOGS = 1_300_000   # base64 characters; the server takes up to 1.4 million
+# per file: (name, bytes kept, keep the end rather than the start)
+RIP_FILES = (("makemkv_info.txt", 1_500_000, False), ("rip.log", 400_000, True), ("plan.json", 300_000, False))
+
+
+def _tail(path: Path, n: int, end: bool) -> str:
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return ""
+    if len(data) > n:
+        data = (b"[...]\n" + data[-n:]) if end else (data[:n] + b"\n[...]")
+    return data.decode("utf-8", "replace")
+
+
+def rip_folders(cfg: dict, label: str = "", n: int = 2) -> list[Path]:
+    """The newest rip folders (waiting for review or filed): this disc's if label is given."""
+    root = Path(str(cfg.get("output_root") or ""))
+    if not str(root) or not root.is_dir():
+        return []
+    try:
+        found = [d for d in [*root.iterdir(), *(root / "_Filed").glob("*")]
+                 if d.is_dir() and (d / "makemkv_info.txt").exists()]
+    except OSError:
+        return []
+    found.sort(key=lambda d: (d / "makemkv_info.txt").stat().st_mtime, reverse=True)
+    if label:
+        import rip_all
+        prefix = rip_all.safe_folder_name(label) + "__"
+        mine = [d for d in found if d.name.startswith(prefix)]
+        if mine:
+            return mine[:1]
+    return found[:n]
+
+
+def gather_logs(cfg: dict, label: str = "") -> str:
+    """The latest rips' MakeMKV title lists, rip logs and proposed names, plus Shelfrip's own log,
+    as one text (your user name left out), gzip-compressed and base64-encoded for a report.
+    '' when there's nothing to send."""
+    parts = []
+    for d in rip_folders(cfg, label):
+        for name, n, end in RIP_FILES:
+            if (d / name).exists():
+                parts.append((f"{d.name}/{name}", _tail(d / name, n, end)))
+    try:
+        import desktop
+        if desktop.LOG_PATH.exists():
+            parts.append(("shelfrip.log", _tail(desktop.LOG_PATH, 300_000, True)))
+    except Exception:
+        pass
+    while parts:
+        text = "".join(f"===== {name} =====\n{body}\n\n" for name, body in parts)
+        out = base64.b64encode(gzip.compress(_redact(text).encode("utf-8"))).decode("ascii")
+        if len(out) <= MAX_LOGS:
+            return out
+        parts.pop()  # too big: leave out the last (least useful) file and try again
+    return ""
+
+
 def compose(item: dict, note: str = "") -> str:
     """The report's text, as it would be sent (cut to fit, keys and your user name left out)."""
     parts = [f"What failed: {item['what']}" + (f" ({item['label']})" if item.get("label") else ""),
@@ -104,7 +167,7 @@ def send(key: str, note: str, contact: str, cfg: dict) -> dict:
     import community
     title = f"Error report: {item['what']}" + (f" ({item['label']})" if item.get("label") else "")
     r = community.send_feedback({"kind": "problem", "title": title[:200], "body": compose(item, note),
-                                 "contact": contact}, cfg)
+                                 "contact": contact, "logs": True, "label": item.get("label") or ""}, cfg)
     if r.get("ok"):
         dismiss(key)
     return r

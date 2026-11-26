@@ -26,7 +26,7 @@ press Enter to leave it out, and delete the `TMDB_KEY` line to be asked again). 
 |---|---|
 | `POST /v1/submit` | One filed disc: `{install_id, app_version, disc: {content_hash, signature, format, label, name}, media: {kind, title, year, tmdb_id, imdb_id, season}, titles: [...]}`. Each title may carry `tracks: {video: {codec, res}, audio: [{lang, codec, ch, commentary, name, core}], subs: [{lang, forced}]}` (up to 24 audio and 48 subtitle tracks) and `accepted: true` when it was filed exactly as this database's answer showed it, and `changed: true` when the person changed what Shelfrip suggested for it. `proposed` (optional): `{known: true}` when they kept Shelfrip's match, or the `{kind, title, year, tmdb_id, season}` Shelfrip suggested when they picked another |
 | `POST /v1/report` | "This disc is not that": `{install_id, disc: {content_hash, signature}, wrong: {kind, tmdb_id, season}, instead: {...}}`. Sent when someone was given a shared answer and filed or re-matched the disc as something else |
-| `POST /v1/feedback` | A message from the app's Feedback button: `{install_id, kind, title, body, contact, app_version, os}` (20 a day per install) |
+| `POST /v1/feedback` | A message from the app's Feedback button: `{install_id, kind, title, body, contact, app_version, os, logs?}` (20 a day per install; `logs` = the latest rips' logs, gzip + base64, up to 1.4 MB) |
 | `GET /v1/disc?h=<content hash>&s=<signature>` | The agreed answer for a disc, title by title, with vote counts (`votes`: installs, `weight`: weighted votes), the tracks most people saw, and a `confidence` from 0 to 100 for the disc and each title |
 | `GET /v1/export` | Every disc's agreed answer as one JSON file (CC0) |
 | `GET /v1/stats` | How many discs, submissions and installs |
@@ -37,6 +37,7 @@ press Enter to leave it out, and delete the `TMDB_KEY` line to be asked again). 
 | `POST /v1/admin/lock` `{disc_key, answer}` | Fix a disc's answer by hand (`answer: null` removes the lock) |
 | `GET /v1/admin/reports` | Discs people said were wrong, with what they filed instead and the current answer |
 | `GET /v1/admin/feedback` | Feedback, newest first (`?all=1` includes ones marked done) |
+| `GET /v1/admin/feedback/logs?id=N` | The logs one report carried (gzip + base64); the list shows `logs_size` |
 | `POST /v1/admin/feedback` `{id, done}` | Mark feedback done |
 
 On the PC that deployed the database (the one with `.secrets.json`), Shelfrip shows the feedback

@@ -457,7 +457,7 @@ function troublePrompt(list){
       t.remove();
       FBKIND = "problem";
       feedbackDialog({t: `Error report: ${f.what}${f.label ? ` (${f.label})` : ""}`.slice(0, 200),
-                      m: `What I was doing: \n\n---\n${f.preview}`.slice(0, 5000), trouble: f.id});
+                      m: `What I was doing: \n\n---\n${f.preview}`.slice(0, 5000), trouble: f.id, label: f.label || ""});
     };
   });
 }
@@ -2264,6 +2264,7 @@ async function loadInbox(el){
   const fb = (j.feedback || []).map(f => `<div class="ti" style="display:grid;gap:3px${f.done ? ";opacity:.55" : ""}">
       <div class="row" style="gap:8px;align-items:baseline"><span class="chip">${esc(KIND[f.kind] || f.kind)}</span><b>${esc(f.title || "(no title)")}</b>
         <span style="flex:1"></span><small style="color:var(--muted)">${esc(when(f.created))}</small>
+        ${f.logs_size ? `<button data-logs="${f.id}" title="Download the logs sent with this report and open them">Logs (${Math.max(1, Math.round(f.logs_size * 0.75 / 1024))} KB)</button>` : ""}
         <button data-done="${f.id}" data-v="${f.done ? 0 : 1}">${f.done ? "Not done" : "Done"}</button></div>
       ${f.body ? `<div style="white-space:pre-wrap;font-size:13px">${esc(f.body)}</div>` : ""}
       <small style="color:var(--muted)">${[f.contact ? `Reply to ${esc(f.contact)}` : "", f.app_version ? `Shelfrip ${esc(f.app_version)}` : "", esc(f.os || "")].filter(Boolean).join(" · ")}</small></div>`).join("");
@@ -2280,6 +2281,12 @@ async function loadInbox(el){
       <div class="help">The disc database already counts these against the answer. Two installs agreeing on another answer replaces it.</div></div>
     <div class="tidy" style="margin-top:8px">${rp || `<div style="color:var(--muted);font-size:13px">None.</div>`}</div>`}</div>`;
   el.querySelectorAll("[data-done]").forEach(b => b.onclick = async () => { b.disabled = true; await api("/api/inbox", {id: +b.dataset.done, done: b.dataset.v === "1"}); loadInbox(el); });
+  el.querySelectorAll("[data-logs]").forEach(b => b.onclick = async () => {
+    b.disabled = true; const was = b.textContent; b.textContent = "Downloading…";
+    const r = await api("/api/inboxlogs", {id: +b.dataset.logs}).catch(e => ({error: e.message}));
+    b.disabled = false; b.textContent = was;
+    toast(r.error ? "Couldn't get the logs" : "Logs saved", r.error || r.path);
+  });
   if ($("#inball", el)) $("#inball", el).onclick = () => { INBOXALL = !INBOXALL; loadInbox(el); };
 }
 // Feedback: sent to the Shelfrip disc database's server (no account needed), or posted on GitHub
@@ -2291,7 +2298,7 @@ function feedbackDialog(pre){
   if (!d){ d = document.createElement("dialog"); d.id = "fbdlg"; d.className = "disc"; document.body.appendChild(d);
     d.addEventListener("click", e => { if (e.target === d) d.close(); }); }
   const draw = () => {
-    const keep = pre && !$("#fbt", d) ? {t: pre.t, m: pre.m, c: ""} : {t: $("#fbt", d)?.value || "", m: $("#fbm", d)?.value || "", c: $("#fbc", d)?.value || ""};
+    const keep = pre && !$("#fbt", d) ? {t: pre.t, m: pre.m, c: ""} : {t: $("#fbt", d)?.value || "", m: $("#fbm", d)?.value || "", c: $("#fbc", d)?.value || "", l: $("#fbl", d) ? $("#fbl", d).checked : undefined};
     d.innerHTML = `<div class="fb">
       <h2>Send feedback</h2>
       <span style="color:var(--muted);font-size:13px">Ideas, bugs, wrong names, anything. It goes straight to the people who make Shelfrip.</span>
@@ -2300,7 +2307,9 @@ function feedbackDialog(pre){
       <label>Details<textarea id="fbm" maxlength="5000" placeholder="${FBKIND === "problem" ? "What did you do, what happened, and what did you expect?" : "Tell us more"}">${esc(keep.m)}</textarea></label>
       <label>Your email, if you'd like a reply (optional)<input type="text" id="fbc" maxlength="200" value="${esc(keep.c)}" autocomplete="email"></label>
       <label class="chk"><input type="checkbox" id="fbv" checked> Add my Shelfrip and Windows versions</label>
-      ${FBKIND === "problem" ? `<div id="fbprob" style="font-size:13px;color:var(--muted)">Need to send logs? <button id="fbrep">Make a problem report</button> and attach it to a <a href="#" id="fbgh2">GitHub issue</a>.</div>` : ""}
+      ${FBKIND === "problem" ? `<label class="chk"><input type="checkbox" id="fbl" ${keep.l === false ? "" : "checked"}> Include logs from ${pre && pre.label ? "this disc's rip" : "my latest rips"}
+        <span style="color:var(--muted);font-size:12px">(MakeMKV's list of the disc's titles and tracks, the rip log and the proposed names; your user name is left out)</span></label>
+        <div id="fbprob" style="font-size:13px;color:var(--muted)">Posting on GitHub instead? <button id="fbrep">Make a problem report</button> and attach it to a <a href="#" id="fbgh2">GitHub issue</a>.</div>` : ""}
       <div id="fbmsg" style="font-size:13px"></div>
       <div class="row" style="align-items:center"><button class="primary" id="fbgo">Send</button><button id="fbx">Cancel</button>
         <span style="flex:1"></span><a href="#" id="fbgh" style="font-size:13px">Post on GitHub instead</a></div></div>`;
@@ -2314,7 +2323,8 @@ function feedbackDialog(pre){
         : `Saved <b style="word-break:break-all">${esc(r.path)}</b>. Drag it into a <a href="#" id="fbgh2">GitHub issue</a> to attach it.`;
       wireGh();
     };
-    const read = () => ({t: $("#fbt", d).value.trim(), m: $("#fbm", d).value.trim(), c: $("#fbc", d).value.trim(), v: $("#fbv", d).checked});
+    const read = () => ({t: $("#fbt", d).value.trim(), m: $("#fbm", d).value.trim(), c: $("#fbc", d).value.trim(), v: $("#fbv", d).checked,
+                         l: FBKIND === "problem" && !!$("#fbl", d) && $("#fbl", d).checked});
     const github = async e => {
       e.preventDefault();
       const f = read();
@@ -2330,8 +2340,9 @@ function feedbackDialog(pre){
       const f = read();
       if (!f.t && !f.m){ $("#fbt", d).focus(); return; }
       if (f.c && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.c)){ $("#fbmsg", d).innerHTML = `<span class="err">That email doesn't look right.</span>`; $("#fbc", d).focus(); return; }
-      $("#fbgo", d).disabled = true; $("#fbmsg", d).textContent = "Sending…";
-      const r = await api("/api/feedback", {kind: FBKIND, title: f.t, body: f.m, contact: f.c, versions: f.v});
+      $("#fbgo", d).disabled = true; $("#fbmsg", d).textContent = f.l ? "Sending, with the logs…" : "Sending…";
+      const r = await api("/api/feedback", {kind: FBKIND, title: f.t, body: f.m, contact: f.c, versions: f.v,
+                                            logs: f.l, label: (pre && pre.label) || ""});
       if (r.error){ $("#fbgo", d).disabled = false; $("#fbmsg", d).innerHTML = `<span class="err">${esc(r.error)}</span>`; return; }
       if (pre) api("/api/trouble", {id: pre.trouble, action: "dismiss"});  // sent: don't offer it again
       d.close(); $("#fbt", d).value = ""; $("#fbm", d).value = "";

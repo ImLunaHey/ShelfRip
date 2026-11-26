@@ -199,7 +199,10 @@ a [GitHub issue](https://github.com/Shelfrip/ShelfRip/issues).
 ## Feedback
 
 The **Feedback** button at the top of the window sends your idea or problem straight to the people
-who make Shelfrip, with no account needed. Leave your email if you'd like a reply. You can also email
+who make Shelfrip, with no account needed. Leave your email if you'd like a reply. For a problem,
+**Include logs** (ticked unless you untick it) adds the latest rips' logs: MakeMKV's list of the disc's
+titles and tracks, the rip log, the proposed names and Shelfrip's own log, with your user name left out.
+You can also email
 [support@shelfrip.com](mailto:support@shelfrip.com) or open
 an issue on [GitHub](https://github.com/Shelfrip/ShelfRip/issues/new/choose).
 

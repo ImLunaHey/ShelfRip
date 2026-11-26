@@ -58,5 +58,49 @@ class Trouble(unittest.TestCase):
         self.assertIn("error", trouble.send("nope", "", "", {}))
 
 
+
+class Logs(unittest.TestCase):
+    def rips(self):
+        import time
+        root = Path(tempfile.mkdtemp())
+        for i, label in enumerate(("OBSESSION", "ALIEN_D1", "HEAT")):
+            d = root / f"{label}__2026112{i}-120000"
+            d.mkdir()
+            (d / "makemkv_info.txt").write_text(f'TINFO:0,2,0,"{label}"\nDRV:0,2,999,1,"BD-RE",""\n'
+                                                + f"from {Path.home()}\\x\n")
+            (d / "rip.log").write_text("saving\n")
+            os.utime(d / "makemkv_info.txt", (time.time() + i, time.time() + i))
+        return {"output_root": str(root)}
+
+    def text(self, cfg, label=""):
+        import base64, gzip
+        return gzip.decompress(base64.b64decode(trouble.gather_logs(cfg, label))).decode()
+
+    def test_latest_two_rips(self):
+        t = self.text(self.rips())
+        self.assertIn("HEAT__", t)
+        self.assertIn("ALIEN_D1__", t)
+        self.assertNotIn("OBSESSION__", t)
+        self.assertNotIn(str(Path.home()), t)  # user name left out
+
+    def test_this_discs_rip_only(self):
+        t = self.text(self.rips(), "OBSESSION")
+        self.assertIn("OBSESSION__20261120-120000/makemkv_info.txt", t)
+        self.assertIn("OBSESSION__20261120-120000/rip.log", t)
+        self.assertNotIn("HEAT__", t)
+
+    def test_cut_to_fit(self):
+        cfg = self.rips()
+        old = trouble.MAX_LOGS
+        try:
+            trouble.MAX_LOGS = 10
+            self.assertEqual(trouble.gather_logs(cfg), "")
+        finally:
+            trouble.MAX_LOGS = old
+
+    def test_no_rip_folder(self):
+        self.assertEqual(trouble.rip_folders({"output_root": ""}), [])
+
+
 if __name__ == "__main__":
     unittest.main()

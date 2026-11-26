@@ -1294,6 +1294,16 @@ class Handler(review.Handler):
                 return self.send(200, community.admin("feedback", cfg, {"id": int(b.get("id") or 0), "done": bool(b.get("done", True))}))
             except Exception as exc:
                 return self.send(200, {"error": str(exc)})
+        if u.path == "/api/inboxlogs":  # download the logs a problem report carried, and open them
+            import community
+            cfg = {**rip_all.DEFAULT_CONFIG, **JOB_DEFAULTS, **_read_config()}
+            r = community.save_feedback_logs(int(self.body().get("id") or 0), cfg)
+            if r.get("path") and os.name == "nt":
+                try:
+                    os.startfile(r["path"])
+                except OSError:
+                    pass
+            return self.send(200, r)
         if u.path == "/api/problem":
             try:
                 dst = make_problem_report()

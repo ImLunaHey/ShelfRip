@@ -82,12 +82,12 @@ def signature(disc: dict) -> str:
     return hashlib.sha256("|".join(parts).encode()).hexdigest()[:32]
 
 
-def _http(url: str, body: dict | None = None) -> dict:
+def _http(url: str, body: dict | None = None, timeout: float = TIMEOUT) -> dict:
     data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(url, data=data, method="POST" if data else "GET",
                                  headers={"User-Agent": paths.USER_AGENT, "Content-Type": "application/json",
                                           "Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8"))
 
 
@@ -369,11 +369,21 @@ def send_feedback(fb: dict, cfg: dict) -> dict:
             "contact": str(fb.get("contact") or "")[:200], "os": platform.platform(terse=True)}
     if not fb.get("versions", True):
         body["app_version"] = body["os"] = ""
+    if fb.get("logs"):
+        try:
+            import trouble
+            logs = trouble.gather_logs(cfg, str(fb.get("label") or ""))
+            if logs:
+                body["logs"] = logs
+        except Exception as exc:
+            body["body"] = (body["body"] + f"\n\n(couldn't add the logs: {exc})")[:5000]
     try:
-        _http(f"{base}/v1/feedback", body)
+        _http(f"{base}/v1/feedback", body, timeout=90 if body.get("logs") else TIMEOUT)
         return {"ok": True}
     except urllib.error.HTTPError as exc:
         return {"error": "Too much feedback from here today. Try again tomorrow." if exc.code == 429
+                else "The logs were too big to send. Untick Include logs, or make a problem report and attach it "
+                     "to a GitHub issue." if exc.code == 413
                 else f"The feedback server said no ({exc.code})."}
     except Exception as exc:
         return {"error": f"Couldn't reach the feedback server ({exc}). Check your internet connection."}
@@ -396,8 +406,26 @@ def admin(path: str, cfg: dict, body: dict | None = None) -> dict:
     req = urllib.request.Request(f"{base}/v1/admin/{path}", data=data, method="POST" if data else "GET",
                                  headers={"User-Agent": paths.USER_AGENT, "Content-Type": "application/json",
                                           "Authorization": f"Bearer {token}"})
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+    with urllib.request.urlopen(req, timeout=60) as r:
         return json.loads(r.read().decode("utf-8"))
+
+
+def save_feedback_logs(fid: int, cfg: dict) -> dict:
+    """Download the logs one problem report carried into <data folder>\\feedback-logs\\feedback-<id>.txt.
+    Returns {path} or {error}."""
+    import base64
+    import gzip
+    try:
+        r = admin(f"feedback/logs?id={int(fid)}", cfg)
+        if r.get("error"):
+            return {"error": r["error"]}
+        text = gzip.decompress(base64.b64decode(r["logs"])).decode("utf-8", "replace")
+        out = paths.DATA_DIR / "feedback-logs" / f"feedback-{int(fid)}.txt"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text, encoding="utf-8")
+        return {"path": str(out)}
+    except Exception as exc:
+        return {"error": f"Couldn't get the logs ({exc})"}
 
 
 def share(plan: dict, disc: dict, cfg: dict, log=print) -> None:
