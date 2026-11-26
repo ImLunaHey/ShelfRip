@@ -102,11 +102,32 @@ def rip_folders(cfg: dict, label: str = "", n: int = 2) -> list[Path]:
     return found[:n]
 
 
-def gather_logs(cfg: dict, label: str = "") -> str:
-    """The latest rips' MakeMKV title lists, rip logs and proposed names, plus Shelfrip's own log,
-    as one text (your user name left out), gzip-compressed and base64-encoded for a report.
-    '' when there's nothing to send."""
+SECRET_KEYS = ("tmdb_api_key", "omdb_api_key", "plex_token", "opensubtitles_password", "opensubtitles_api_key")
+_SECRET_RE = re.compile(r"(?i)(api_key=|apikey=|X-Plex-Token[=:]\s*|Bearer\s+|token=|password=)[^\s&\"',;]+")
+
+
+def _scrub(text: str, cfg: dict) -> str:
+    """Leave out your user name, your keys and tokens (as saved in Settings, and anything that
+    looks like one in a web address or header)."""
+    for k in SECRET_KEYS:
+        v = str(cfg.get(k) or "").strip()
+        if len(v) >= 6:
+            text = text.replace(v, f"<{k}>")
+    return _SECRET_RE.sub(lambda m: m.group(1) + "<hidden>", _redact(text))
+
+
+def _parts(cfg: dict, label: str = "", setup: list | None = None) -> list[tuple[str, str]]:
+    """(name, text) of everything a report's logs hold, most useful first."""
     parts = []
+    if setup:
+        parts.append(("setup check", "\n".join(f"{'ok  ' if r.get('ok') else 'NOT '} {r.get('name')}: {r.get('detail') or ''}"
+                                               for r in setup)))
+    try:
+        import rip_all
+        if rip_all.LOG_LINES:
+            parts.append(("activity log", "\n".join(list(rip_all.LOG_LINES)[-200:])))
+    except Exception:
+        pass
     for d in rip_folders(cfg, label):
         for name, n, end in RIP_FILES:
             if (d / name).exists():
@@ -117,13 +138,31 @@ def gather_logs(cfg: dict, label: str = "") -> str:
             parts.append(("shelfrip.log", _tail(desktop.LOG_PATH, 300_000, True)))
     except Exception:
         pass
-    while parts:
-        text = "".join(f"===== {name} =====\n{body}\n\n" for name, body in parts)
-        out = base64.b64encode(gzip.compress(_redact(text).encode("utf-8"))).decode("ascii")
-        if len(out) <= MAX_LOGS:
-            return out
-        parts.pop()  # too big: leave out the last (least useful) file and try again
+    return parts
+
+
+def _join(parts: list[tuple[str, str]], cfg: dict) -> str:
+    return _scrub("".join(f"===== {name} =====\n{body}\n\n" for name, body in parts), cfg)
+
+
+def logs_text(cfg: dict, label: str = "", setup: list | None = None) -> str:
+    """The logs a report would carry, as plain text (for "See what's sent")."""
+    parts = _parts(cfg, label, setup)
+    while parts:  # the same cut as gather_logs
+        text = _join(parts, cfg)
+        if len(base64.b64encode(gzip.compress(text.encode("utf-8")))) <= MAX_LOGS:
+            return text
+        parts.pop()
     return ""
+
+
+def gather_logs(cfg: dict, label: str = "", setup: list | None = None) -> str:
+    """The setup check, the activity log, the latest rips' MakeMKV title lists, rip logs and
+    proposed names, and Shelfrip's own log, as one text (user name, keys and tokens left out),
+    gzip-compressed and base64-encoded for a report. '' when there's nothing to send. Too big:
+    the least useful files are left out."""
+    text = logs_text(cfg, label, setup)
+    return base64.b64encode(gzip.compress(text.encode("utf-8"))).decode("ascii") if text else ""
 
 
 def compose(item: dict, note: str = "") -> str:

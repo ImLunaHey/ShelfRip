@@ -1285,7 +1285,22 @@ class Handler(review.Handler):
         if u.path == "/api/feedback":
             import community
             cfg = {**rip_all.DEFAULT_CONFIG, **JOB_DEFAULTS, **_read_config()}
-            return self.send(200, community.send_feedback(self.body(), cfg))
+            fb = self.body()
+            if fb.get("logs"):
+                try:
+                    fb["setup"] = setup_check()
+                except Exception:
+                    pass
+            return self.send(200, community.send_feedback(fb, cfg))
+        if u.path == "/api/feedbacklogs":  # "See what's sent": the logs a report would carry
+            import trouble
+            cfg = {**rip_all.DEFAULT_CONFIG, **JOB_DEFAULTS, **_read_config()}
+            try:
+                setup = setup_check()
+            except Exception:
+                setup = []
+            text = trouble.logs_text(cfg, str(self.body().get("label") or ""), setup)
+            return self.send(200, {"text": text or "(nothing to send yet)", "size": len(text)})
         if u.path == "/api/inbox":  # mark feedback done
             import community
             cfg = {**rip_all.DEFAULT_CONFIG, **JOB_DEFAULTS, **_read_config()}

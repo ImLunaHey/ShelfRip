@@ -2307,9 +2307,11 @@ function feedbackDialog(pre){
       <label>Details<textarea id="fbm" maxlength="5000" placeholder="${FBKIND === "problem" ? "What did you do, what happened, and what did you expect?" : "Tell us more"}">${esc(keep.m)}</textarea></label>
       <label>Your email, if you'd like a reply (optional)<input type="text" id="fbc" maxlength="200" value="${esc(keep.c)}" autocomplete="email"></label>
       <label class="chk"><input type="checkbox" id="fbv" checked> Add my Shelfrip and Windows versions</label>
-      ${FBKIND === "problem" ? `<label class="chk"><input type="checkbox" id="fbl" ${keep.l === false ? "" : "checked"}> Include logs from ${pre && pre.label ? "this disc's rip" : "my latest rips"}
-        <span style="color:var(--muted);font-size:12px">(MakeMKV's list of the disc's titles and tracks, the rip log and the proposed names; your user name is left out)</span></label>
-        <div id="fbprob" style="font-size:13px;color:var(--muted)">Posting on GitHub instead? <button id="fbrep">Make a problem report</button> and attach it to a <a href="#" id="fbgh2">GitHub issue</a>.</div>` : ""}
+      ${FBKIND !== "idea" ? `<label class="chk"><input type="checkbox" id="fbl" ${keep.l === false ? "" : "checked"}> Include logs from ${pre && pre.label ? "this disc's rip" : "my latest rips"}
+        <span style="color:var(--muted);font-size:12px">(MakeMKV's list of the disc's titles and tracks, the rip and activity logs, the proposed names and the setup check; your user name, keys and tokens are left out)</span>
+        <a href="#" id="fblsee" style="font-size:12px">See what's sent</a></label>
+        <pre id="fblview" class="hide" style="max-height:220px;overflow:auto;font-size:11px;white-space:pre-wrap;background:var(--panel2, rgba(127,127,127,.08));padding:8px;border-radius:6px;margin:0"></pre>` : ""}
+      ${FBKIND === "problem" ? `<div id="fbprob" style="font-size:13px;color:var(--muted)">Posting on GitHub instead? <button id="fbrep">Make a problem report</button> and attach it to a <a href="#" id="fbgh2">GitHub issue</a>.</div>` : ""}
       <div id="fbmsg" style="font-size:13px"></div>
       <div class="row" style="align-items:center"><button class="primary" id="fbgo">Send</button><button id="fbx">Cancel</button>
         <span style="flex:1"></span><a href="#" id="fbgh" style="font-size:13px">Post on GitHub instead</a></div></div>`;
@@ -2324,7 +2326,7 @@ function feedbackDialog(pre){
       wireGh();
     };
     const read = () => ({t: $("#fbt", d).value.trim(), m: $("#fbm", d).value.trim(), c: $("#fbc", d).value.trim(), v: $("#fbv", d).checked,
-                         l: FBKIND === "problem" && !!$("#fbl", d) && $("#fbl", d).checked});
+                         l: FBKIND !== "idea" && !!$("#fbl", d) && $("#fbl", d).checked});
     const github = async e => {
       e.preventDefault();
       const f = read();
@@ -2333,6 +2335,15 @@ function feedbackDialog(pre){
       const name = FB_KINDS.find(x => x[0] === FBKIND)[1];
       const title = f.t || f.m ? `${FBKIND === "problem" ? "Bug" : name}: ${f.t || f.m.split("\n")[0].slice(0, 80)}` : "";
       window.open(`https://github.com/Shelfrip/ShelfRip/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`, "_blank", "noopener");
+    };
+    const see = $("#fblsee", d);
+    if (see) see.onclick = async e => {
+      e.preventDefault();
+      const v = $("#fblview", d);
+      if (!v.classList.contains("hide")){ v.classList.add("hide"); see.textContent = "See what's sent"; return; }
+      see.textContent = "Reading the logs…";
+      const r = await api("/api/feedbacklogs", {label: (pre && pre.label) || ""}).catch(e => ({text: e.message}));
+      v.textContent = r.text; v.classList.remove("hide"); see.textContent = "Hide what's sent";
     };
     const wireGh = () => d.querySelectorAll("#fbgh, #fbgh2").forEach(a => a.onclick = github);
     wireGh();

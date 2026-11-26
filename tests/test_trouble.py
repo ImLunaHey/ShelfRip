@@ -98,6 +98,20 @@ class Logs(unittest.TestCase):
         finally:
             trouble.MAX_LOGS = old
 
+    def test_keys_and_tokens_left_out(self):
+        cfg = {**self.rips(), "tmdb_api_key": "abcdef123456", "plex_token": "plexsecret99"}
+        rip_all.LOG_LINES.append("GET https://api.themoviedb.org/3/movie/1?api_key=zzz999 abcdef123456")
+        try:
+            t = trouble.logs_text(cfg, setup=[{"name": "MakeMKV", "ok": True, "detail": "found"}])
+        finally:
+            rip_all.LOG_LINES.pop()
+        self.assertIn("ok   MakeMKV: found", t)
+        self.assertIn("api_key=<hidden>", t)
+        self.assertNotIn("zzz999", t)
+        self.assertNotIn("abcdef123456", t)
+        self.assertIn("X-Plex-Token=<hidden>", trouble._scrub("X-Plex-Token=plexsecret99", cfg))
+        self.assertIn("Bearer <hidden>", trouble._scrub("Authorization: Bearer eyJhbGc", {}))
+
     def test_no_rip_folder(self):
         self.assertEqual(trouble.rip_folders({"output_root": ""}), [])
 

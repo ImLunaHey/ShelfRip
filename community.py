@@ -372,7 +372,7 @@ def send_feedback(fb: dict, cfg: dict) -> dict:
     if fb.get("logs"):
         try:
             import trouble
-            logs = trouble.gather_logs(cfg, str(fb.get("label") or ""))
+            logs = trouble.gather_logs(cfg, str(fb.get("label") or ""), fb.get("setup"))
             if logs:
                 body["logs"] = logs
         except Exception as exc:
