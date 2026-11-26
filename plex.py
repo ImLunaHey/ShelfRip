@@ -186,10 +186,13 @@ def scan_and_check(cfg: dict, plan: dict, status: dict, wait_s: int = 300, log=p
     import identify
     try:
         sections = px.sections()
-        lib = cfg.get("plex_library_root") or ""
+        lib = plan.get("library_root") or cfg.get("plex_library_root") or ""  # "Use multiple libraries"
         folder = plan.get("library_dir") or ""
         local = (lib.rstrip("\\/") + "\\" + folder) if lib and not identify.is_full_path(folder) else folder
         mapped = map_folder(sections, local, plan.get("kind") or "movie")
+        if not mapped and plan.get("library_root"):  # e.g. a 4K library served by another Plex server
+            status.update(state="off", summary="Not checked: the Plex server Shelfrip is linked to doesn't have the library this disc went into")
+            return
         if not mapped:
             status.update(state="error", summary="Plex has no library that holds " + local)
             return
