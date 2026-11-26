@@ -262,6 +262,19 @@ const tests = {
       assert.match((await over.json()).error, /own free key/);
     } finally { globalThis.fetch = realFetch; }
   },
+  async "feedback keeps logs for problems and other, never for ideas"() {
+    const env = freshEnv();
+    for (const kind of ["problem", "other", "idea"])
+      assert.equal((await call(env, "POST", "/v1/feedback", { install_id: install(1), kind, title: kind, logs: "line 1\nline 2" })).status, 200);
+    assert.equal((await call(env, "POST", "/v1/feedback", { install_id: install(1), kind: "problem", title: "big", logs: "x".repeat(70000) })).status, 200);
+    const res = await worker.fetch(new Request("http://db.test/v1/admin/feedback",
+      { headers: { Authorization: "Bearer admin" } }), env, { waitUntil() {} });
+    const fb = Object.fromEntries((await res.json()).feedback.map(f => [f.title, f.logs]));
+    assert.equal(fb.problem, "line 1\nline 2");
+    assert.equal(fb.other, "line 1\nline 2");
+    assert.equal(fb.idea, null);
+    assert.equal(fb.big.length, 60000);
+  },
 };
 
 let failed = 0;

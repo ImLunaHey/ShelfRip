@@ -367,6 +367,8 @@ def send_feedback(fb: dict, cfg: dict) -> dict:
     body = {"install_id": install_id(cfg), "app_version": paths.APP_VERSION, "kind": str(fb.get("kind") or "other"),
             "title": str(fb.get("title") or "")[:200], "body": str(fb.get("body") or "")[:5000],
             "contact": str(fb.get("contact") or "")[:200], "os": platform.platform(terse=True)}
+    if fb.get("logs") and body["kind"] in ("problem", "other"):  # recent logs, user name and keys already removed
+        body["logs"] = str(fb["logs"])[:60000]
     if not fb.get("versions", True):
         body["app_version"] = body["os"] = ""
     try:
