@@ -1357,6 +1357,8 @@ function damagedBox(st){
     : `Discs that didn't rip completely (${st.damaged.length}): see what MakeMKV said, then click Rip again`}</summary>${dmg}</details>` : "";
 }
 const OPENT = new Set();  // drive cards whose title list is open (kept open across refreshes)
+const TSCROLL = {};  // how far each drive's title list is scrolled sideways (kept across refreshes)
+let DRIVES_HELD = null, DRIVES_DRAG = false;  // a refresh that came while you were dragging a scroll bar
 const PICK = {};  // drives waiting for you to choose titles: {device: {label, ids: Set}} (kept across refreshes)
 const choosing = d => d.ripping && d.state === "choosing" && d.rip_label === d.label;
 function picksOf(d){
@@ -1440,6 +1442,7 @@ function queueCards(){
 }
 function renderDrives(j){
   const el = $("#drivesTab");
+  if (DRIVES_DRAG){ DRIVES_HELD = j; return; }  // redrawing mid-drag would snap the scroll bar back
   const open = document.activeElement && el.contains(document.activeElement) ? document.activeElement.id : "";
   const cards = j.drives.map(driveCard).join("") || `<p class="empty">No disc drives found yet…</p>`;
   const missing = (j.setup||[]).filter(x => !x.ok && x.required);
@@ -1491,7 +1494,21 @@ function renderDrives(j){
     if (r.error) alert(r.error); else delete PICK[dev];
     renderDrives(r.drives ? r : j);
   });
-  el.querySelectorAll("details[data-tdev]").forEach(x => x.ontoggle = () => x.open ? OPENT.add(x.dataset.tdev) : OPENT.delete(x.dataset.tdev));
+  el.querySelectorAll("details[data-tdev]").forEach(x => {
+    x.ontoggle = () => x.open ? OPENT.add(x.dataset.tdev) : OPENT.delete(x.dataset.tdev);
+    const sc = $(".tscroll", x), dev = x.dataset.tdev;
+    if (sc){ sc.scrollLeft = TSCROLL[dev] || 0; sc.onscroll = () => { TSCROLL[dev] = sc.scrollLeft; }; }
+  });
+  if (!el.dataset.dragWatch){  // once: hold refreshes while a mouse button is down in a title list
+    el.dataset.dragWatch = "1";
+    el.addEventListener("pointerdown", e => { if (e.target.closest && e.target.closest(".tscroll")) DRIVES_DRAG = true; });
+    const release = () => {
+      if (!DRIVES_DRAG) return;
+      DRIVES_DRAG = false;
+      if (DRIVES_HELD){ const h = DRIVES_HELD; DRIVES_HELD = null; renderDrives(h); }
+    };
+    ["pointerup", "pointercancel", "blur"].forEach(ev => window.addEventListener(ev, release));
+  }
   el.querySelectorAll("[data-notthis]").forEach(b => b.onclick = () => toast("Got it", "Once it's ripped, open it on the Review tab and click \"No, pick the right one\". Shelfrip learns from the fix."));
 }
 function setupBox(items, head){
@@ -2067,7 +2084,7 @@ const SET_GROUPS = [
 ];
 let SETS = null, SETGROUP = "library", SHOWADV = false;
 const statusOf = n => (SETS.setup || []).find(x => x.name === n) || {};
-const SET_STATUS = {output_root:"Rip folder", plex_library_root:"Media library folder", makemkvcon_path:"MakeMKV", mkvtoolnix_dir:"MKVToolNix", tmdb_api_key:"TMDB key", cyanrip_path:"cyanrip (music CDs)"};
+const SET_STATUS = {output_root:"Rip folder", plex_library_root:"Media library folder", makemkvcon_path:"MakeMKV", mkvtoolnix_dir:"MKVToolNix", tmdb_api_key:"TMDB key", cyanrip_path:"cyanrip (music CDs)", tesseract_path:"Tesseract OCR (subtitle check)"};
 function setField(row, meta){
   const [key, label, help, o = {}] = meta, v = row.value, id = "s_" + key;
   const st = SET_STATUS[key] ? statusOf(SET_STATUS[key]) : null;

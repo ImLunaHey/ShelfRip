@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import os
+import re
 import socket
 import sys
 import threading
@@ -207,6 +208,35 @@ def identify_disc(dev: str, label: str, cfg: dict) -> dict | None:
     if prev and prev.get("kind") == "movie" and prev.get("tmdb_id"):
         return {"kind": "movie", "title": prev.get("title"), "year": str(prev.get("year") or ""),
                 "tmdb_id": str(prev["tmdb_id"]), "episodes": [], "how": "a label you've filed before"}
+    return None
+
+
+def label_guess(label: str, tmdb) -> dict | None:
+    """Best TMDB guess from a disc label alone, just for the drive card's box art before the rip
+    ('GAME_OF_THRONES_S2_D1' -> Game of Thrones, season 2). Never used to skip or name anything."""
+    if not tmdb or not label:
+        return None
+    info = identify.parse_label(label)
+    query = info.get("query") or ""
+    m = re.search(r"\s((?:19|20)\d\d)$", query)  # 'Ghostbusters 2016': search the name, prefer that year
+    year = m.group(1) if m else ""
+    if m and len(query[:m.start()].strip()) >= 3:
+        query = query[:m.start()].strip()
+    if len(query) < 3:
+        return None
+    order = ("tv", "movie") if info.get("season") or info.get("episodes") else ("movie", "tv")
+    for kind in order:
+        found = tmdb.search(kind, query)[:5]
+        dated = lambda r: (r.get("release_date") if kind == "movie" else r.get("first_air_date")) or ""
+        found = [r for r in found if year and dated(r).startswith(year)][:1] or found[:1]
+        for r in found:
+            title = r.get("title") if kind == "movie" else r.get("name")
+            if not title or not r.get("id"):
+                continue
+            return {"kind": kind, "title": title, "tmdb_id": str(r["id"]),
+                    "year": identify.year_of(r.get("release_date") if kind == "movie" else r.get("first_air_date")),
+                    "season": (info.get("season") or 1) if kind == "tv" else None,
+                    "how": "its disc label (a guess until it's named)"}
     return None
 
 
@@ -402,6 +432,13 @@ class Ripper:
             self.match[d["device"]] = {"label": d["disc_label"], "kind": ident["kind"], "title": ident.get("title") or "",
                                        "year": ident.get("year") or "", "tmdb_id": ident.get("tmdb_id") or "",
                                        "season": eps[0][0] if eps else None, "how": ident.get("how") or ""}
+        else:  # box art only: a TMDB guess from the label, so the card isn't a blank circle while it rips
+            try:
+                guess = label_guess(d["disc_label"], review.TMDB)
+            except Exception:
+                guess = None
+            if guess:
+                self.match[d["device"]] = {"label": d["disc_label"], **guess}
         return ident or {}  # {} = looked, not recognised (in_plex_already won't look again)
 
     def after_rip(self, disc: dict, out_dir) -> None:
@@ -817,13 +854,13 @@ def setup_check() -> list[dict]:
                 "detail": str(mr) if mr.is_dir() else f"{mr} doesn't exist yet: it's created when you file your first CD. "
                           "Then add it to Plex as a Music library.",
                 "link": "" if mr.is_dir() else "https://support.plex.tv/articles/200288926-creating-libraries/", "required": False})
+    import subcheck  # shown even with the subtitle check off, so its Settings box gets a found / not found mark
+    tess = subcheck.tesseract(cfg)
+    out.append({"name": "Tesseract OCR (subtitle check)", "ok": bool(tess),
+                "detail": tess or "not found: needed to read Blu-ray and DVD picture subtitles for the subtitle check. "
+                          "Install it with: winget install UB-Mannheim.TesseractOCR",
+                "link": "" if tess else subcheck.TESSERACT_URL, "required": False})
     if cfg.get("subtitle_check"):
-        import subcheck
-        tess = subcheck.tesseract(cfg)
-        out.append({"name": "Tesseract OCR (subtitle check)", "ok": bool(tess),
-                    "detail": tess or "not found: needed to read Blu-ray and DVD picture subtitles. "
-                              "Install it with: winget install UB-Mannheim.TesseractOCR",
-                    "link": "" if tess else subcheck.TESSERACT_URL, "required": False})
         if cfg.get("reference_subtitles"):
             import refsubs
             why = refsubs.OpenSubtitles(cfg).ready()
