@@ -4,14 +4,16 @@
 //   1. signs you in to Cloudflare (a browser window opens the first time),
 //   2. creates the D1 database "shelfrip" (once) and its tables, and applies migrations/ (once each),
 //   3. deploys the Worker, and
-//   4. gives it two secrets: SALT (hashes install ids and IPs) and ADMIN_TOKEN (for /v1/admin).
-// Both secrets are kept in .secrets.json next to this file, which is never committed. Keep it:
+//   4. gives it its secrets: SALT (hashes install ids and IPs), ADMIN_TOKEN (for /v1/admin) and
+//      TMDB_KEY (the shared TMDB key behind /v1/tmdb; asked for once, Enter skips it).
+// The secrets are kept in .secrets.json next to this file, which is never committed. Keep it:
 // a new SALT would make every install look new. Running this again just redeploys.
 
 import { spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import readline from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -94,8 +96,17 @@ try {
   const secrets = fs.existsSync(sf) ? JSON.parse(fs.readFileSync(sf, "utf8")) : {
     SALT: crypto.randomBytes(32).toString("hex"), ADMIN_TOKEN: crypto.randomBytes(24).toString("hex"),
   };
+  if (secrets.TMDB_KEY === undefined) {
+    console.log("The shared TMDB key lets people use Shelfrip without a TMDB key of their own.\n" +
+      "Paste the API key (or API Read Access Token) of the TMDB app you registered for Shelfrip,\n" +
+      "or just press Enter to leave it off (you can add it later by deleting TMDB_KEY from .secrets.json).");
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    secrets.TMDB_KEY = (await rl.question("TMDB key: ")).trim();
+    rl.close();
+  }
   fs.writeFileSync(sf, JSON.stringify({ ...secrets, url }, null, 2));
-  for (const k of ["SALT", "ADMIN_TOKEN"]) wrangler(["secret", "put", k], { input: secrets[k] + "\n", quiet: true });
+  for (const k of ["SALT", "ADMIN_TOKEN", "TMDB_KEY"])
+    if (secrets[k]) wrangler(["secret", "put", k], { input: secrets[k] + "\n", quiet: true });
 
   step("Done");
   console.log(`The Shelfrip disc database is at:\n\n    ${url || "(see the deploy output above)"}\n`);

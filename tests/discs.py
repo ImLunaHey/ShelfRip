@@ -41,7 +41,7 @@ def setup_env(cfg_extra: dict) -> Path:
     tmp = Path(tempfile.mkdtemp(prefix="shelfrip-test-"))
     (tmp / "data").mkdir()
     (tmp / "rip").mkdir()
-    cfg = {**cfg_extra, "output_root": str(tmp / "rip"), "plex_library_root": str(tmp / "lib"),
+    cfg = {"shared_tmdb": False, **cfg_extra, "output_root": str(tmp / "rip"), "plex_library_root": str(tmp / "lib"),
            "share_discs": False, "auto_file": False}
     (tmp / "data" / "config.json").write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     os.environ["SHELFRIP_DATA"] = str(tmp / "data")

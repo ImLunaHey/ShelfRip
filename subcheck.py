@@ -1059,8 +1059,7 @@ def main() -> int:
 
     import identify
     cfg = identify.load_config()
-    key = cfg.get("tmdb_api_key", "")
-    tmdb = identify.TMDB(key) if key and "paste" not in key else None
+    tmdb = identify.tmdb_for(cfg)
     import split
     if not split.available(cfg):
         print("MKVToolNix isn't installed (or mkvtoolnix_dir in config.json is wrong). It's needed to read subtitles.")

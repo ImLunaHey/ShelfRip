@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -26,6 +27,8 @@ NAME = "Shelfrip"
 MODULES = ["app", "review", "identify", "rip_all", "split", "music", "plex", "extras", "discdb",
            "catalog", "crosscheck", "naming", "paths", "community", "desktop", "progress", "health", "tidy", "dupes", "trouble", "importer",
            "subcheck", "epmatch", "refsubs"]
+PORTABLE_NOTE = ("This file makes Shelfrip portable: it keeps your settings, shelf and disc database in this\r\n"
+                 "folder instead of %APPDATA%\\Shelfrip. Delete it to use the same settings as an installed Shelfrip.\r\n")
 SHIP = ["README.md", "LICENSE.txt", "THIRD-PARTY-NOTICES.txt"]
 
 
@@ -85,6 +88,8 @@ def main() -> int:
 
     zip_base = OUT / f"{NAME} {ver} (portable)"
     shutil.make_archive(str(zip_base), "zip", dist, NAME)
+    with zipfile.ZipFile(f"{zip_base}.zip", "a") as z:  # only the zip is portable, not the installer
+        z.writestr(f"{NAME}/portable.txt", PORTABLE_NOTE)
     print(f"Portable copy: {zip_base}.zip")
 
     if "--no-installer" in sys.argv:

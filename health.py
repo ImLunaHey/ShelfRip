@@ -7,7 +7,7 @@ health.py - noticing when something's wrong before you do.
   Watchdog             a drive that's been "scanning" for 30 minutes, or whose rip hasn't
                        grown for 20, is marked stuck, with Stop and Eject buttons.
   makemkv_check()      is MakeMKV's key still good? (the free beta key expires every few months)
-  tmdb_check()         does the TMDB key actually work?
+  tmdb_check()         does the TMDB key (yours or the shared one) actually work?
 """
 
 from __future__ import annotations
@@ -194,30 +194,38 @@ def makemkv_check(makemkvcon: str) -> dict | None:
     return _cached("makemkv:" + makemkvcon, 3600, run)
 
 
-def tmdb_check(key: str, wait: float = 0) -> dict | None:
+def tmdb_check(key: str, wait: float = 0, base: str = "") -> dict | None:
+    """Your own key (key), or the Shelfrip server's shared one (base = its /v1/tmdb address, key "")."""
     def run():
         key_ = key.strip()
         headers = {"Accept": "application/json"}
-        url = "https://api.themoviedb.org/3/configuration"
-        if key_.startswith("eyJ"):
+        url = (base.rstrip("/") or "https://api.themoviedb.org/3") + "/configuration"
+        if base:
+            pass
+        elif key_.startswith("eyJ"):
             headers["Authorization"] = f"Bearer {key_}"
         else:
             url += "?api_key=" + urllib.request.quote(key_)
         try:
             urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=15).close()
-            return {"ok": True, "detail": "working"}
+            return {"ok": True, "detail": "using Shelfrip's shared key" if base else "working"}
         except urllib.error.HTTPError as exc:
+            if base and exc.code == 503:
+                return {"ok": False, "detail": "Shelfrip's shared TMDB key isn't available. Add your own free key."}
+            if base and exc.code == 429:
+                return {"ok": None, "detail": "using Shelfrip's shared key, which is busy right now. Your own free key avoids that."}
             if exc.code == 401:
                 return {"ok": False, "detail": "TMDB says this key isn't valid. Copy the \"API Key\" (or the "
                                                "\"API Read Access Token\") from your TMDB account again."}
             return {"ok": None, "detail": f"couldn't check it right now (TMDB answered {exc.code})"}
         except Exception:
             return {"ok": None, "detail": "couldn't reach TMDB to check it (no internet?)"}
-    res = _cached("tmdb:" + key[-8:], 3600, run)
+    ck = "tmdb:" + (base or key[-8:])
+    res = _cached(ck, 3600, run)
     end = time.time() + wait
     while res is None and time.time() < end:  # the first check of a new key: wait for the answer
         time.sleep(0.25)
-        hit = _CACHE.get("tmdb:" + key[-8:])
+        hit = _CACHE.get(ck)
         res = hit[1] if hit and not hit[2] else None
     return res
 
