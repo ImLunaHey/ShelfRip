@@ -1330,7 +1330,8 @@ class Handler(review.Handler):
                     pass
             return self.send(200, community.send_feedback(fb, cfg))
         if u.path == "/api/feedbacklogs":  # "See what's sent": the logs a report would carry
-            import trouble
+            # (trouble is imported at the top: importing it here too would make it a local name for
+            # all of do_POST and break /api/trouble with UnboundLocalError)
             cfg = {**rip_all.DEFAULT_CONFIG, **JOB_DEFAULTS, **_read_config()}
             try:
                 setup = setup_check()

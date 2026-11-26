@@ -913,6 +913,8 @@ def item_done(it: dict) -> bool:
     """Already copied into the library by an earlier filing of this disc that didn't finish."""
     to = it.get("filed_to")
     files = to if isinstance(to, list) else [to] if to else []
+    if it.get("needs_split") and len(files) < len(pieces(it)):
+        return False  # only some of its episodes were cut before that filing stopped
     return bool(files) and all(Path(f).exists() for f in files)
 
 
@@ -938,6 +940,9 @@ def check_plan(folder: Path, plan: dict) -> list[str]:
         newly = 0
         for it in plan["items"]:
             have = copies.get(it["source"])
+            mine_filed = it.get("filed_to") if isinstance(it.get("filed_to"), list) else [it.get("filed_to")]
+            own = {os.path.normcase(str(f)) for f in mine_filed if f}
+            have = [h for h in have or [] if os.path.normcase(str(h["path"])) not in own]  # this disc's own episodes
             if it.get("action") != "move" or not have or it.get("library_copy") or item_done(it):
                 continue
             best = max(have, key=lambda h: h["rank"])
@@ -991,7 +996,8 @@ def check_plan(folder: Path, plan: dict) -> list[str]:
             if d in seen:
                 problems.append(f"Two files would both be named {d.name}.")
             seen.add(d)
-            if d.exists():
+            own = it.get("filed_to") if isinstance(it.get("filed_to"), list) else []
+            if d.exists() and str(d) not in own:  # (an episode this disc filed before it stopped is fine)
                 problems.append(f"Already exists in the library: {d}")
     return problems
 
@@ -1223,10 +1229,14 @@ def file_job(folder: Path, plan: dict) -> None:
                 continue  # copied by the earlier, interrupted filing
             if it.get("needs_split"):
                 # cut each episode out (no re-encoding) next to the rip, then move it into the library
-                src, filed = folder / it["source"], []
+                src = folder / it["source"]
+                prev = it.get("filed_to") if isinstance(it.get("filed_to"), list) else []
+                filed = [f for f in prev if Path(f).exists()]  # episodes an earlier, unfinished filing already cut
                 for pc in pieces(it):
                     k = pc["split_index"]
                     dst = dest_for(pc, plan)
+                    if str(dst) in filed:
+                        continue
                     job["current"] = f"{i}/{len(moves)}: cutting episode {k + 1} of {len(it['split']['names'])}: {dst.name}"
                     _beat(job)
                     part = split.cut(src, it["split"], k, folder / "_split" / f"{k + 1:02d}.mkv", CFG,
@@ -1239,6 +1249,8 @@ def file_job(folder: Path, plan: dict) -> None:
                     _beat(job)
                     copy_with_progress(part, dst, job)
                     filed.append(str(dst))
+                    it["filed_to"] = list(filed)  # noted after each episode, so a failure later on doesn't
+                    save_plan(folder, plan)       # make the episodes already filed look like someone else's copies
                 it["filed_to"] = filed
                 save_plan(folder, plan)  # progress, in case filing is interrupted
                 shutil.rmtree(folder / "_split", ignore_errors=True)
