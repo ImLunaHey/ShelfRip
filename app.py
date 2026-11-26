@@ -817,13 +817,13 @@ def setup_check() -> list[dict]:
                 "detail": str(mr) if mr.is_dir() else f"{mr} doesn't exist yet: it's created when you file your first CD. "
                           "Then add it to Plex as a Music library.",
                 "link": "" if mr.is_dir() else "https://support.plex.tv/articles/200288926-creating-libraries/", "required": False})
+    import subcheck  # shown even with the subtitle check off, so its Settings box gets a found / not found mark
+    tess = subcheck.tesseract(cfg)
+    out.append({"name": "Tesseract OCR (subtitle check)", "ok": bool(tess),
+                "detail": tess or "not found: needed to read Blu-ray and DVD picture subtitles for the subtitle check. "
+                          "Install it with: winget install UB-Mannheim.TesseractOCR",
+                "link": "" if tess else subcheck.TESSERACT_URL, "required": False})
     if cfg.get("subtitle_check"):
-        import subcheck
-        tess = subcheck.tesseract(cfg)
-        out.append({"name": "Tesseract OCR (subtitle check)", "ok": bool(tess),
-                    "detail": tess or "not found: needed to read Blu-ray and DVD picture subtitles. "
-                              "Install it with: winget install UB-Mannheim.TesseractOCR",
-                    "link": "" if tess else subcheck.TESSERACT_URL, "required": False})
         if cfg.get("reference_subtitles"):
             import refsubs
             why = refsubs.OpenSubtitles(cfg).ready()

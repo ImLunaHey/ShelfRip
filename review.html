@@ -2067,7 +2067,7 @@ const SET_GROUPS = [
 ];
 let SETS = null, SETGROUP = "library", SHOWADV = false;
 const statusOf = n => (SETS.setup || []).find(x => x.name === n) || {};
-const SET_STATUS = {output_root:"Rip folder", plex_library_root:"Media library folder", makemkvcon_path:"MakeMKV", mkvtoolnix_dir:"MKVToolNix", tmdb_api_key:"TMDB key", cyanrip_path:"cyanrip (music CDs)"};
+const SET_STATUS = {output_root:"Rip folder", plex_library_root:"Media library folder", makemkvcon_path:"MakeMKV", mkvtoolnix_dir:"MKVToolNix", tmdb_api_key:"TMDB key", cyanrip_path:"cyanrip (music CDs)", tesseract_path:"Tesseract OCR (subtitle check)"};
 function setField(row, meta){
   const [key, label, help, o = {}] = meta, v = row.value, id = "s_" + key;
   const st = SET_STATUS[key] ? statusOf(SET_STATUS[key]) : null;
