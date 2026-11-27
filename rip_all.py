@@ -937,7 +937,9 @@ def rip_disc(cfg: dict, drive: dict) -> dict:
             still = [t for t in bad if not title_complete(cfg, out_dir / t["output_file"], t)]
             rip_out = re.sub(r"\d+ titles? saved(?:, \d+ failed)?", "", rip_out + "\n" + again)
             disc["retried_titles"] = [t["title_id"] for t in bad]
-            log(f"{device} [{label}] retry: {len(bad) - len(still)} of {len(bad)} now ripped")
+            log(f"{device} [{label}] retry: {len(bad) - len(still)} of {len(bad)} now complete"
+                + (f"; {len(still)} still came out shorter than the disc says (read errors in the same "
+                   f"place), kept as they are: check them in Review" if still else ""))
     errs = read_errors(out_dir / "rip.log")
     disc["read_errors"], disc["damaged_files"] = errs["count"], errs["files"]
 
