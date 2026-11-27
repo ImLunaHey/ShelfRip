@@ -132,6 +132,38 @@ missing access in the drive card; it does not change permissions or load drivers
 If udev discovery is unavailable, video drive discovery falls back to MakeMKV.
 That fallback may scan other drives, and does not provide Linux audio-CD detection.
 
+## Disc fingerprints and TheDiscDB manifests
+
+Mount a DVD or Blu-ray through your file manager or your system's normal mounting
+tools before starting Shelfrip's disc identification or ripping. Shelfrip discovers
+the mounted root from `/proc/self/mountinfo` and the optical device's major/minor
+numbers. It accepts device aliases, escaped mount paths and whole-disc bind mounts;
+it does not assume a `/media` or `/run/media` layout. Subdirectory mounts are skipped.
+The mounted filesystem must be visible and readable by Shelfrip's user and process.
+Shelfrip does not mount discs automatically or change permissions.
+
+Fingerprints use file sizes from `VIDEO_TS` or `BDMV/STREAM`, following the
+[TheDiscDB content-hash recipe](https://github.com/TheDiscDb/optical-disc-manifest/blob/main/specification/v1/README.md).
+They support catalog/TheDiscDB identification before ripping and are recorded in
+`disc_info.json` for subsequent matching. Lower-case disc directory names are
+supported on case-sensitive filesystems. Unmounted or unreadable discs still rip
+through MakeMKV; the log explains when mounted-disc metadata is skipped.
+
+For an optional upload manifest, supply a native `thediscdb-scan` executable in
+Settings > Programs > More options, or place it in Shelfrip's `tools` folder or on
+PATH. Shelfrip does not bundle or download the scanner. It uses the same CLI contract
+as the Windows integration:
+
+```sh
+thediscdb-scan /path/to/mounted/disc --output /path/to/disc.odm.json --force --quiet
+```
+
+The scanner runs before ripping under the application's process supervision.
+Cancel and shutdown stop it; a five-minute timeout skips it. Only a successful JSON
+document containing a disc object is published as `disc.odm.json` in the rip folder.
+Missing programs, nonzero exits, invalid output and timeouts are logged and do not
+stop the rip. Nothing is uploaded automatically.
+
 ## Tests and real hardware validation
 
 ```sh
@@ -139,6 +171,7 @@ python3 tests/test_linux.py
 python3 tests/test_processes.py
 python3 tests/test_keyring.py
 python3 tests/test_background.py
+python3 tests/test_disc_metadata.py
 python3 tests/run_all.py
 ```
 
@@ -155,6 +188,11 @@ Password tests cover missing/locked keyrings, exact password round-trips, secret
 redaction and rollback when settings cannot be written. Background tests
 launch the real detached application, reuse it, restart it and quit it without a
 graphical session.
+Disc metadata tests cover mount identity and escaping, published DVD/Blu-ray hash
+vectors, case-sensitive folders, pre-rip identification, saved rip metadata and
+scanner discovery. An executable test scanner verifies command arguments, output
+publication, failure cleanup, timeout and cancellation. This validates the integration
+contract, not an upstream scanner binary or its disc parsing.
 
 An additional native integration suite runs with a temporary home, private D-Bus
 session, Xvfb, a real GNOME Keyring and a test StatusNotifier host:
@@ -197,6 +235,12 @@ On 2026-11-27, a USB HL-DT-ST DVDRAM GP75N was tested with a DVD:
   by ffprobe. Test files were kept outside the user's media library.
 - Ejection succeeded and subsequent discovery reported the drive empty.
 
+A subsequent mounted-disc check used a temporary read-only mount of the attached
+DVD. Shelfrip resolved `/dev/sr0` to that mount, classified it as DVD and fingerprinted
+16 files as `CE73F24883ADEF612A96399412965FEC`. The same hash reached the rip metadata.
+The temporary mount was removed afterward, and unmounted-disc detection was checked.
+No native TheDiscDB scanner was available for physical-disc scanner validation.
+
 The host initially lacked the `sg` driver and access to the optical device nodes.
 Loading that driver and granting temporary access enabled the tests. Device-manager
 events reset the temporary permissions on media removal, so normal use needs
@@ -213,8 +257,7 @@ subprocess and HTTP integration tests.
 - Linux installer/packages and an appropriate update mechanism. The Windows
   installer/update flow is not a Linux updater.
 - Reading CD-Text from audio discs on Linux. MusicBrainz lookup works independently.
-- Mounted-disc fingerprinting and TheDiscDB scanner integration, which still use
-  Windows drive-root assumptions in the application.
+- Validation with an upstream native TheDiscDB scanner binary.
 - Full physical-drive and graphical-session testing as listed above.
 
 Linux support does not yet provide complete Windows feature parity.

@@ -77,7 +77,8 @@ server expects it.
 
 Linux support includes drive discovery and ejection, audio-CD table-of-contents reads,
 native file/folder dialogs, file playback, desktop notifications, a tray menu and
-desktop keyring storage for OpenSubtitles passwords. Python 3.10+ is
+desktop keyring storage for OpenSubtitles passwords, mounted-disc fingerprints and
+optional native TheDiscDB scanner integration. Python 3.10+ is
 required, along with Linux MakeMKV for DVDs/Blu-rays and cyanrip for audio CDs.
 
 Run `python3 app.py`, then open `http://127.0.0.1:8765`, or use
