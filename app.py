@@ -24,6 +24,7 @@ import json
 from pathlib import Path
 import os
 import re
+import signal
 import socket
 import sys
 import threading
@@ -281,6 +282,7 @@ class Ripper:
     """Watches the drives and runs rips (the same code as rip_all.py --watch)."""
 
     def __init__(self) -> None:
+        self.stopping = threading.Event()
         self.cfg: dict | None = None
         self.error = ""
         self.drives: list[dict] = []
@@ -320,7 +322,7 @@ class Ripper:
     def loop(self) -> None:
         """The background loop: watch the drives, start a rip for each new disc (when auto-rip is on
         or you clicked Rip), plan finished rips for review, and do the hourly upkeep."""
-        while True:
+        while not self.stopping.is_set():
             self.beat = time.time()
             self.load()
             if self.cfg:
@@ -338,6 +340,8 @@ class Ripper:
                 self._told_folder = ""
                 try:
                     drives = rip_all.scan_drives(self.cfg)
+                    if self.stopping.is_set():
+                        break
                     for d in drives:
                         d["locked_elsewhere"] = (d["device"] not in self.busy and d["loaded"]
                                                  and rip_all.drive_locked(self.cfg, d["device"]))
@@ -477,6 +481,8 @@ class Ripper:
             ripping = d["device"] in self.busy
             if not ripping and st.get("state") in ("scanning", "choosing", "ripping"):
                 st["state"] = "idle"
+            if d.get("access_error") and not ripping:
+                st.update(state="error", message=d["access_error"])
             drives.append({"device": d["device"], "loaded": d["loaded"], "label": d["disc_label"],
                            "ripping": ripping, "elsewhere": d.get("locked_elsewhere", False),
                            "already": self.finished.get(d["device"]) == d["disc_label"] and not ripping,
@@ -584,8 +590,11 @@ def tray_status() -> str:
     return " · ".join(parts) or ("Auto-rip on, waiting for a disc" if RIPPER.auto else "Idle")
 
 
-def quit_app(ask: bool = True) -> None:
-    """Stop Shelfrip. With ask=True, a rip or filing still running asks first (Windows message box)."""
+_EXIT_LOCK = threading.Lock()
+STOP_REQUESTED = False
+
+
+def _confirm_exit(ask: bool) -> bool:
     running = sorted(RIPPER.busy) if RIPPER else []
     running += [k for k, j in review.JOBS.items() if j.get("state") == "running"]
     if running and ask and os.name == "nt":
@@ -594,7 +603,38 @@ def quit_app(ask: bool = True) -> None:
         u32.MessageBoxW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint]
         if u32.MessageBoxW(None, f"Still working on: {', '.join(running)}.\n\nQuitting stops it (a rip is cut off and "
                            "starts again next time). Quit anyway?", "Quit Shelfrip", 0x4 | 0x30 | 0x40000) != 6:
-            return  # MB_YESNO | MB_ICONWARNING | MB_TOPMOST; 6 = Yes
+            return False  # MB_YESNO | MB_ICONWARNING | MB_TOPMOST; 6 = Yes
+    elif running and ask:
+        rip_all.log("Still working. Use Quit or Restart on the page to confirm stopping active jobs.")
+        return False
+    return True
+
+
+def stop_work() -> None:
+    """Stop new work before closing supervised rippers and ongoing filing jobs."""
+    if RIPPER:
+        RIPPER.stopping.set()
+        RIPPER.auto = RIPPER.rip_once = False
+        RIPPER.wake.set()
+    for dev in list(rip_all.PROCS) + list(rip_all.PICKS):
+        rip_all.cancel(dev)
+    for job in list(review.JOBS.values()):
+        if job.get("state") == "running":
+            job["stop"] = True
+    import processes
+    processes.shutdown()
+    deadline = time.monotonic() + 5
+    for worker in list(review.THREADS.values()):
+        if worker is not threading.current_thread() and worker.is_alive():
+            worker.join(timeout=max(0, deadline - time.monotonic()))
+
+
+def quit_app(ask: bool = True) -> None:
+    if not _confirm_exit(ask):
+        return
+    if not _EXIT_LOCK.acquire(blocking=False):
+        return
+    stop_work()
     if TRAY:
         TRAY.remove()
     os._exit(0)
@@ -615,10 +655,22 @@ def app_problem(url: str) -> str:
     return ""
 
 
-def restart_app() -> None:
+def restart_app(ask: bool = True) -> None:
     """Start a fresh Shelfrip (after a short pause, so this one has let go of its port) and quit."""
     import base64
     import subprocess
+    if not _confirm_exit(ask):
+        return
+    if sys.platform.startswith("linux"):
+        if not _EXIT_LOCK.acquire(blocking=False):
+            return
+        stop_work()
+        # exec preserves the process ID and environment, closes non-inheritable
+        # sockets and resets all worker threads. No helper can race the old server.
+        command = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, str(Path(__file__).resolve())]
+        args = [a for a in sys.argv[1:] if not a.startswith("--port=")]
+        os.execv(sys.executable, command + args + [f"--port={review.PORT}"])
+        return
     if getattr(sys, "frozen", False):
         exe, args = sys.executable, []
     else:
@@ -627,10 +679,17 @@ def restart_app() -> None:
     q = lambda x: "'" + str(x).replace("'", "''") + "'"
     ps = f"Start-Sleep -Seconds 4; Start-Process -FilePath {q(exe)}" + (f" -ArgumentList {','.join(q(a) for a in args)}" if args else "")
     if os.name == "nt":
+        if not _EXIT_LOCK.acquire(blocking=False):
+            return
+        stop_work()  # finish cleanup before starting the replacement's delay
         subprocess.Popen(["powershell", "-NoProfile", "-EncodedCommand", base64.b64encode(ps.encode("utf-16-le")).decode()],
                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0),
                          close_fds=True)
-    quit_app(ask=True)
+        if TRAY:
+            TRAY.remove()
+        os._exit(0)
+        return
+    quit_app(ask=False)
 
 
 def start_tray(url: str, use_window: bool) -> None:
@@ -961,7 +1020,7 @@ def build_report() -> None:
 # --------------------------------------------------------------------------- updates
 
 UPDATE: dict = {"app": paths.APP_NAME, "current": paths.APP_VERSION}
-BOOT = f"{os.getpid()}-{time.time():.0f}"  # changes when Shelfrip restarts, so an open page knows to reload
+BOOT = f"{os.getpid()}-{time.time_ns()}"  # exec restarts retain the PID; every boot still needs a new ID
 
 
 def _ver(v: str) -> tuple:
@@ -1383,7 +1442,7 @@ class Handler(review.Handler):
                 threading.Thread(target=install_update, daemon=True).start()
                 UPDATE["step"] = "downloading"
             return self.send(200, UPDATE)
-        if u.path not in ("/api/rip", "/api/settings", "/api/quit"):
+        if u.path not in ("/api/rip", "/api/settings", "/api/quit", "/api/restart"):
             return super().do_POST()
         try:
             b = self.body()
@@ -1430,12 +1489,13 @@ class Handler(review.Handler):
             if u.path == "/api/settings":
                 save_settings(b.get("values") or {})
                 return self.send(200, {"ok": True, **settings_view()})
-            if u.path == "/api/quit":
+            if u.path in ("/api/quit", "/api/restart"):
                 running = sorted(RIPPER.busy) + [k for k, j in review.JOBS.items() if j.get("state") == "running"]
                 if running and not b.get("force"):
                     return self.send(200, {"busy": running})
                 self.send(200, {"ok": True})
-                threading.Timer(0.5, lambda: quit_app(ask=False)).start()
+                action = restart_app if u.path == "/api/restart" else quit_app
+                threading.Timer(0.5, lambda: action(ask=False)).start()
                 return
         except Exception as exc:
             return self.send(500, {"error": str(exc)})
@@ -1446,6 +1506,10 @@ class Server(ThreadingHTTPServer):
     # Shelfrip could start on a port another program is using, and the browser would get that
     # program's answer instead (an "Unsupported method ('GET')" page). Take the port for ourselves.
     allow_reuse_address = os.name != "nt"
+
+    def service_actions(self):
+        if STOP_REQUESTED:
+            quit_app(ask=False)
 
     def server_bind(self):
         if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
@@ -1496,6 +1560,20 @@ def open_server() -> tuple[Server | None, int]:
 
 def main() -> None:
     global RIPPER
+    for arg in sys.argv[1:]:
+        if arg.startswith("--port="):
+            port = int(arg.split("=", 1)[1])
+            if not 1 <= port <= 65515:
+                raise SystemExit("Port must be between 1 and 65515.")
+            review.PORT = port
+    if sys.platform.startswith("linux"):
+        # The server loop performs cleanup outside the signal handler. Even
+        # starting a thread here could acquire a lock held by interrupted code.
+        def stop_signal(*_):
+            global STOP_REQUESTED
+            STOP_REQUESTED = True
+        signal.signal(signal.SIGTERM, stop_signal)
+        signal.signal(signal.SIGHUP, stop_signal)
     if desktop.use_log_file():
         print(f"\n=== Shelfrip {paths.APP_VERSION} started {time.strftime('%Y-%m-%d %H:%M:%S')}")
     srv, port = open_server()
@@ -1531,6 +1609,9 @@ def main() -> None:
         srv.serve_forever()
     except KeyboardInterrupt:
         pass
+    finally:
+        stop_work()
+        srv.server_close()
 
 
 if __name__ == "__main__":

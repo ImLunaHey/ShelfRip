@@ -314,9 +314,11 @@ def rip_cd(cfg: dict, drive: dict) -> dict:
         args = [a for a in args if a not in UNSUPPORTED_FLAGS]
         for _attempt in range(len(OPTIONAL_FLAGS) + 1):
             mark = log_path.stat().st_size if log_path.exists() else 0
-            proc = subprocess.Popen(args, cwd=str(out_dir), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            import processes
+            proc = processes.spawn(args, cwd=str(out_dir), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     stdin=subprocess.DEVNULL,
                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            rip_all.end_with_us(proc)
             rip_all.PROCS[device] = proc
             cur = todo[0]
             try:
@@ -342,6 +344,7 @@ def rip_cd(cfg: dict, drive: dict) -> dict:
                                 st["message"] = f"track {cur} of {n}"
                 rc = proc.wait()
             finally:
+                proc.stdout.close()
                 rip_all.PROCS.pop(device, None)
             # older cyanrip builds don't know every switch (e.g. -B); drop the unknown one and try again
             try:

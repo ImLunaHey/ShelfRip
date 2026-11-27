@@ -19,6 +19,13 @@ The interface opens in Chromium/Chrome app mode when available, otherwise in you
 default browser. You can also open `http://127.0.0.1:8765` yourself. Keep the terminal
 running. `python3 app.py --background` starts the server without opening a browser;
 it does not daemonize the process. Use the page's Quit button to exit.
+The Restart button stops active work after confirmation and relaunches Shelfrip
+on the same port with the same settings. `--port=8765` selects a starting port.
+
+MakeMKV and cyanrip run under a small process supervisor. Quit, terminal interrupts
+and termination signals stop owned rip processes; the supervisor also stops their
+process groups if Shelfrip crashes or is killed. Unresponsive processes receive a
+forced stop after a short grace period. Partial rips stay in the rip folder.
 
 Set Linux paths for the rip and library folders, for example `/home/you/Ripped`
 and `/home/you/Media`. Settings live in `$XDG_CONFIG_HOME/shelfrip`, or
@@ -72,6 +79,12 @@ udev rules, session ACLs or optical-drive group, then sign in again if group
 membership changed. Do not run Shelfrip as root. A USB DVD drive can test DVDs and
 audio CDs; Blu-ray/4K testing requires a compatible drive.
 
+MakeMKV also needs the Linux `sg` driver. If `/dev/sr0` exists but its corresponding
+SCSI-generic device is missing, a system administrator can load `sg` and configure
+it to load on boot. Access is needed to both the optical block device and its
+matching SCSI-generic device, not to other disks' device nodes. Shelfrip reports
+missing access in the drive card; it does not change permissions or load drivers.
+
 If udev discovery is unavailable, video drive discovery falls back to MakeMKV.
 That fallback may scan other drives, and does not provide Linux audio-CD detection.
 
@@ -79,6 +92,7 @@ That fallback may scan other drives, and does not provide Linux audio-CD detecti
 
 ```sh
 python3 tests/test_linux.py
+python3 tests/test_processes.py
 python3 tests/run_all.py
 ```
 
@@ -88,6 +102,9 @@ enhanced CDs), read failures, eject failures, desktop helpers, process ownership
 settings permissions and starting the real application with an isolated data folder.
 The application smoke test requests the HTML, settings, version and drive-status APIs,
 then stops its child process. No tests eject a physical drive or start a real rip.
+Process tests create real subprocess trees and verify cancellation, graceful
+shutdown and abrupt parent death, including children that ignore termination.
+The application smoke test also verifies restart and quit through their APIs.
 
 Before calling Linux support hardware-validated, test with a separate rip/library
 folder and auto-rip/auto-file disabled:
@@ -103,9 +120,32 @@ folder and auto-rip/auto-file disabled:
 6. Test folder selection, playback, notifications and app-window behaviour in actual
    GNOME/KDE sessions, including Wayland. Headless API tests do not establish this.
 
+## Recorded DVD validation
+
+On 2026-11-27, a USB HL-DT-ST DVDRAM GP75N was tested with a DVD:
+
+- Shelfrip detected the device, inserted media and volume label; MakeMKV read four titles.
+- A selected-title rip was cancelled after saving began. The supervisor returned a
+  cancellation status and Shelfrip removed the process from its active-rip registry.
+- Retrying that title completed successfully: one 1,294,829,175-byte MKV, with
+  1,610.52 seconds of video, two audio tracks and eleven subtitle tracks confirmed
+  by ffprobe. Test files were kept outside the user's media library.
+- Ejection succeeded and subsequent discovery reported the drive empty.
+
+The host initially lacked the `sg` driver and access to the optical device nodes.
+Loading that driver and granting temporary access enabled the tests. Device-manager
+events reset the temporary permissions on media removal, so normal use needs
+persistent optical-device access configured through the system's device rules or
+group/session permissions. Shelfrip now diagnoses these missing prerequisites.
+
+This validates one DVD drive and disc. Audio CDs, Blu-rays, multiple simultaneous
+drives, full review/filing and graphical desktop integration still need hardware or
+desktop validation. Application shutdown/crash and restart coverage uses isolated
+subprocess and HTTP integration tests.
+
 ## Remaining Windows parity work
 
-- Native Linux tray/background lifecycle and restart controls.
+- Native Linux tray and desktop background integration.
 - Linux installer/packages and an appropriate update mechanism. The Windows
   installer/update flow is not a Linux updater.
 - Reading CD-Text from audio discs on Linux. MusicBrainz lookup works independently.
