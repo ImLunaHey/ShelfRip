@@ -41,6 +41,6 @@ jobs:
         run: >-
           sudo apt-get update && sudo apt-get install -y
           python3-gi libayatana-appindicator3-1 libsecret-tools gnome-keyring
-          dbus-x11 xvfb xauth
+          dbus-x11 xvfb xauth libwebkit2gtk-4.1-0 openbox wmctrl desktop-file-utils
       - name: Test an isolated keyring and native tray
         run: /usr/bin/python3 tests/desktop_services.py

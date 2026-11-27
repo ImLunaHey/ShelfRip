@@ -331,6 +331,10 @@ class Ripper:
         or you clicked Rip), plan finished rips for review, and do the hourly upkeep."""
         while not self.stopping.is_set():
             self.beat = time.time()
+            if review.UPDATING:
+                self.wake.wait(1)
+                self.wake.clear()
+                continue
             self.load()
             if self.cfg:
                 try:
@@ -389,11 +393,12 @@ class Ripper:
                         weekly_recap()
                     except Exception as exc:
                         rip_all.log(f"weekly recap failed: {exc}")
-                    if self.auto or self.rip_once:
-                        self.rip_once = False
-                        force, self.force = self.force, set()
-                        rip_all.rip_loaded(self.cfg, self.busy, self.finished, notify_locked=False,
-                                           force=force, skip=self.check_first)
+                    with review.LOCK:  # update admission and new rip workers share one gate
+                        if not review.UPDATING and (self.auto or self.rip_once):
+                            self.rip_once = False
+                            force, self.force = self.force, set()
+                            rip_all.rip_loaded(self.cfg, self.busy, self.finished, notify_locked=False,
+                                               force=force, skip=self.check_first)
                 except Exception as exc:
                     self.error = f"Couldn't check the drives: {exc}"
                     trouble.record("Couldn't check the drives", "", str(exc), with_trace=True)
@@ -644,6 +649,9 @@ def quit_app(ask: bool = True) -> None:
     stop_work()
     if TRAY:
         TRAY.remove()
+    if sys.platform.startswith("linux"):
+        import linux_window
+        linux_window.close()
     os._exit(0)
 
 
@@ -662,7 +670,7 @@ def app_problem(url: str) -> str:
     return ""
 
 
-def restart_app(ask: bool = True) -> None:
+def restart_app(ask: bool = True, entry: Path | None = None) -> None:
     """Start a fresh Shelfrip (after a short pause, so this one has let go of its port) and quit."""
     import base64
     import subprocess
@@ -674,9 +682,11 @@ def restart_app(ask: bool = True) -> None:
         stop_work()
         if TRAY:
             TRAY.remove()
+        import linux_window
+        linux_window.close()
         # exec preserves the process ID and environment, closes non-inheritable
         # sockets and resets all worker threads. No helper can race the old server.
-        command = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, str(Path(__file__).resolve())]
+        command = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, str(entry or Path(__file__).resolve())]
         args = [a for a in sys.argv[1:] if not a.startswith("--port=")]
         os.execv(sys.executable, command + args + [f"--port={review.PORT}"])
         return
@@ -1046,6 +1056,9 @@ def _ver(v: str) -> tuple:
 
 def installed_copy() -> bool:
     """Is this the installed Shelfrip (not the portable zip or the scripts)? Only then can it update itself."""
+    if sys.platform.startswith("linux"):
+        import linux_install
+        return linux_install.installed(paths.APP_DIR)
     return bool(getattr(sys, "frozen", False)) and (Path(sys.executable).parent / "unins000.exe").exists()
 
 
@@ -1055,6 +1068,20 @@ def install_update() -> None:
     url, size = UPDATE.get("installer"), UPDATE.get("size") or 0
     UPDATE.update(step="downloading", got=0)
     try:
+        if sys.platform.startswith("linux"):
+            import linux_update
+            with review.LOCK:
+                review.UPDATING = True
+            def ensure_idle():
+                import importer
+                if ((RIPPER and RIPPER.busy) or any(j.get("state") == "running" for j in review.JOBS.values())
+                        or any(j.get("state") == "running" for j in importer.JOBS.values())):
+                    raise ValueError("Work started before the update. Try again after it finishes.")
+            ensure_idle()
+            entry = linux_update.install(UPDATE, paths.UPDATE_REPO, lambda n: UPDATE.update(got=n), ensure_idle)
+            UPDATE["step"] = "installing"
+            restart_app(ask=False, entry=entry)
+            return
         dst = Path(tempfile.gettempdir()) / f"Shelfrip Setup {UPDATE.get('latest')}.exe"
         req = urllib.request.Request(url, headers={"User-Agent": paths.USER_AGENT})
         with urllib.request.urlopen(req, timeout=60) as r, open(dst, "wb") as f:
@@ -1073,6 +1100,8 @@ def install_update() -> None:
         threading.Timer(2.0, lambda: quit_app(ask=False)).start()
     except Exception as exc:
         UPDATE.update(step="error", error=f"Couldn't update: {exc}. Download it from the link instead.")
+    finally:
+        review.UPDATING = False
 
 
 def make_problem_report() -> Path:
@@ -1150,6 +1179,12 @@ def check_update() -> None:
             home = str(rel.get("html_url") or "").split("/releases/")[0].lower()
             for a in rel.get("assets") or []:
                 url = str(a.get("browser_download_url") or "")
+                if sys.platform.startswith("linux"):
+                    import linux_update
+                    if linux_update.release_asset(a, tag.lstrip("v"), paths.UPDATE_REPO):
+                        UPDATE.update(installer=url, size=int(a.get("size") or 0), digest=a["digest"],
+                                      can_install=installed_copy())
+                    continue
                 if _re.search(r"setup.*\.exe$", str(a.get("name") or ""), _re.I) and home.startswith("https://github.com/") and \
                         url.lower().startswith(home + "/releases/download/"):
                     UPDATE.update(installer=url, size=int(a.get("size") or 0), can_install=installed_copy())
@@ -1226,9 +1261,17 @@ def settings_view() -> dict:
             "password_storage": password_storage,
             "desktop": {"tray_active": bool(TRAY and TRAY.ok),
                         "tray_error": getattr(TRAY, "error", "") if TRAY else "Tray is disabled.",
+                        **linux_desktop_status(),
                         "background": "--background" in sys.argv},
             "platform": sys.platform, "first_run": not raw.get("setup_done") and not raw.get("migrated_from"),
             "setup_step": raw.get("setup_step") or 0}
+
+
+def linux_desktop_status() -> dict:
+    if not sys.platform.startswith("linux"):
+        return {}
+    import linux_install
+    return {"installed": installed_copy(), "start_at_login": linux_install.login_enabled()}
 
 
 def save_settings(values: dict) -> None:
@@ -1373,6 +1416,27 @@ class Handler(review.Handler):
                                               f"http://127.0.0.1:{review.PORT}"):
             return self.send(403, {"error": "forbidden"})
         u = urllib.parse.urlparse(self.path)
+        if review.UPDATING and u.path not in ("/api/open", "/api/quit"):
+            return self.send(409, {"error": "An update is being installed. Try again after Shelfrip restarts."})
+        if u.path == "/api/open":
+            body = self.body()
+            fragment = body.get("fragment", "")
+            if fragment not in ("", "#review", "#settings"):
+                return self.send(400, {"error": "Unknown page."})
+            token = str(body.get("startup_id") or "")[:4096]
+            threading.Thread(target=desktop.open_window,
+                args=(f"http://127.0.0.1:{review.PORT}/{fragment}", _read_config().get("app_window", True), token), daemon=True).start()
+            return self.send(200, {"ok": True})
+        if u.path == "/api/linux/login" and sys.platform.startswith("linux"):
+            try:
+                import linux_install
+                enabled = self.body().get("enabled")
+                if not isinstance(enabled, bool):
+                    raise ValueError("Choose whether to start at login.")
+                linux_install.set_login(enabled)
+                return self.send(200, settings_view())
+            except (OSError, ValueError) as exc:
+                return self.send(400, {"error": str(exc)})
         if u.path == "/api/report":
             if REPORT.get("state") != "running":
                 threading.Thread(target=build_report, daemon=True).start()
@@ -1401,8 +1465,11 @@ class Handler(review.Handler):
                 vids = importer.videos(src)
                 return self.send(200, {"path": str(src), "count": len(vids), "gb": round(sum(v.stat().st_size for v in vids) / 1e9, 1),
                                        "move": importer.same_drive(src, review.RIP_ROOT)})
-            job = importer.start(src, review.RIP_ROOT, review.CFG, log=rip_all.log,
-                                 on_done=lambda _d: review.plan_new_folders())
+            with review.LOCK:
+                if review.UPDATING:
+                    return self.send(409, {"error": "Shelfrip is updating. Import after it restarts."})
+                job = importer.start(src, review.RIP_ROOT, review.CFG, log=rip_all.log,
+                                     on_done=lambda _d: review.plan_new_folders())
             return self.send(200, {"ok": True, "job": job})
         if u.path == "/api/tidy":
             res = tidy.clean(review.RIP_ROOT, [str(x) for x in (self.body().get("ids") or [])], busy_labels())
@@ -1476,8 +1543,8 @@ class Handler(review.Handler):
             if running:
                 return self.send(200, {"error": f"Still working on {', '.join(running)}. Update once that's done."})
             if UPDATE.get("step") not in ("downloading", "installing"):
-                threading.Thread(target=install_update, daemon=True).start()
                 UPDATE["step"] = "downloading"
+                threading.Thread(target=install_update, daemon=True).start()
             return self.send(200, UPDATE)
         if u.path not in ("/api/rip", "/api/settings", "/api/quit", "/api/restart"):
             return super().do_POST()
@@ -1597,11 +1664,13 @@ def open_server() -> tuple[Server | None, int]:
 
 def main() -> None:
     global RIPPER
-    if "--detach" in sys.argv:
+    if "--detach" in sys.argv or "--desktop-launch" in sys.argv:
         if not sys.platform.startswith("linux"):
             raise SystemExit("--detach is supported on Linux.")
         import background
-        args = [a for a in sys.argv[1:] if a not in ("--detach", "--background")]
+        args = [a for a in sys.argv[1:] if a not in ("--detach", "--background", "--desktop-launch")]
+        if "--desktop-launch" in sys.argv and "--background" not in sys.argv:
+            args.append("--open-window")
         result = background.launch([sys.executable, str(Path(__file__).resolve()), *args], desktop.LOG_PATH)
         print(f"Shelfrip {'is already running' if result['existing'] else 'started in the background'}: "
               f"http://127.0.0.1:{result['port']}/ (log: {desktop.LOG_PATH})")
@@ -1629,14 +1698,23 @@ def main() -> None:
     use_window = cfg.get("app_window", True)
     if srv is None:
         print("Shelfrip is already running. Opening it.")
-        if "--background" not in sys.argv:
-            desktop.open_window(url, use_window)
+        if "--background" not in sys.argv or "--open-window" in sys.argv:
+            if sys.platform.startswith("linux"):
+                data = json.dumps({"startup_id": os.environ.get("XDG_ACTIVATION_TOKEN") or os.environ.get("DESKTOP_STARTUP_ID", "")}).encode()
+                with urllib.request.urlopen(urllib.request.Request(url + "api/open", data=data,
+                    headers={"Content-Type": "application/json"}), timeout=5) as response:
+                    response.read()
+            else:
+                desktop.open_window(url, use_window)
         if sys.platform.startswith("linux"):
             import background
             background.ready(port, existing=True)
         return
     if paths.MIGRATION_NOTE:
         print(paths.MIGRATION_NOTE)
+    if sys.platform.startswith("linux") and installed_copy():
+        import linux_install
+        linux_install.hold_running_lock()
     try:
         if health.find_leftovers():
             print(f"{len(health.LEFTOVER)} MakeMKV process(es) are still running from before.")
@@ -1653,7 +1731,7 @@ def main() -> None:
     print(f"Shelfrip: {url}  (quit from the tray icon by the clock, or the Quit button on the page)")
     if cfg.get("tray_icon", True) or (os.name == "nt" and (sys.stdout is None or not desktop.owns_console())):
         start_tray(url, use_window)  # with no console window, the tray icon is the way to quit
-    if "--background" not in sys.argv:
+    if "--background" not in sys.argv or "--open-window" in sys.argv:
         threading.Timer(0.8, lambda: desktop.open_window(url, use_window)).start()
     if sys.platform.startswith("linux"):
         import background
@@ -1666,6 +1744,9 @@ def main() -> None:
         stop_work()
         if TRAY:
             TRAY.remove()
+        if sys.platform.startswith("linux"):
+            import linux_window
+            linux_window.close()
         srv.server_close()
 
 

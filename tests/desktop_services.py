@@ -42,6 +42,12 @@ if "--session" in sys.argv:
     import linux_tray
     import app
     import paths
+    import linux_window
+    import linux_install
+    import build_linux
+    import socket
+    import urllib.request
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     WATCHER = "org.kde.StatusNotifierWatcher"
     XML = '''<node><interface name="org.kde.StatusNotifierWatcher">
@@ -98,6 +104,117 @@ if "--session" in sys.argv:
             finally:
                 linux_keyring.cleanup(first)
                 linux_keyring.cleanup(json.loads(paths.CONFIG_PATH.read_text()).get("opensubtitles_password", ""))
+
+        def test_native_window_reuses_closes_and_reopens(self):
+            class Page(BaseHTTPRequestHandler):
+                def do_GET(self):
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html")
+                    self.end_headers()
+                    self.wfile.write(b"<!doctype html><title>Shelfrip</title><h1>Local window test</h1>")
+                def log_message(self, *_):
+                    pass
+            server = ThreadingHTTPServer(("127.0.0.1", 0), Page)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            manager = subprocess.Popen(["openbox"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            url = f"http://127.0.0.1:{server.server_port}/"
+            def windows():
+                return [line for line in subprocess.check_output(["wmctrl", "-lp"], text=True).splitlines()
+                        if line.endswith(" Shelfrip")]
+            try:
+                self.assertTrue(linux_window.open_window(url))
+                first = linux_window._window.proc.pid
+                eventually(lambda: len(windows()) == 1)
+                self.assertTrue(linux_window.open_window(url + "#review"))
+                self.assertEqual(linux_window._window.proc.pid, first)
+                self.assertEqual(len(windows()), 1)
+                subprocess.run(["wmctrl", "-ic", windows()[0].split()[0]], check=True)
+                eventually(lambda: linux_window._window.proc.poll() is not None)
+                self.assertTrue(linux_window.open_window(url))
+                self.assertNotEqual(linux_window._window.proc.pid, first)
+                eventually(lambda: len(windows()) == 1)
+                linux_window.close()
+                eventually(lambda: not windows())
+            finally:
+                linux_window.close()
+                manager.terminate()
+                manager.wait(timeout=5)
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=3)
+
+        def test_desktop_entry_escaping_with_native_parser(self):
+            command = ["/bin/echo", 'space ü $dollar `tick` "quote" \\slash %percent']
+            filename = Path(os.environ["HOME"]) / "test.desktop"
+            filename.write_text(linux_install.entry(command, Path("/tmp/icon.svg")))
+            subprocess.run(["desktop-file-validate", str(filename)], check=True)
+            appinfo = Gio.DesktopAppInfo.new_from_filename(str(filename))
+            self.assertIsNotNone(appinfo)
+            # Launch an executable recorder to test the actual argument vector.
+            record = Path(os.environ["HOME"]) / "args.json"
+            script = Path(os.environ["HOME"]) / "record.py"
+            script.write_text("import json,sys; from pathlib import Path; Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:]))")
+            filename.write_text(linux_install.entry([sys.executable, str(script), str(record), command[1]], Path("/tmp/icon.svg")))
+            appinfo = Gio.DesktopAppInfo.new_from_filename(str(filename))
+            self.assertTrue(appinfo.launch([], None))
+            eventually(record.exists)
+            self.assertEqual(json.loads(record.read_text()), [command[1]])
+
+        def test_installed_app_menu_launch_reuses_window_and_keeps_server_after_close(self):
+            package = build_linux.build(ROOT, Path(os.environ["HOME"]) / "package")
+            version = package.name.removeprefix("Shelfrip-").removesuffix("-linux.tar.gz")
+            linux_install.install_archive(package, version)
+            data = Path(os.environ["HOME"]) / "launcher-data"
+            data.mkdir()
+            (data / "config.json").write_text(json.dumps({"check_updates": False, "auto_rip": False,
+                "tray_icon": False, "shared_tmdb": False, "share_discs": False, "use_community": False}))
+            with socket.socket() as sock:
+                sock.bind(("127.0.0.1", 0))
+                port = sock.getsockname()[1]
+            entry = linux_install.data_home() / "applications" / linux_install.DESKTOP_ID
+            entry.write_text(linux_install.entry([str(linux_install.executable()), f"--port={port}"],
+                                                 linux_install.install_root() / "icon.svg"))
+            appinfo = Gio.DesktopAppInfo.new_from_filename(str(entry))
+            context = Gio.AppLaunchContext()
+            context.setenv("SHELFRIP_DATA", str(data))
+            manager = subprocess.Popen(["openbox"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            def request(route, post=False):
+                req = urllib.request.Request(f"http://127.0.0.1:{port}" + route,
+                    data=b"{}" if post else None, headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(req, timeout=2) as response:
+                    return json.load(response)
+            def ready():
+                try:
+                    return request("/api/version")["app"] == "Shelfrip"
+                except OSError:
+                    return False
+            def windows():
+                return [line for line in subprocess.check_output(["wmctrl", "-lp"], text=True).splitlines()
+                        if line.endswith(" Shelfrip")]
+            try:
+                self.assertTrue(appinfo.launch([], context))
+                eventually(ready, 15)
+                eventually(lambda: len(windows()) == 1, 15)
+                first = windows()[0].split()[0]
+                boot = request("/api/drives")["boot"]
+                self.assertTrue(appinfo.launch([], context))
+                time.sleep(1)
+                self.assertEqual([w.split()[0] for w in windows()], [first])
+                self.assertEqual(request("/api/drives")["boot"], boot)
+                subprocess.run(["wmctrl", "-ic", first], check=True)
+                eventually(lambda: not windows())
+                self.assertTrue(ready(), "closing the window stopped the server")
+                self.assertTrue(appinfo.launch([], context))
+                eventually(lambda: len(windows()) == 1, 15)
+                self.assertEqual(request("/api/drives")["boot"], boot)
+            finally:
+                if ready():
+                    request("/api/quit", True)
+                    eventually(lambda: not ready(), 10)
+                manager.terminate()
+                manager.wait(timeout=5)
+                linux_install.uninstall()
 
         def test_real_indicator_menu_reconnection_and_cleanup(self):
             registered = []

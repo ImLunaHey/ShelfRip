@@ -287,11 +287,14 @@ class Desktop(unittest.TestCase):
         self.assertEqual(run.call_args.args[0][-3:], ["--", "--a-title", "Disc filed"])
 
     def test_browser_fallback_and_app_window(self):
+        import linux_window
         with patch.object(desktop, "_find_browser", return_value=None), \
+                patch.object(linux_window, "open_window", return_value=False), \
                 patch.object(desktop.webbrowser, "open") as browser:
             desktop.open_window("http://127.0.0.1:8765/")
         browser.assert_called_once()
         with patch.object(desktop, "_find_browser", return_value="/bin/chromium"), \
+                patch.object(linux_window, "open_window", return_value=False), \
                 patch.object(desktop.subprocess, "Popen") as proc:
             desktop.open_window("http://127.0.0.1:8765/")
         self.assertIn("--app=http://127.0.0.1:8765/", proc.call_args.args[0])
@@ -324,6 +327,30 @@ class Processes(unittest.TestCase):
 
 @unittest.skipUnless(sys.platform.startswith("linux"), "Linux application smoke test")
 class Application(unittest.TestCase):
+    def test_desktop_actions_reject_cross_origin_requests(self):
+        import app
+        for route in ("/api/open", "/api/linux/login"):
+            handler = object.__new__(app.Handler)
+            handler.path, handler.headers = route, {"Origin": "https://example.com"}
+            handler.body = Mock(side_effect=AssertionError("must reject before reading body"))
+            handler.send = Mock()
+            handler.do_POST()
+            handler.send.assert_called_once_with(403, {"error": "forbidden"})
+
+    def test_update_does_not_interrupt_an_import(self):
+        import app
+        import importer
+        import linux_update
+        with patch.object(app, "RIPPER", None), patch.object(app, "UPDATE", {}), \
+                patch.dict(importer.JOBS, {"source": {"state": "running"}}, clear=True), \
+                patch.object(linux_update, "install") as install, patch.object(app, "restart_app") as restart:
+            app.install_update()
+            self.assertEqual(app.UPDATE["step"], "error")
+            self.assertIn("Work started", app.UPDATE["error"])
+            self.assertFalse(app.review.UPDATING)
+        install.assert_not_called()
+        restart.assert_not_called()
+
     def test_busy_tray_quit_opens_page_for_confirmation(self):
         import app
         tray = Mock()
