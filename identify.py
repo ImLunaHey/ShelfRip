@@ -59,6 +59,13 @@ DEFAULTS = {
     "media_server": "plex",
     "extras_style": "folders",  # special features in Featurettes\, Trailers\... folders, or "suffix": Name-featurette.mkv
     "episode_style": "lower",  # episode codes in file names: "lower" s01e02, or "upper" S01E02
+    # Optional re-encode with HandBrake while filing (handbrake.py). Off: files are filed exactly as ripped.
+    "handbrake_enabled": False,
+    "handbrake_cli": "",  # HandBrakeCLI.exe (or its folder); empty = the usual install folders
+    "handbrake_preset_file": "",  # presets exported from HandBrake; empty = HandBrake's own presets.json
+    "handbrake_preset": "",
+    "handbrake_scope": "main",  # "main": movies and episodes only; "all": special features too
+    "handbrake_keep_tracks": True,  # every audio and subtitle track, not just the ones the preset picks
     # Put each format in its own folder (Movies\Blu-Ray\Title ...)? Off: Movies\Title ...
     "format_folders": False,
     # DVDCompare has no API; looking extras up there means reading its web pages. Off unless you turn it on.

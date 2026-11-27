@@ -28,6 +28,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import handbrake
 import identify
 import naming
 import paths
@@ -928,6 +929,10 @@ def check_plan(folder: Path, plan: dict) -> list[str]:
     away = library_reachable(root_of(plan))
     if away:
         return [away]
+    if any(it.get("action") == "move" and not item_done(it) and handbrake.applies(CFG, it) for it in plan["items"]):
+        hb = handbrake.problem(CFG)
+        if hb:
+            return [hb]
     if plan.get("filing"):  # finishing an interrupted filing
         for it in plan["items"]:
             if (it.get("action") == "move" and not it.get("needs_split") and not item_done(it)
@@ -1087,10 +1092,10 @@ def _length(path: Path, mkvmerge: str) -> float:
     return (json.loads(r.stdout or "{}").get("container", {}).get("properties", {}).get("duration") or 0) / 1e9
 
 
-def verify_copy(src: Path, copy: Path) -> str:
+def verify_copy(src: Path, copy: Path, slack: float = 1) -> str:
     """'' if the copy plays as long as the original (MKVToolNix reads both), else what's wrong.
     The sizes already match; this catches a copy that was garbled on the way (a flaky network)."""
-    if src.suffix.lower() != ".mkv":
+    if src.suffix.lower() != ".mkv" or copy.suffix.lower() not in (".mkv", ".mp4", ".partial", ".m4v"):
         return ""
     try:
         mkvmerge = split.tool(CFG, "mkvmerge")
@@ -1102,7 +1107,7 @@ def verify_copy(src: Path, copy: Path) -> str:
         a, b = _length(src, mkvmerge), _length(copy, mkvmerge)
     except Exception as exc:
         return f"couldn't read it back: {exc}"
-    if a and abs(a - b) > 1:
+    if a and abs(a - b) > slack:
         return f"it plays {b:.0f} s instead of {a:.0f} s"
     return ""
 
@@ -1211,6 +1216,41 @@ def _offer_report(what: str, label: str, error: str) -> None:
         pass
 
 
+def _place(src: Path, dst: Path, it: dict, job: dict, folder: Path, step: str) -> Path:
+    """Put one title into the library: moved as it is, or (HandBrake turned on) encoded with your
+    preset first and the encode moved in. Returns where it went (HandBrake can make .mp4s)."""
+    if not handbrake.applies(CFG, it):
+        copy_with_progress(src, dst, job)
+        return dst
+    ext = handbrake.extension(CFG)
+    dst = dst.with_suffix(ext)
+    enc = folder / "_handbrake" / (dst.stem + ext)
+    size, base = src.stat().st_size, job.get("done_bytes", 0)
+
+    def progress(f):  # the encode is most of the work for this title: count it as 95% of its share
+        job["done_bytes"] = base + int(size * 0.95 * f)
+        job["current"] = f"{step}: encoding with HandBrake ({round(100 * f)}%): {dst.name}"
+        job["beat"] = time.time()
+    progress(0)
+    try:
+        handbrake.encode(src, enc, CFG, on_progress=progress, stopped=lambda: bool(job.get("stop")))
+    except handbrake.Stopped:
+        raise Stopped()
+    _beat(job)
+    bad = verify_copy(src, enc, slack=2)  # an encode can't be checked byte for byte, but it must play as long
+    if bad:
+        enc.unlink(missing_ok=True)
+        raise IOError(f"HandBrake's encode of {src.name} didn't check out ({bad}), so nothing was filed for it")
+    if ext == ".mkv":
+        split.set_default_tracks(enc, CFG)
+    job["current"] = f"{step}: {dst.name}"
+    job["done_bytes"] = max(base, base + size - enc.stat().st_size)
+    copy_with_progress(enc, dst, job)
+    job["done_bytes"] = base + size
+    it["handbrake"] = CFG.get("handbrake_preset") or ""
+    return dst
+
+
 def file_job(folder: Path, plan: dict) -> None:
     """File one reviewed disc (runs on a worker thread): split episodes, move each kept title to
     its library name, set track names, share with the disc database, then mark the plan filed.
@@ -1247,7 +1287,7 @@ def file_job(folder: Path, plan: dict) -> None:
                         job["note"] = "; ".join(x for x in (job.get("note"), f"{dst.stem}: {why}") if x)
                     job["current"] = f"{i}/{len(moves)}: {dst.name}"
                     _beat(job)
-                    copy_with_progress(part, dst, job)
+                    dst = _place(part, dst, pc, job, folder, f"{i}/{len(moves)}")
                     filed.append(str(dst))
                     it["filed_to"] = list(filed)  # noted after each episode, so a failure later on doesn't
                     save_plan(folder, plan)       # make the episodes already filed look like someone else's copies
@@ -1267,7 +1307,7 @@ def file_job(folder: Path, plan: dict) -> None:
             if why:
                 job["note"] = "; ".join(x for x in (job.get("note"), f"{dst.stem}: {why}") if x)
             _beat(job)
-            copy_with_progress(folder / it["source"], dst, job)
+            dst = _place(folder / it["source"], dst, it, job, folder, f"{i}/{len(moves)}")
             it["filed_to"] = str(dst)
             save_plan(folder, plan)  # progress, in case filing is interrupted
         _beat(job)  # last chance to stop: from here on it's only tidying up
