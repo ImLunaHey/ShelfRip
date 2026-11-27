@@ -333,7 +333,8 @@ def run_makemkv(cfg: dict, args: list[str], logfile: Path | None = None,
     through that too (that's how a rip could sit at 83% with nothing written). on_phase(name) gets
     what MakeMKV is doing meanwhile ("Opening Blu-ray disc", "Analyzing seamless segments", ...)."""
     cmd = [cfg["makemkvcon_path"], "-r", "--progress=-same"] + args
-    proc = subprocess.Popen(
+    import processes
+    proc = processes.spawn(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, encoding="utf-8", errors="replace",
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -375,6 +376,7 @@ def run_makemkv(cfg: dict, args: list[str], logfile: Path | None = None,
                 fh.write(line + "\n")
     finally:
         proc.wait()
+        proc.stdout.close()
         if device:
             PROCS.pop(device, None)
         if fh:
@@ -440,6 +442,8 @@ def scan_drives(cfg: dict) -> list[dict]:
         import music
         for d in drives:
             dev = d["device"]
+            if d.get("access_error"):
+                continue
             if d.get("audio"):
                 if dev in PROCS or (cfg.get("output_root") and drive_locked(cfg, dev)):
                     previous = _LINUX_AUDIO_DRIVES.get(dev, {})
@@ -1076,7 +1080,10 @@ def cancel(device: str) -> bool:
             return True
         return False
     STATUS.setdefault(device, {})["cancel"] = True
-    proc.terminate()
+    try:
+        proc.terminate()
+    except ProcessLookupError:
+        pass
     log(f"{device} rip cancelled")
     return True
 
@@ -1145,6 +1152,9 @@ def rip_loaded(cfg: dict, busy: set[str], finished: dict[str, str],
         dev = d["device"]
         if not d["loaded"]:
             finished.pop(dev, None)
+            continue
+        if d.get("access_error"):
+            log(d["access_error"])
             continue
         if dev in busy or finished.get(dev) == d["disc_label"]:
             continue

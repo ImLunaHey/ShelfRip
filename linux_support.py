@@ -36,6 +36,21 @@ def _decode_label(value: str) -> str:
     return raw.decode('utf-8', errors='replace')
 
 
+def access_problem(device: str) -> str:
+    """Explain missing device access without changing permissions or loading drivers."""
+    if not os.access(device, os.R_OK | os.W_OK):
+        return f'No read/write access to {device}. Grant your user optical-drive access through your system permissions.'
+    generic = SYS_BLOCK / Path(device).name / 'device/scsi_generic'
+    nodes = list(generic.glob('sg*'))
+    if not nodes:
+        return f'{device} has no SCSI-generic device. Enable the Linux sg driver before using MakeMKV.'
+    for node in nodes:
+        path = '/dev/' + node.name
+        if not os.access(path, os.R_OK | os.W_OK):
+            return f'No read/write access to {path}, the SCSI-generic device for {device}. Grant access to this optical drive only.'
+    return ''
+
+
 def scan_drives() -> list[dict] | None:
     """None means discovery is unavailable; [] means no optical drives exist."""
     if not SYS_BLOCK.is_dir():
@@ -61,7 +76,8 @@ def scan_drives() -> list[dict] | None:
         label = _decode_label(props.get('ID_FS_LABEL_ENC', props.get('ID_FS_LABEL', '')))
         drives.append({'index': len(drives), 'device': device, 'loaded': loaded,
                        'drive_name': props.get('ID_MODEL', block.name).replace('_', ' '),
-                       'disc_label': label if loaded else '', 'audio': loaded and audio})
+                       'disc_label': label if loaded else '', 'audio': loaded and audio,
+                       'access_error': access_problem(device)})
     return drives
 
 

@@ -344,6 +344,7 @@ dialog.disc .fb .chk{display:flex;gap:8px;align-items:center;color:var(--ink)}
   <div class="hud hide" id="hud"></div>
   <a id="donate" class="hide" target="_blank" rel="noopener" title="Shelfrip is free. Donations help pay for things like code signing.">&#9829;<span class="dt"> Donate</span></a>
   <button id="fbbtn" title="Send an idea or report a problem">Feedback</button>
+  <button id="restart" class="hide">Restart</button>
   <button id="quit" class="hide">Quit</button>
 </header>
 <div id="toasts" aria-live="polite"></div>
@@ -2270,7 +2271,7 @@ async function loadSettings(){
 (async () => {
   try { await api("/api/drives"); APP = true; } catch(e){ APP = false; }
   if (!APP) return;
-  $("#tabs").classList.add("on"); $("#quit").classList.remove("hide");
+  $("#tabs").classList.add("on"); $("#quit").classList.remove("hide"); $("#restart").classList.remove("hide");
   document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
   let t = "drives"; try { t = localStorage.getItem("tab") || "drives"; } catch(e){}
   if (["drives","review","library","settings"].includes(location.hash.slice(1))) t = location.hash.slice(1);  // e.g. the tray's "Review" item
@@ -2289,6 +2290,24 @@ async function loadSettings(){
     }
     document.body.innerHTML = `<p class="empty">Shelfrip has stopped. You can close this window.</p>`;
     setTimeout(() => { try { window.close(); } catch(e){} }, 1200);  // the app window can close itself
+  };
+  $("#restart").onclick = async () => {
+    const button = $("#restart");
+    button.disabled = true;
+    try {
+      let j = await api("/api/restart", {});
+      if (j.busy) {
+        if (!confirm(`Still working on: ${j.busy.join(", ")}. Restarting stops it. Restart anyway?`)) return;
+        j = await api("/api/restart", {force:true});
+      }
+      if (!j.ok) throw new Error(j.error || "Couldn't restart Shelfrip.");
+      button.textContent = "Restarting…";
+      // The existing drive poll detects the changed boot ID and reloads the page.
+    } catch (e) {
+      alert(e.message || String(e));
+    } finally {
+      button.disabled = false;
+    }
   };
 })();
 

@@ -93,6 +93,18 @@ class Discovery(unittest.TestCase):
             with self.assertRaisesRegex(OSError, "sr0.*permission denied"):
                 linux.scan_drives()
 
+    def test_device_permissions_and_missing_sg_driver(self):
+        self.device("sr0")
+        with patch.object(linux.os, "access", return_value=False):
+            self.assertIn("No read/write access to /dev/sr0", linux.access_problem("/dev/sr0"))
+        with patch.object(linux.os, "access", return_value=True):
+            self.assertIn("Enable the Linux sg driver", linux.access_problem("/dev/sr0"))
+        (self.root / "sr0/device/scsi_generic/sg7").mkdir(parents=True)
+        with patch.object(linux.os, "access", side_effect=lambda p, _: p == "/dev/sr0"):
+            self.assertIn("No read/write access to /dev/sg7", linux.access_problem("/dev/sr0"))
+        with patch.object(linux.os, "access", return_value=True):
+            self.assertEqual(linux.access_problem("/dev/sr0"), "")
+
 
 @unittest.skipUnless(sys.platform.startswith("linux"), "Linux runtime integration")
 class Routing(unittest.TestCase):
@@ -140,6 +152,12 @@ class Routing(unittest.TestCase):
         with patch.object(linux, "eject") as eject:
             rip_all.eject("/dev/sr2")
             eject.assert_called_once_with("/dev/sr2")
+
+    def test_blocked_drive_never_starts_rip(self):
+        drive = {"device": "/dev/sr0", "loaded": True, "disc_label": "DVD", "access_error": "Missing sg"}
+        with patch.object(rip_all, "scan_drives", return_value=[drive]), patch.object(rip_all, "acquire_lock") as lock:
+            self.assertEqual(rip_all.rip_loaded({}, set(), {}), [])
+        lock.assert_not_called()
 
     def test_config_is_private(self):
         paths.write_config({"opensubtitles_password": "test-only"})
@@ -306,6 +324,20 @@ class Processes(unittest.TestCase):
 
 @unittest.skipUnless(sys.platform.startswith("linux"), "Linux application smoke test")
 class Application(unittest.TestCase):
+    def test_restart_and_quit_require_confirmation_when_busy(self):
+        import app
+        for route in ("/api/restart", "/api/quit"):
+            handler = object.__new__(app.Handler)
+            handler.path = route
+            handler.headers = {}
+            handler.body = lambda: {}
+            handler.send = Mock()
+            with patch.object(app, "RIPPER", Mock(busy={"/dev/sr0"})), \
+                    patch.object(app.threading, "Timer") as timer:
+                handler.do_POST()
+            handler.send.assert_called_once_with(200, {"busy": ["/dev/sr0"]})
+            timer.assert_not_called()
+
     def test_real_app_serves_page_settings_and_drive_status(self):
         with tempfile.TemporaryDirectory() as tmp:
             data = Path(tmp)
@@ -344,6 +376,30 @@ class Application(unittest.TestCase):
                     with urllib.request.urlopen(base + "/api/drives", timeout=5) as response:
                         drives = json.load(response)
                     self.assertIn("drives", drives)
+                    old_boot = drives["boot"]
+                    request = urllib.request.Request(base + "/api/restart", data=b"{}",
+                                                     headers={"Content-Type": "application/json"})
+                    with urllib.request.urlopen(request, timeout=5) as response:
+                        self.assertTrue(json.load(response)["ok"])
+                    deadline = time.monotonic() + 10
+                    while time.monotonic() < deadline:
+                        try:
+                            with urllib.request.urlopen(base + "/api/drives", timeout=1) as response:
+                                if json.load(response)["boot"] != old_boot:
+                                    break
+                        except OSError:
+                            pass
+                        time.sleep(0.05)
+                    else:
+                        self.fail("restart did not produce a new boot on the same port")
+                    self.assertIsNone(proc.poll(), "Linux restart should replace the existing process")
+                    with urllib.request.urlopen(base + "/api/settings", timeout=5) as response:
+                        self.assertEqual(json.load(response)["path"], str(data / "config.json"))
+                    request = urllib.request.Request(base + "/api/quit", data=b"{}",
+                                                     headers={"Content-Type": "application/json"})
+                    with urllib.request.urlopen(request, timeout=5) as response:
+                        self.assertTrue(json.load(response)["ok"])
+                    self.assertEqual(proc.wait(timeout=8), 0)
                 finally:
                     proc.terminate()
                     try:
