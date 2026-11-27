@@ -24,11 +24,15 @@
 //   GET  /v1/admin/reports    discs people said were wrong, newest first
 //   GET  /v1/admin/feedback   feedback, newest first (?all=1 includes ones marked done)
 //   POST /v1/admin/feedback   {id, done}: mark feedback done (or not)
+//   GET  /v1/admin/feedback/logs?id=N   the logs a problem report carried (gzip, base64)
 //
 // Nothing personal is stored: install ids and IPs are only kept as salted hashes (SALT secret),
 // IPs only inside daily rate-limit counters.
 
 const MAX_BODY = 256 * 1024;
+// a problem report can carry the latest rips' logs (gzip, base64): MakeMKV's title list and rip log
+const MAX_LOGS = 1_400_000;
+const MAX_FEEDBACK_BODY = MAX_LOGS + 64 * 1024;
 const MAX_TITLES = 300;
 const PER_INSTALL_PER_DAY = 200;
 const PER_IP_PER_DAY = 400;
@@ -148,11 +152,11 @@ async function bump(env, key, limit, why = "too many submissions today, try agai
   if (row && row.n > limit) throw new Refusal(why, 429);
 }
 
-async function body(req) {
+async function body(req, max = MAX_BODY) {
   const len = Number(req.headers.get("Content-Length") || 0);
-  if (len > MAX_BODY) throw new Refusal("too large", 413);
+  if (len > max) throw new Refusal("too large", 413);
   const text = await req.text();
-  if (text.length > MAX_BODY) throw new Refusal("too large", 413);
+  if (text.length > max) throw new Refusal("too large", 413);
   try { return JSON.parse(text); } catch { throw new Refusal("not JSON"); }
 }
 async function installOf(b, env) {
@@ -233,7 +237,7 @@ async function report(req, env) {
 }
 
 async function feedback(req, env) {
-  const b = await body(req);
+  const b = await body(req, MAX_FEEDBACK_BODY);
   const install = await installOf(b, env);
   const title = str(b.title, 200), text = str(b.body, 5000);
   if (!title && !text) throw new Refusal("empty");
@@ -241,9 +245,13 @@ async function feedback(req, env) {
   await bump(env, await sha(env.SALT + "|fbip|" + ip), PER_IP_FEEDBACK);
   await bump(env, await sha(env.SALT + "|fb|" + install), PER_INSTALL_FEEDBACK);
   const kind = ["idea", "problem", "other"].includes(b.kind) ? b.kind : "other";
+  const logs = typeof b.logs === "string" ? b.logs : "";
+  if (logs.length > MAX_LOGS) throw new Refusal("logs too large", 413);
+  if (logs && !/^[A-Za-z0-9+/]+={0,2}$/.test(logs)) throw new Refusal("logs must be gzip, base64");
   await env.DB.prepare(
-    `INSERT INTO feedback (created, install, kind, title, body, contact, app_version, os) VALUES (?,?,?,?,?,?,?,?)`
-  ).bind(now(), install, kind, title, text, str(b.contact, 200), str(b.app_version, 20), str(b.os, 120)).run();
+    `INSERT INTO feedback (created, install, kind, title, body, contact, app_version, os, logs) VALUES (?,?,?,?,?,?,?,?,?)`
+  ).bind(now(), install, kind, title, text, str(b.contact, 200), str(b.app_version, 20), str(b.os, 120),
+         logs || null).run();
   return json({ ok: true });
 }
 
@@ -472,9 +480,15 @@ async function admin(req, url, env) {
     const limit = Math.min(200, int(url.searchParams.get("limit")) || 100);
     const all = url.searchParams.get("all") === "1";
     const { results } = await env.DB.prepare(
-      `SELECT id, created, substr(install, 1, 12) install, kind, title, body, contact, app_version, os, done FROM feedback
+      `SELECT id, created, substr(install, 1, 12) install, kind, title, body, contact, app_version, os, done,
+              COALESCE(length(logs), 0) logs_size FROM feedback
          ${all ? "" : "WHERE done = 0"} ORDER BY created DESC LIMIT ?`).bind(limit).all();
     return json({ feedback: results });
+  }
+  if (p === "feedback/logs" && req.method === "GET") {  // ?id=N: the logs sent with one report (gzip, base64)
+    const row = await env.DB.prepare("SELECT id, logs FROM feedback WHERE id = ?").bind(int(url.searchParams.get("id"))).first();
+    if (!row || !row.logs) throw new Refusal("no logs with that feedback", 404);
+    return json({ id: row.id, logs: row.logs });
   }
   const b = req.method === "POST" ? await req.json() : {};
   if (p === "feedback") {

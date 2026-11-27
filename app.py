@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import os
+import re
 import socket
 import sys
 import threading
@@ -46,8 +47,9 @@ JOB_DEFAULTS = {"auto_file": True, "auto_file_minutes": 15, "audio_language": "e
                 "forced_subtitles": True, "retry_failed_titles": True, "job_total_discs": 0,
                 "min_free_gb_rips": 60, "app_window": True, "tray_icon": True, "sounds": True,
                 "skip_clutter": True, "skip_duplicate_features": False, "choose_titles": False,
-                "offer_error_reports": True}
-SECRETS = ("tmdb_api_key", "omdb_api_key", "plex_token")
+                "offer_error_reports": True, "subtitle_check": False, "reference_subtitles": False,
+                "reference_subtitles_per_disc": 10}
+SECRETS = ("tmdb_api_key", "omdb_api_key", "plex_token", "opensubtitles_password", "opensubtitles_api_key")
 SETTINGS = [  # (key, label, kind)
     ("output_root", "Rip folder (where discs are ripped to before review)", "text"),
     ("plex_library_root", "Media library folder (holds your Movies and TV Shows folders)", "text"),
@@ -99,6 +101,13 @@ SETTINGS = [  # (key, label, kind)
     ("min_free_gb_rips", "Don't start a rip with less than this free in the rip folder (GB)", "number"),
     ("tmdb_api_key", "TMDB key", "secret"),
     ("omdb_api_key", "OMDb key", "secret"),
+    ("subtitle_check", "Check episode numbers against what is said in each episode (reads the subtitles)", "bool"),
+    ("reference_subtitles", "Compare with each episode's subtitles from OpenSubtitles.com (free account)", "bool"),
+    ("opensubtitles_username", "OpenSubtitles.com username", "text"),
+    ("opensubtitles_password", "OpenSubtitles.com password", "secret"),
+    ("opensubtitles_api_key", "OpenSubtitles API key (optional: replaces Shelfrip's)", "secret"),
+    ("reference_subtitles_per_disc", "Most subtitle downloads per disc", "number"),
+    ("tesseract_path", "Tesseract OCR (tesseract.exe), for reading Blu-ray and DVD subtitles", "text"),
     ("plex_token", "Plex token (Plex only, optional)", "secret"),
     ("check_updates", "Tell me when a new version of Shelfrip is out", "bool"),
     ("sounds", "Play sounds (a chime when a disc is filed, a fanfare when you level up)", "bool"),
@@ -207,6 +216,35 @@ def identify_disc(dev: str, label: str, cfg: dict) -> dict | None:
     if prev and prev.get("kind") == "movie" and prev.get("tmdb_id"):
         return {"kind": "movie", "title": prev.get("title"), "year": str(prev.get("year") or ""),
                 "tmdb_id": str(prev["tmdb_id"]), "episodes": [], "how": "a label you've filed before"}
+    return None
+
+
+def label_guess(label: str, tmdb) -> dict | None:
+    """Best TMDB guess from a disc label alone, just for the drive card's box art before the rip
+    ('GAME_OF_THRONES_S2_D1' -> Game of Thrones, season 2). Never used to skip or name anything."""
+    if not tmdb or not label:
+        return None
+    info = identify.parse_label(label)
+    query = info.get("query") or ""
+    m = re.search(r"\s((?:19|20)\d\d)$", query)  # 'Ghostbusters 2016': search the name, prefer that year
+    year = m.group(1) if m else ""
+    if m and len(query[:m.start()].strip()) >= 3:
+        query = query[:m.start()].strip()
+    if len(query) < 3:
+        return None
+    order = ("tv", "movie") if info.get("season") or info.get("episodes") else ("movie", "tv")
+    for kind in order:
+        found = tmdb.search(kind, query)[:5]
+        dated = lambda r: (r.get("release_date") if kind == "movie" else r.get("first_air_date")) or ""
+        found = [r for r in found if year and dated(r).startswith(year)][:1] or found[:1]
+        for r in found:
+            title = r.get("title") if kind == "movie" else r.get("name")
+            if not title or not r.get("id"):
+                continue
+            return {"kind": kind, "title": title, "tmdb_id": str(r["id"]),
+                    "year": identify.year_of(r.get("release_date") if kind == "movie" else r.get("first_air_date")),
+                    "season": (info.get("season") or 1) if kind == "tv" else None,
+                    "how": "its disc label (a guess until it's named)"}
     return None
 
 
@@ -402,6 +440,13 @@ class Ripper:
             self.match[d["device"]] = {"label": d["disc_label"], "kind": ident["kind"], "title": ident.get("title") or "",
                                        "year": ident.get("year") or "", "tmdb_id": ident.get("tmdb_id") or "",
                                        "season": eps[0][0] if eps else None, "how": ident.get("how") or ""}
+        else:  # box art only: a TMDB guess from the label, so the card isn't a blank circle while it rips
+            try:
+                guess = label_guess(d["disc_label"], review.TMDB)
+            except Exception:
+                guess = None
+            if guess:
+                self.match[d["device"]] = {"label": d["disc_label"], **guess}
         return ident or {}  # {} = looked, not recognised (in_plex_already won't look again)
 
     def after_rip(self, disc: dict, out_dir) -> None:
@@ -817,6 +862,18 @@ def setup_check() -> list[dict]:
                 "detail": str(mr) if mr.is_dir() else f"{mr} doesn't exist yet: it's created when you file your first CD. "
                           "Then add it to Plex as a Music library.",
                 "link": "" if mr.is_dir() else "https://support.plex.tv/articles/200288926-creating-libraries/", "required": False})
+    import subcheck  # shown even with the subtitle check off, so its Settings box gets a found / not found mark
+    tess = subcheck.tesseract(cfg)
+    out.append({"name": "Tesseract OCR (subtitle check)", "ok": bool(tess),
+                "detail": tess or "not found: needed to read Blu-ray and DVD picture subtitles for the subtitle check. "
+                          "Install it with: winget install UB-Mannheim.TesseractOCR",
+                "link": "" if tess else subcheck.TESSERACT_URL, "required": False})
+    if cfg.get("subtitle_check"):
+        if cfg.get("reference_subtitles"):
+            import refsubs
+            why = refsubs.OpenSubtitles(cfg).ready()
+            out.append({"name": "OpenSubtitles.com", "ok": not why, "detail": why or "signed in",
+                        "link": "https://www.opensubtitles.com/en/users/sign_up" if why else "", "required": False})
     plex = bool(cfg.get("plex_url")) and bool(cfg.get("plex_token")) and "paste" not in str(cfg.get("plex_token")).lower()
     out.append({"name": "Plex check", "ok": plex, "detail": "on" if plex else "off (optional: add the Plex address and token in Settings)",
                 "link": "" if plex else "https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/",
@@ -1157,6 +1214,9 @@ def _save_settings(values: dict) -> None:
         if kind == "secret":
             if isinstance(v, str) and v.strip():  # empty = keep the current key
                 raw[key] = v.strip()
+                if key == "opensubtitles_password":  # encrypted for this Windows account
+                    import refsubs
+                    raw[key] = refsubs.protect(v.strip())
             elif v is None:
                 raw[key] = ""
             continue
@@ -1281,7 +1341,23 @@ class Handler(review.Handler):
         if u.path == "/api/feedback":
             import community
             cfg = {**rip_all.DEFAULT_CONFIG, **JOB_DEFAULTS, **_read_config()}
-            return self.send(200, community.send_feedback(self.body(), cfg))
+            fb = self.body()
+            if fb.get("logs"):
+                try:
+                    fb["setup"] = setup_check()
+                except Exception:
+                    pass
+            return self.send(200, community.send_feedback(fb, cfg))
+        if u.path == "/api/feedbacklogs":  # "See what's sent": the logs a report would carry
+            # (trouble is imported at the top: importing it here too would make it a local name for
+            # all of do_POST and break /api/trouble with UnboundLocalError)
+            cfg = {**rip_all.DEFAULT_CONFIG, **JOB_DEFAULTS, **_read_config()}
+            try:
+                setup = setup_check()
+            except Exception:
+                setup = []
+            text = trouble.logs_text(cfg, str(self.body().get("label") or ""), setup)
+            return self.send(200, {"text": text or "(nothing to send yet)", "size": len(text)})
         if u.path == "/api/inbox":  # mark feedback done
             import community
             cfg = {**rip_all.DEFAULT_CONFIG, **JOB_DEFAULTS, **_read_config()}
@@ -1290,6 +1366,16 @@ class Handler(review.Handler):
                 return self.send(200, community.admin("feedback", cfg, {"id": int(b.get("id") or 0), "done": bool(b.get("done", True))}))
             except Exception as exc:
                 return self.send(200, {"error": str(exc)})
+        if u.path == "/api/inboxlogs":  # download the logs a problem report carried, and open them
+            import community
+            cfg = {**rip_all.DEFAULT_CONFIG, **JOB_DEFAULTS, **_read_config()}
+            r = community.save_feedback_logs(int(self.body().get("id") or 0), cfg)
+            if r.get("path") and os.name == "nt":
+                try:
+                    os.startfile(r["path"])
+                except OSError:
+                    pass
+            return self.send(200, r)
         if u.path == "/api/problem":
             try:
                 dst = make_problem_report()

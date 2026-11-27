@@ -166,7 +166,7 @@ PLAN_LOCK = threading.Lock()
 def save_plan(folder: Path, plan: dict) -> None:
     """Write plan.json safely: to a temporary file first, then swapped in, so a crash or a full
     disk mid-save can never leave a half-written plan (and lose your names)."""
-    data = json.dumps({k: v for k, v in plan.items() if k not in ("job", "folder", "auto", "season_files")}, indent=2)
+    data = json.dumps({k: v for k, v in plan.items() if k not in ("job", "folder", "auto", "season_files", "subcheck")}, indent=2)
     tmp = folder / "plan.json.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(data)
@@ -218,10 +218,16 @@ def _plan_new_folders() -> int:
                 old = json.loads(pj.read_text(encoding="utf-8"))
             except Exception:
                 continue
-            if (old.get("status") != "proposed" or old.get("edited")
-                    or old.get("planner_version", 1) >= identify.PLANNER_VERSION):
+            if old.get("status") != "proposed" or JOBS.get(folder.name, {}).get("state") == "running":
+                continue
+            # a rip whose titles all pointed at one file (MakeMKV's file name template): its names
+            # were made for the wrong files, so they're made again even if you edited them
+            if not _repair_files(folder) and (old.get("edited")
+                                               or old.get("planner_version", 1) >= identify.PLANNER_VERSION):
                 continue
             shutil.copy2(pj, folder / "plan.old.json")
+        else:
+            _repair_files(folder)
         try:
             if _is_music(folder):
                 import music
@@ -235,7 +241,105 @@ def _plan_new_folders() -> int:
             plan["planned_at"] = time.time()
             save_plan(folder, plan)
             n += 1
+            if CFG.get("subtitle_check") and plan.get("kind") == "tv" and plan.get("tmdb_id"):
+                queue_subcheck(folder)
     return n
+
+
+# --------------------------------------------------------------------------- subtitle check
+# Optional (setting "subtitle_check"): after a TV disc is named, read each episode's subtitles and
+# check the episode numbers against what is said (subcheck.py). Runs one disc at a time in the
+# background; the result (subcheck.json) shows on the Review tab, and a disc whose dialogue
+# disagrees with its numbers isn't filed automatically.
+
+SUBCHECK = {"queue": [], "state": {}, "thread": None}
+SUBCHECK_LOCK = threading.Lock()
+
+
+def _subcheck_key(plan: dict) -> str:
+    return f"{plan.get('tmdb_id')}:{plan.get('season')}"
+
+
+def subcheck_report(folder: Path, plan: dict) -> dict | None:
+    """The saved check for this disc, if it was made for the show and season planned now."""
+    try:
+        rep = json.loads((folder / "subcheck.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return rep if rep.get("plan_key") == _subcheck_key(plan) else None
+
+
+def queue_subcheck(folder: Path) -> None:
+    with SUBCHECK_LOCK:
+        if folder.name in SUBCHECK["queue"] or SUBCHECK["state"].get(folder.name) == "running":
+            return
+        SUBCHECK["queue"].append(folder.name)
+        SUBCHECK["state"][folder.name] = "queued"
+        if not (SUBCHECK["thread"] and SUBCHECK["thread"].is_alive()):
+            SUBCHECK["thread"] = threading.Thread(target=_subcheck_worker, daemon=True, name="subcheck")
+            SUBCHECK["thread"].start()
+
+
+def _subcheck_worker() -> None:
+    import subcheck
+    while True:
+        with SUBCHECK_LOCK:
+            if not SUBCHECK["queue"]:
+                return
+            name = SUBCHECK["queue"].pop(0)
+            SUBCHECK["state"][name] = "running"
+        folder, plan = RIP_ROOT / name, {}
+        try:
+            plan = json.loads((folder / "plan.json").read_text(encoding="utf-8"))
+            exe = subcheck.tesseract(CFG)
+            rep = subcheck.check_folder(folder, CFG, TMDB, exe, subcheck.tess_langs(exe) if exe else set(),
+                                        log=lambda *a: print(*a))
+            rep["plan_key"] = _subcheck_key(plan)
+            for row in rep.get("titles", []):
+                row.pop("text", None)   # the whole OCR text is only kept by the command-line check
+            (folder / "subcheck.json").write_text(json.dumps(rep, indent=2, ensure_ascii=False), encoding="utf-8")
+            state = "done"
+        except Exception as exc:
+            print(f"{name}: subtitle check failed ({exc})")
+            try:
+                (folder / "subcheck.json").write_text(json.dumps(
+                    {"plan_key": _subcheck_key(plan), "error": str(exc), "findings": [], "titles": []}),
+                    encoding="utf-8")
+            except Exception:
+                pass
+            state = "error"
+        with SUBCHECK_LOCK:
+            SUBCHECK["state"][name] = state
+
+
+def subcheck_view(folder: Path, plan: dict) -> dict | None:
+    """What the Review tab shows: the check's state, its findings, and per video (and part)
+    which episode the dialogue says it is."""
+    if not CFG.get("subtitle_check") or plan.get("kind") != "tv" or not plan.get("tmdb_id"):
+        return None
+    rep = subcheck_report(folder, plan)
+    if rep is None:
+        if plan.get("status") == "proposed" or not plan.get("status"):
+            queue_subcheck(folder)
+        return {"state": SUBCHECK["state"].get(folder.name, "queued")}
+    rows = [{k: r.get(k) for k in ("source", "part", "episode", "verdict", "best_episode", "best_name",
+                                   "by_reference", "reference_share", "best_words", "status", "clip_show")}
+            for r in rep.get("titles", []) if r.get("source")]
+    return {"state": "error" if rep.get("error") else "done", "error": rep.get("error", ""),
+            "findings": rep.get("findings", []), "titles": rows,
+            "reference": rep.get("reference"), "checked_at": rep.get("checked_at")}
+
+
+def _repair_files(folder: Path) -> bool:
+    """Point each title of a rip at its real file (ripfiles.py). True if anything changed."""
+    try:
+        import ripfiles
+        if ripfiles.repair(folder, CFG):
+            print(f"{folder.name}: titles matched to their ripped files again (they shared one file name)")
+            return True
+    except Exception as exc:
+        print(f"{folder.name}: couldn't check the ripped files ({exc})")
+    return False
 
 
 def start_over(folder: Path) -> dict:
@@ -260,6 +364,7 @@ def start_over(folder: Path) -> dict:
             import music
             plan = music.plan_folder(folder, CFG, identify.PLANNER_VERSION)
         else:
+            _repair_files(folder)
             _LIB_CACHE.clear()  # read the library afresh
             plan = plan_disc(folder)  # into the library set for its format, as when it was ripped
         if not plan:
@@ -271,6 +376,7 @@ def start_over(folder: Path) -> dict:
         plan["planned_at"] = time.time()
         plan["hold"] = True  # you're looking at it: don't file it by itself
         save_plan(folder, plan)
+        (folder / "subcheck.json").unlink(missing_ok=True)  # check the new names again
     if JOBS.get(folder.name, {}).get("state") == "error":
         JOBS.pop(folder.name, None)  # the old error is about the old names
     plan["folder"] = folder.name
@@ -313,6 +419,9 @@ def list_plans() -> list[dict]:
             identify.retarget_library(plan, CFG, "")  # that library was removed in Settings (or the option turned off)
         if plan.get("kind") == "tv":  # episodes already in the library, for "belongs to episode"
             plan["season_files"] = season_files(plan)
+            sc = subcheck_view(p.parent, plan)
+            if sc:
+                plan["subcheck"] = sc
         if CFG.get("auto_file", True):
             plan["auto"] = {"blocked": confidence(plan),
                             "at": (plan.get("planned_at") or p.stat().st_mtime) + 60 * float(CFG.get("auto_file_minutes", 15))}
@@ -350,6 +459,11 @@ def confidence(plan: dict) -> list[str]:
         return list(dict.fromkeys(why))
     if not plan.get("tmdb_id"):
         why.append("no TMDB match")
+    sc = plan.get("subcheck")
+    if sc and sc.get("state") in ("queued", "running"):
+        why.append("still checking the episodes' subtitles")
+    elif sc and sc.get("findings"):
+        why.append("the subtitles disagree with an episode number")
     if plan.get("kind") == "tv" and (plan.get("match_source") or "TMDB search") == "TMDB search":
         why.append("first disc of this show: matched by name only")
     if plan.get("kind") == "movie":
@@ -800,6 +914,8 @@ def item_done(it: dict) -> bool:
     """Already copied into the library by an earlier filing of this disc that didn't finish."""
     to = it.get("filed_to")
     files = to if isinstance(to, list) else [to] if to else []
+    if it.get("needs_split") and len(files) < len(pieces(it)):
+        return False  # only some of its episodes were cut before that filing stopped
     return bool(files) and all(Path(f).exists() for f in files)
 
 
@@ -829,6 +945,9 @@ def check_plan(folder: Path, plan: dict) -> list[str]:
         newly = 0
         for it in plan["items"]:
             have = copies.get(it["source"])
+            mine_filed = it.get("filed_to") if isinstance(it.get("filed_to"), list) else [it.get("filed_to")]
+            own = {os.path.normcase(str(f)) for f in mine_filed if f}
+            have = [h for h in have or [] if os.path.normcase(str(h["path"])) not in own]  # this disc's own episodes
             if it.get("action") != "move" or not have or it.get("library_copy") or item_done(it):
                 continue
             best = max(have, key=lambda h: h["rank"])
@@ -854,6 +973,10 @@ def check_plan(folder: Path, plan: dict) -> list[str]:
             problems.append(f"Not enough space in {where}: needs {need / 1e9:.1f} GB, {free / 1e9:.1f} GB free.")
     except OSError:
         pass
+    srcs = [it["source"] for it in plan["items"] if it.get("action") == "move" and not item_done(it)]
+    for src in sorted({s for s in srcs if srcs.count(s) > 1}):
+        problems.append(f"{srcs.count(src)} titles point at the same ripped file, {src}, so this disc can't be "
+                        f"filed as it is. Click “Check for new rips” to match the titles to their files again.")
     for it in plan["items"]:
         if it.get("action") != "move" or item_done(it):  # done = copied by a filing that was interrupted
             continue
@@ -878,7 +1001,8 @@ def check_plan(folder: Path, plan: dict) -> list[str]:
             if d in seen:
                 problems.append(f"Two files would both be named {d.name}.")
             seen.add(d)
-            if d.exists():
+            own = it.get("filed_to") if isinstance(it.get("filed_to"), list) else []
+            if d.exists() and str(d) not in own:  # (an episode this disc filed before it stopped is fine)
                 problems.append(f"Already exists in the library: {d}")
     return problems
 
@@ -1145,10 +1269,14 @@ def file_job(folder: Path, plan: dict) -> None:
                 continue  # copied by the earlier, interrupted filing
             if it.get("needs_split"):
                 # cut each episode out (no re-encoding) next to the rip, then move it into the library
-                src, filed = folder / it["source"], []
+                src = folder / it["source"]
+                prev = it.get("filed_to") if isinstance(it.get("filed_to"), list) else []
+                filed = [f for f in prev if Path(f).exists()]  # episodes an earlier, unfinished filing already cut
                 for pc in pieces(it):
                     k = pc["split_index"]
                     dst = dest_for(pc, plan)
+                    if str(dst) in filed:
+                        continue
                     job["current"] = f"{i}/{len(moves)}: cutting episode {k + 1} of {len(it['split']['names'])}: {dst.name}"
                     _beat(job)
                     part = split.cut(src, it["split"], k, folder / "_split" / f"{k + 1:02d}.mkv", CFG,
@@ -1161,6 +1289,8 @@ def file_job(folder: Path, plan: dict) -> None:
                     _beat(job)
                     dst = _place(part, dst, pc, job, folder, f"{i}/{len(moves)}")
                     filed.append(str(dst))
+                    it["filed_to"] = list(filed)  # noted after each episode, so a failure later on doesn't
+                    save_plan(folder, plan)       # make the episodes already filed look like someone else's copies
                 it["filed_to"] = filed
                 save_plan(folder, plan)  # progress, in case filing is interrupted
                 shutil.rmtree(folder / "_split", ignore_errors=True)

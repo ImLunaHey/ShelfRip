@@ -25,7 +25,8 @@ HERE = Path(__file__).resolve().parent
 OUT = HERE / "installer"
 NAME = "Shelfrip"
 MODULES = ["app", "review", "identify", "rip_all", "split", "music", "plex", "extras", "discdb",
-           "catalog", "crosscheck", "naming", "paths", "community", "desktop", "progress", "health", "tidy", "dupes", "trouble", "importer"]
+           "catalog", "crosscheck", "naming", "paths", "community", "desktop", "progress", "health", "tidy", "dupes", "trouble", "importer", "ripfiles",
+           "subcheck", "epmatch", "refsubs"]
 PORTABLE_NOTE = ("This file makes Shelfrip portable: it keeps your settings, shelf and disc database in this\r\n"
                  "folder instead of %APPDATA%\\Shelfrip. Delete it to use the same settings as an installed Shelfrip.\r\n")
 SHIP = ["README.md", "LICENSE.txt", "THIRD-PARTY-NOTICES.txt"]
