@@ -76,10 +76,13 @@ server expects it.
 ## Linux (experimental, from source)
 
 Linux support includes drive discovery and ejection, audio-CD table-of-contents reads,
-native file/folder dialogs, file playback and desktop notifications. Python 3.10+ is
+native file/folder dialogs, file playback, desktop notifications, a tray menu and
+desktop keyring storage for OpenSubtitles passwords. Python 3.10+ is
 required, along with Linux MakeMKV for DVDs/Blu-rays and cyanrip for audio CDs.
 
-Run `python3 app.py`, then open `http://127.0.0.1:8765`. See the
+Run `python3 app.py`, then open `http://127.0.0.1:8765`, or use
+`python3 app.py --detach` to run in the background. The tray and keyring need the
+appropriate desktop services and libraries. See the
 [Linux setup and testing guide](docs/linux.md) for distribution-independent setup,
 hardware checks and the remaining differences from Windows. Linux support is still
 experimental; automated tests do not substitute for testing real discs and drives.

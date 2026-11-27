@@ -17,8 +17,12 @@ python3 app.py
 
 The interface opens in Chromium/Chrome app mode when available, otherwise in your
 default browser. You can also open `http://127.0.0.1:8765` yourself. Keep the terminal
-running. `python3 app.py --background` starts the server without opening a browser;
-it does not daemonize the process. Use the page's Quit button to exit.
+running, or use `python3 app.py --detach` to start an independent background process.
+The launcher prints the actual URL and log path, then exits. A second launch reuses
+the running instance. Logs go to `shelfrip.log` in the settings folder with mode 0600.
+`python3 app.py --background` suppresses the browser but stays in the foreground,
+which is useful when launching through a service manager of your choice.
+Use the page's Quit button or the desktop tray menu to exit.
 The Restart button stops active work after confirmation and relaunches Shelfrip
 on the same port with the same settings. `--port=8765` selects a starting port.
 
@@ -30,8 +34,8 @@ forced stop after a short grace period. Partial rips stay in the rip folder.
 Set Linux paths for the rip and library folders, for example `/home/you/Ripped`
 and `/home/you/Media`. Settings live in `$XDG_CONFIG_HOME/shelfrip`, or
 `~/.config/shelfrip`. `SHELFRIP_DATA` overrides this location. Newly saved settings
-have mode 0600 because API keys and the OpenSubtitles password are stored there.
-The OpenSubtitles password is **not encrypted** on Linux.
+have mode 0600 because API keys are stored there. New OpenSubtitles passwords go
+into the desktop Secret Service keyring; settings contain only an opaque reference.
 
 System tools used by the Linux integration:
 
@@ -42,12 +46,55 @@ System tools used by the Linux integration:
 - `zenity` or `kdialog`: native file/folder dialogs. KDE prefers kdialog when
   available. If neither is installed, type paths into settings.
 - `notify-send` (libnotify): optional desktop notifications.
+- `secret-tool` (libsecret tools) and a Secret Service provider, such as GNOME
+  Keyring or a compatible KWallet configuration: OpenSubtitles password storage.
+- GTK3 and Ayatana AppIndicator3 (or legacy AppIndicator3), plus a desktop
+  StatusNotifier/AppIndicator host: optional tray icon.
 - `cyanrip`: audio-CD ripping. CD drive offsets accept `/dev/sr0=6, /dev/sr1=667`.
 - MKVToolNix (`mkvmerge`, `mkvextract`, `mkvpropedit`): media inspection and splitting.
 - `tesseract`: optional subtitle OCR.
 
 Desktop tools need a graphical login session. They are optional for using the
 local web interface on a headless machine. Drive access is still required for ripping.
+
+## Passwords and the desktop keyring
+
+Unlock your desktop keyring before saving or using the OpenSubtitles password.
+Shelfrip passes the password to `secret-tool` over standard input, never on the
+command line. If the helper or keyring is unavailable, saving fails with an
+actionable message and keeps the previous settings; it does not save plaintext.
+Other ripping features remain available without a keyring. Settings polling does
+not unlock the keyring; a password lookup happens when OpenSubtitles is used.
+
+Existing plaintext passwords remain readable for compatibility. In Settings >
+Names and lookups, choose **Move to keyring** to migrate one explicitly, or enter
+a replacement. **Remove saved password** clears the settings reference and removes
+the saved keyring item. Replacement verifies the new item before updating settings
+and deleting the old item. Failed writes keep the previous credentials. If deletion
+fails, Settings asks you to remove the unused item in your keyring manager.
+Migration does not rewrite old settings backups; remove any obsolete copies that
+contain the old password. A settings reference alone is not a password backup:
+after moving to another machine or account, enter your password again.
+
+## Tray and background operation
+
+Enable **Show a desktop tray icon** under Settings > App and restart Shelfrip.
+The menu opens the interface or pending reviews, toggles auto-ripping, opens the
+log when available, and restarts or quits. Closing the browser or app window leaves
+Shelfrip running. Restart or Quit from the tray opens the page for confirmation if
+work is active, so an accidental click does not interrupt a rip.
+
+The tray uses the desktop's StatusNotifier/AppIndicator protocol, on X11 or Wayland
+through GTK3. Some desktops supply a host directly; GNOME needs an AppIndicator
+extension. GTK runs in a separate helper process that exits when Shelfrip stops or
+crashes. A connected indicator reconnects when its tray host returns. Missing
+libraries, a missing host or a headless session leave the web interface usable;
+Settings > App shows why the tray could not connect. After installing or enabling
+tray support, restart Shelfrip. Detached mode works without a tray.
+
+Run desktop features within your graphical login session so they inherit its
+display and session bus. `--detach` does not install a login-startup entry or a
+system service, and does not promise to survive logging out of that session.
 
 ## Distribution compatibility
 
@@ -93,6 +140,8 @@ That fallback may scan other drives, and does not provide Linux audio-CD detecti
 ```sh
 python3 tests/test_linux.py
 python3 tests/test_processes.py
+python3 tests/test_keyring.py
+python3 tests/test_background.py
 python3 tests/run_all.py
 ```
 
@@ -105,6 +154,25 @@ then stops its child process. No tests eject a physical drive or start a real ri
 Process tests create real subprocess trees and verify cancellation, graceful
 shutdown and abrupt parent death, including children that ignore termination.
 The application smoke test also verifies restart and quit through their APIs.
+Password tests cover missing/locked keyrings, exact password round-trips, secret
+redaction, migration and rollback when settings cannot be written. Background tests
+launch the real detached application, reuse it, restart it and quit it without a
+graphical session.
+
+An additional native integration suite runs with a temporary home, private D-Bus
+session, Xvfb, a real GNOME Keyring and a test StatusNotifier host:
+
+```sh
+python3 tests/desktop_services.py
+```
+
+It needs `dbus-run-session`, Xvfb, xauth, GTK3, Ayatana AppIndicator3, libsecret tools,
+GNOME Keyring and PyGObject. PyGObject is only used by the test host, not Shelfrip.
+The suite checks real password migration/replacement/removal, exported tray menus,
+menu activation, status updates, host reconnection, missing-host fallback and helper
+cleanup after abrupt parent death. CI runs this separately from the standard-library
+test suite and the Debian/Alpine portability tests. It does not establish appearance
+or window behaviour in a user's actual GNOME/KDE Wayland session.
 
 Before calling Linux support hardware-validated, test with a separate rip/library
 folder and auto-rip/auto-file disabled:
@@ -145,13 +213,11 @@ subprocess and HTTP integration tests.
 
 ## Remaining Windows parity work
 
-- Native Linux tray and desktop background integration.
 - Linux installer/packages and an appropriate update mechanism. The Windows
   installer/update flow is not a Linux updater.
 - Reading CD-Text from audio discs on Linux. MusicBrainz lookup works independently.
 - Mounted-disc fingerprinting and TheDiscDB scanner integration, which still use
   Windows drive-root assumptions in the application.
-- Desktop keyring storage for passwords, instead of permission-restricted settings.
 - Full physical-drive and graphical-session testing as listed above.
 
 Linux support does not yet provide complete Windows feature parity.

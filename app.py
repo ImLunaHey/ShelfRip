@@ -673,6 +673,8 @@ def restart_app(ask: bool = True) -> None:
         if not _EXIT_LOCK.acquire(blocking=False):
             return
         stop_work()
+        if TRAY:
+            TRAY.remove()
         # exec preserves the process ID and environment, closes non-inheritable
         # sockets and resets all worker threads. No helper can race the old server.
         command = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, str(Path(__file__).resolve())]
@@ -714,6 +716,13 @@ def start_tray(url: str, use_window: bool) -> None:
         shown["console"] = not shown["console"]
         desktop.show_console(shown["console"])
 
+    def tray_action(action):
+        if sys.platform.startswith("linux") and not _confirm_exit(True):
+            desktop.open_window(url, use_window)
+            desktop.notify("Shelfrip is still working", "Use Restart or Quit on the page to confirm stopping active jobs.")
+            return
+        action()
+
     def menu():
         try:
             n = len(review.list_plans())
@@ -728,14 +737,15 @@ def start_tray(url: str, use_window: bool) -> None:
             items.append(("Hide log window" if shown["console"] else "Show log window", toggle_console))
         elif desktop.LOG_PATH.exists():
             items.append(("Open the log", lambda: desktop.open_file(desktop.LOG_PATH)))
-        items += [None, ("Restart Shelfrip", restart_app), ("Quit Shelfrip", quit_app)]
+        items += [None, ("Restart Shelfrip", lambda: tray_action(restart_app)),
+                  ("Quit Shelfrip", lambda: tray_action(quit_app))]
         return items
 
     console = desktop.owns_console()
-    tray = desktop.Tray("Shelfrip", lambda: desktop.open_window(url, use_window), menu)
+    tray = desktop.create_tray("Shelfrip", lambda: desktop.open_window(url, use_window), menu)
+    TRAY = tray  # retain failure details for Settings; a missing tray doesn't stop the app
     if not tray.start():
         return
-    TRAY = tray
     if console:
         desktop.show_console(False)  # the tray icon is the way back in now
 
@@ -932,8 +942,8 @@ def setup_check() -> list[dict]:
     if cfg.get("subtitle_check"):
         if cfg.get("reference_subtitles"):
             import refsubs
-            why = refsubs.OpenSubtitles(cfg).ready()
-            out.append({"name": "OpenSubtitles.com", "ok": not why, "detail": why or "signed in",
+            why = refsubs.OpenSubtitles(cfg, resolve_password=False).ready()
+            out.append({"name": "OpenSubtitles.com", "ok": not why, "detail": why or "credentials saved",
                         "link": "https://www.opensubtitles.com/en/users/sign_up" if why else "", "required": False})
     plex = bool(cfg.get("plex_url")) and bool(cfg.get("plex_token")) and "paste" not in str(cfg.get("plex_token")).lower()
     out.append({"name": "Plex check", "ok": plex, "detail": "on" if plex else "off (optional: add the Plex address and token in Settings)",
@@ -1220,7 +1230,15 @@ def settings_view() -> dict:
             import music
             mr = str(music.music_root(merged))
             row["placeholder"] = f"{mr} ({'found in your library' if os.path.isdir(mr) else 'made when the first CD is filed'})"
+    password_storage = {"mode": "windows" if os.name == "nt" else "legacy"}
+    if sys.platform.startswith("linux"):
+        import linux_keyring
+        password_storage = linux_keyring.status(raw.get("opensubtitles_password") or "")
     return {"settings": out, "path": str(identify.CONFIG_PATH), "setup": setup_check(), "version": UPDATE,
+            "password_storage": password_storage,
+            "desktop": {"tray_active": bool(TRAY and TRAY.ok),
+                        "tray_error": getattr(TRAY, "error", "") if TRAY else "Tray is disabled.",
+                        "background": "--background" in sys.argv},
             "platform": sys.platform, "first_run": not raw.get("setup_done") and not raw.get("migrated_from"),
             "setup_step": raw.get("setup_step") or 0}
 
@@ -1260,6 +1278,8 @@ def _clean_libraries(v, main: str) -> list[dict]:
 
 def _save_settings(values: dict) -> None:
     raw = _read_config(strict=True)
+    previous_password = raw.get("opensubtitles_password") or ""
+    password_changed = False
     if values.get("setup_done"):
         raw["setup_done"] = True
     if "setup_step" in values:  # which first-time setup screen you were on, so quitting halfway resumes there
@@ -1274,12 +1294,13 @@ def _save_settings(values: dict) -> None:
             continue
         if kind == "secret":
             if isinstance(v, str) and v.strip():  # empty = keep the current key
-                raw[key] = v.strip()
-                if key == "opensubtitles_password":  # encrypted for this Windows account
-                    import refsubs
-                    raw[key] = refsubs.protect(v.strip())
+                raw[key] = v if key == "opensubtitles_password" else v.strip()
+                if key == "opensubtitles_password":
+                    password_changed = True
             elif v is None:
                 raw[key] = ""
+                if key == "opensubtitles_password":
+                    password_changed = True
             continue
         if kind == "libraries":
             v = _clean_libraries(v, str(values.get("plex_library_root", raw.get("plex_library_root")) or ""))
@@ -1305,10 +1326,43 @@ def _save_settings(values: dict) -> None:
                 raise ValueError("That isn't a folder Shelfrip can use. Pick one with Browse.")
             v = rel
         raw[key] = v
+    if password_changed and raw.get("opensubtitles_password"):
+        import refsubs
+        raw["opensubtitles_password"] = refsubs.protect(raw["opensubtitles_password"])
     try:
         paths.write_config(raw)
     except OSError as e:
+        if password_changed and sys.platform.startswith("linux"):
+            import linux_keyring
+            linux_keyring.cleanup(raw.get("opensubtitles_password") or "")
         raise ValueError(f"Couldn't save settings ({e}). Another program may have config.json open: try again in a moment.")
+    if password_changed and sys.platform.startswith("linux"):
+        import linux_keyring
+        linux_keyring.cleanup(previous_password)
+
+
+def migrate_password() -> None:
+    """Move an existing plaintext password only after explicit user action."""
+    if not sys.platform.startswith("linux"):
+        raise ValueError("Keyring migration is available on Linux.")
+    import linux_keyring
+    import refsubs
+    with paths.CONFIG_LOCK:
+        raw = _read_config(strict=True)
+        stored = raw.get("opensubtitles_password") or ""
+        if not stored or linux_keyring.is_reference(stored):
+            return
+        password = refsubs.reveal(stored)
+        if not password:
+            raise ValueError("The old password cannot be read here. Enter it again in Settings.")
+        reference = linux_keyring.store(password)
+        raw["opensubtitles_password"] = reference
+        try:
+            paths.write_config(raw)
+        except OSError:
+            linux_keyring.cleanup(reference)
+            raise ValueError("Couldn't save settings. The original password has been kept.") from None
+    review.reload_config()
 
 
 # --------------------------------------------------------------------------- web
@@ -1355,6 +1409,12 @@ class Handler(review.Handler):
                                               f"http://127.0.0.1:{review.PORT}"):
             return self.send(403, {"error": "forbidden"})
         u = urllib.parse.urlparse(self.path)
+        if u.path == "/api/keyring/migrate":
+            try:
+                migrate_password()
+                return self.send(200, {"ok": True, **settings_view()})
+            except ValueError as exc:
+                return self.send(200, {"error": str(exc)})
         if u.path == "/api/report":
             if REPORT.get("state") != "running":
                 threading.Thread(target=build_report, daemon=True).start()
@@ -1579,6 +1639,15 @@ def open_server() -> tuple[Server | None, int]:
 
 def main() -> None:
     global RIPPER
+    if "--detach" in sys.argv:
+        if not sys.platform.startswith("linux"):
+            raise SystemExit("--detach is supported on Linux.")
+        import background
+        args = [a for a in sys.argv[1:] if a not in ("--detach", "--background")]
+        result = background.launch([sys.executable, str(Path(__file__).resolve()), *args], desktop.LOG_PATH)
+        print(f"Shelfrip {'is already running' if result['existing'] else 'started in the background'}: "
+              f"http://127.0.0.1:{result['port']}/ (log: {desktop.LOG_PATH})")
+        return
     for arg in sys.argv[1:]:
         if arg.startswith("--port="):
             port = int(arg.split("=", 1)[1])
@@ -1602,7 +1671,11 @@ def main() -> None:
     use_window = cfg.get("app_window", True)
     if srv is None:
         print("Shelfrip is already running. Opening it.")
-        desktop.open_window(url, use_window)
+        if "--background" not in sys.argv:
+            desktop.open_window(url, use_window)
+        if sys.platform.startswith("linux"):
+            import background
+            background.ready(port, existing=True)
         return
     if paths.MIGRATION_NOTE:
         print(paths.MIGRATION_NOTE)
@@ -1620,16 +1693,21 @@ def main() -> None:
     except Exception as exc:
         print(f"  couldn't name new rips: {exc}")
     print(f"Shelfrip: {url}  (quit from the tray icon by the clock, or the Quit button on the page)")
-    if cfg.get("tray_icon", True) or sys.stdout is None or not desktop.owns_console():
+    if cfg.get("tray_icon", True) or (os.name == "nt" and (sys.stdout is None or not desktop.owns_console())):
         start_tray(url, use_window)  # with no console window, the tray icon is the way to quit
-    if "--background" not in sys.argv:  # started with Windows: don't pop the page open
+    if "--background" not in sys.argv:
         threading.Timer(0.8, lambda: desktop.open_window(url, use_window)).start()
+    if sys.platform.startswith("linux"):
+        import background
+        background.ready(port)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
         stop_work()
+        if TRAY:
+            TRAY.remove()
         srv.server_close()
 
 

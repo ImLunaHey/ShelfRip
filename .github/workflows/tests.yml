@@ -33,3 +33,14 @@ jobs:
           -e PYTHONDONTWRITEBYTECODE=1
           -e SHELFRIP_DATA=/tmp/shelfrip-tests
           ${{ matrix.image }} python tests/run_all.py
+  linux-desktop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native desktop test dependencies
+        run: >-
+          sudo apt-get update && sudo apt-get install -y
+          python3-gi libayatana-appindicator3-1 libsecret-tools gnome-keyring
+          dbus-x11 xvfb xauth
+      - name: Test an isolated keyring and native tray
+        run: /usr/bin/python3 tests/desktop_services.py

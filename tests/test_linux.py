@@ -324,6 +324,23 @@ class Processes(unittest.TestCase):
 
 @unittest.skipUnless(sys.platform.startswith("linux"), "Linux application smoke test")
 class Application(unittest.TestCase):
+    def test_busy_tray_quit_opens_page_for_confirmation(self):
+        import app
+        tray = Mock()
+        tray.start.return_value = False  # inspect callbacks without starting a polling thread
+        with patch.object(app.desktop, "create_tray", return_value=tray) as create, \
+                patch.object(app, "tray_status", return_value="Ripping"), \
+                patch.object(app.desktop, "open_window") as opened, \
+                patch.object(app.desktop, "notify") as notify, \
+                patch.object(app, "RIPPER", Mock(busy={"/dev/sr0"})), \
+                patch.object(app, "TRAY"), patch.object(app, "quit_app") as quit_app:
+            app.start_tray("http://127.0.0.1:8765/", True)
+            menu = create.call_args.args[2]()
+            next(item[1] for item in menu if item and item[0] == "Quit Shelfrip")()
+        quit_app.assert_not_called()
+        opened.assert_called_once_with("http://127.0.0.1:8765/", True)
+        notify.assert_called_once()
+
     def test_restart_and_quit_require_confirmation_when_busy(self):
         import app
         for route in ("/api/restart", "/api/quit"):
@@ -427,12 +444,22 @@ const SETS = {platform: 'linux'}, SET_STATUS = {}, esc = x => String(x ?? '');
 ''' + renderer + '''
 const meta = ['opensubtitles_password', 'Password', 'Encrypted for your Windows account.'];
 const linux = setField({value: false, kind: 'secret'}, meta);
-assert.ok(linux.includes('not encrypted on Linux'));
+assert.ok(linux.includes('Secret Service keyring'));
+assert.ok(linux.includes('Install secret-tool'));
 assert.ok(!linux.includes('Encrypted for your Windows account'));
+SETS.password_storage = {mode: 'legacy', helper_available: true};
+const legacy = setField({value: true, kind: 'secret'}, meta);
+assert.ok(legacy.includes('Move to keyring'));
+assert.ok(legacy.includes('Remove saved password'));
+assert.ok(legacy.includes('Older backups are not changed'));
+SETS.password_storage = {mode: 'keyring', helper_available: true};
+assert.ok(!setField({value: true, kind: 'secret'}, meta).includes('Move to keyring'));
+SETS.desktop = {tray_active: true};
+assert.ok(setField({value: true, kind: 'bool'}, ['tray_icon', '', '']).includes('Tray connected'));
 SETS.platform = 'win32';
 const windows = setField({value: false, kind: 'secret'}, meta);
 assert.ok(windows.includes('Encrypted for your Windows account'));
-assert.ok(!windows.includes('not encrypted on Linux'));
+assert.ok(!windows.includes('Secret Service keyring'));
 '''
         checked = subprocess.run(["node"], input=script, text=True, encoding="utf-8", capture_output=True, timeout=20)
         self.assertEqual(checked.returncode, 0, checked.stderr)
