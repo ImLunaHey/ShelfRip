@@ -2094,9 +2094,20 @@ function setField(row, meta){
   let [key, label, help, o = {}] = meta;
   const v = row.value, id = "s_" + key;
   if ((SETS.platform || "").startsWith("linux")) {
-    if (key === "opensubtitles_password") help = "Stored in your settings file with access restricted to your user account; it is not encrypted on Linux.";
+    if (key === "opensubtitles_password") {
+      const storage = SETS.password_storage || {};
+      help = storage.mode === "legacy" ? "The existing password is still in your settings file. Move it to your desktop keyring below. Older backups are not changed."
+        : "Saved in your desktop Secret Service keyring. Settings contain only a reference; the keyring may ask you to unlock it.";
+      if (!storage.helper_available) help += " Install secret-tool (libsecret tools) and enable a Secret Service keyring to save or read passwords.";
+      if (storage.warning) help += " " + storage.warning;
+    }
     if (key === "cd_offsets") help = "For AccurateRip, for example /dev/sr0=6, /dev/sr1=667.";
-    if (key === "app_window") help = "Uses Chromium or Chrome when installed, otherwise your default browser. Keep Shelfrip running in the terminal; quit using the page's Quit button.";
+    if (key === "app_window") help = "Uses Chromium or Chrome when installed, otherwise your default browser. Closing the window leaves ripping running. Quit from this page or the tray menu.";
+    if (key === "tray_icon") {
+      label = "Show a desktop tray icon";
+      help = ((SETS.desktop || {}).tray_active ? "Tray connected: open Shelfrip, pause auto-rip, restart or quit from its menu."
+        : (SETS.desktop || {}).tray_error || "Requires GTK3, AppIndicator3 and a compatible desktop tray host.") + " Restart Shelfrip after changing this setting.";
+    }
   }
   const st = SET_STATUS[key] ? statusOf(SET_STATUS[key]) : null;
   const flag = st && st.name ? `<span class="chip ${st.ok ? "good" : st.required ? "warnc" : ""}">${st.ok ? "✓ found" : st.required ? "needed" : "not found"}</span>` : "";
@@ -2113,6 +2124,10 @@ function setField(row, meta){
   else ctl = `<input id="${id}" data-k="${key}" type="${row.kind === "number" ? "number" : "text"}" ${row.kind === "number" ? 'min="0"' : ""} value="${esc(v)}" ${row.placeholder ? `placeholder="${esc(row.placeholder)}"` : o.pick ? `placeholder="Click to choose a ${o.pick === "file" ? "file" : "folder"}"` : ""} class="${o.unit || o.short ? "short" : ""}" ${key.endsWith("_root") || key.endsWith("_dir") || key.endsWith("_folder") || key.endsWith("_path") ? 'spellcheck="false"' : ""}>`
     + (o.unit ? `<span class="unit">${esc(o.unit)}</span>` : "")
     + (o.pick ? `<button data-pick="${key}" data-kind="${o.pick}" ${o.under ? `data-under="${o.under}"` : ""}>Browse…</button>` : "");
+  if (key === "opensubtitles_password" && (SETS.platform || "").startsWith("linux") && v) {
+    if ((SETS.password_storage || {}).mode === "legacy") ctl += `<button id="migrate-password">Move to keyring</button>`;
+    ctl += `<button id="clear-password">Remove saved password</button>`;
+  }
   return `<div class="srow"><div class="lbl"><label for="${id}">${esc(label)}</label> ${flag}${helpHtml}</div><div class="ctl">${ctl}<span class="saved" data-saved="${key}"></span></div></div>`;
 }
 const FMTS = [["4k", "4K"], ["bluray", "Blu-ray"], ["dvd", "DVD"]];
@@ -2174,7 +2189,7 @@ function renderSettings(){
   if (!groups.some(g => g.id === SETGROUP)) SETGROUP = groups[0].id;
   const need = (j.setup||[]).filter(x => x.required && !x.ok);
   const g = groups.find(x => x.id === SETGROUP);
-  const items = g.items.filter(m => (m[0] !== "tray_icon" || !(SETS.platform || "").startsWith("linux")) && rows[m[0]] && !((m[3] || {}).when && !rows[m[3].when].value));
+  const items = g.items.filter(m => rows[m[0]] && !((m[3] || {}).when && !rows[m[3].when].value));
   const basic = items.filter(m => !(m[3] || {}).adv), adv = items.filter(m => (m[3] || {}).adv);
   const icon = d => `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"/></svg>`;
   const groupNeeds = gg => gg.items.some(m => SET_STATUS[m[0]] && need.some(x => x.name === SET_STATUS[m[0]]));
@@ -2198,6 +2213,19 @@ function renderSettings(){
   if ($("#advt", el)) $("#advt", el).onclick = () => { SHOWADV = !SHOWADV; renderSettings(); };
   el.querySelectorAll("[data-change]").forEach(b => b.onclick = () => { const i = $("#s_" + b.dataset.change, el); i.classList.remove("hide"); i.focus(); b.remove(); });
   el.querySelectorAll("[data-k]").forEach(i => i.onchange = () => saveOne(i));
+  for (const id of ["migrate-password", "clear-password"]) {
+    const button = $("#" + id, el);
+    if (!button) continue;
+    button.onclick = async () => {
+      button.disabled = true;
+      try {
+        const result = id === "migrate-password" ? await api("/api/keyring/migrate", {})
+          : await api("/api/settings", {values:{opensubtitles_password:null}});
+        if (result.error) throw new Error(result.error);
+        SETS = result; renderSettings();
+      } catch (e) { alert(e.message || String(e)); button.disabled = false; }
+    };
+  }
   wireLibs(el);
   if ($("#inbox", el)) loadInbox($("#inbox", el));
   if ($("#probbtn", el)) $("#probbtn", el).onclick = async () => {
@@ -2227,7 +2255,7 @@ function renderSettings(){
 }
 async function saveOne(i){
   const k = i.dataset.k, mark = $(`[data-saved="${k}"]`);
-  let v = i.type === "checkbox" ? i.checked : i.value.trim();
+  let v = i.type === "checkbox" ? i.checked : i.dataset.k === "opensubtitles_password" ? i.value : i.value.trim();
   if (i.type === "password" && !v) return;
   if (i.type === "number" && (v === "" || isNaN(+v) || +v < 0)){  // not a number: put the saved value back
     const row = SETS.settings.find(r => r.key === k); i.value = row ? row.value : ""; return;

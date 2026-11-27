@@ -1,5 +1,5 @@
 r"""
-desktop.py - Shelfrip as a Windows app: its own window, and an icon by the clock.
+desktop.py - Shelfrip's desktop window, tray, dialogs and notifications.
 
   open_window(url)   opens the page in an app window (Edge's app mode: no tabs or address
                      bar; Edge comes with Windows 10 and 11), else Chrome, else the browser.
@@ -9,7 +9,7 @@ desktop.py - Shelfrip as a Windows app: its own window, and an icon by the clock
   hide_console()     hides the black console window once the tray icon is up.
 
 Windows integration uses ctypes. Linux uses desktop programs on PATH for opening files,
-dialogs and notifications; the tray remains Windows-only. Python dependencies are standard library.
+dialogs and notifications, plus GTK3/AppIndicator for the tray. Python dependencies are standard library.
 """
 
 from __future__ import annotations
@@ -21,11 +21,26 @@ import subprocess
 import sys
 import threading
 import webbrowser
+import zlib
 from pathlib import Path
 
 import paths
 
 ICON_PATH = paths.DATA_DIR / "shelfrip.ico"
+
+
+def create_tray(tip, on_click, menu):
+    if sys.platform.startswith("linux"):
+        from linux_tray import LinuxTray
+        icon = paths.DATA_DIR / "shelfrip-tray.png"
+        rows = b"".join(b"\0" + bytes(c for pixel in row for c in pixel) for row in _pixels(64))
+        def chunk(kind, data):
+            return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+        icon.parent.mkdir(parents=True, exist_ok=True)
+        icon.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 64, 64, 8, 6, 0, 0, 0))
+                         + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+        return LinuxTray(tip, on_click, menu, str(icon))
+    return Tray(tip, on_click, menu)
 
 
 # --------------------------------------------------------------------------- icon
