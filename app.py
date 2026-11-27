@@ -61,6 +61,12 @@ SETTINGS = [  # (key, label, kind)
     ("media_server", "Media server (decides how files are named)", "select"),
     ("extras_style", "How special features are filed", "select"),
     ("episode_style", "How episode numbers are written in file names", "select"),
+    ("handbrake_enabled", "Re-encode with HandBrake while filing (off = filed exactly as ripped)", "bool"),
+    ("handbrake_cli", "HandBrakeCLI.exe (empty = find it)", "text"),
+    ("handbrake_preset_file", "HandBrake presets file (empty = HandBrake's own)", "text"),
+    ("handbrake_preset", "HandBrake preset name", "text"),
+    ("handbrake_scope", "What HandBrake encodes", "select"),
+    ("handbrake_keep_tracks", "Keep every audio and subtitle track when encoding", "bool"),
     ("format_folders", "Separate folders per format (Movies\\Blu-Ray\\..., Movies\\DVD\\...)", "bool"),
     ("use_dvdcompare", "Also look up extras names on DVDCompare (reads its web pages)", "bool"),
     ("use_community", "Look discs up in the shared Shelfrip disc database", "bool"),
@@ -111,6 +117,8 @@ SETTINGS = [  # (key, label, kind)
 CHOICES = {"media_server": [{"value": k, "label": v} for k, v in naming.SERVERS.items()],
            "extras_style": [{"value": "folders", "label": "In folders: Featurettes\\Making Of.mkv"},
                             {"value": "suffix", "label": "Tagged in the name: Making Of-featurette.mkv"}],
+           "handbrake_scope": [{"value": "main", "label": "Movies and episodes only"},
+                               {"value": "all", "label": "Everything, special features too"}],
            "episode_style": [{"value": "lower", "label": "s01e02 (as in Plex's guide)"},
                              {"value": "upper", "label": "S01E02"}]}
 
@@ -1136,6 +1144,17 @@ def settings_view() -> dict:
             there = (bool(lib) or identify.is_full_path(name)) and identify.lib_path(Path(lib), name).is_dir()
             row["placeholder"] = f"{name} ({'found in your library' if there else 'made when the first disc is filed'})"
             row["value"] = identify.clean_lib_dir(row["value"], lib) or row["value"]
+        elif row["key"] in ("handbrake_cli", "handbrake_preset_file", "handbrake_preset"):
+            import handbrake
+            if row["key"] == "handbrake_cli":
+                row["placeholder"] = handbrake.cli(merged) or "not found: download HandBrakeCLI from handbrake.fr"
+            elif row["key"] == "handbrake_preset_file":
+                f = handbrake.preset_file(merged)
+                row["placeholder"] = str(f) if f else "export your preset from HandBrake (Presets > Export)"
+            else:
+                names = [p["PresetName"] for p in handbrake.presets(merged)]
+                row["placeholder"] = ("for example " + ", ".join(names[:4])) if names else "the name of your saved preset"
+                row["presets"] = names
         elif row["key"] == "music_library_root" and lib:
             import music
             mr = str(music.music_root(merged))

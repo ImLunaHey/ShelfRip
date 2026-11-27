@@ -103,4 +103,16 @@ def episode_code(cfg: dict, name: str) -> str:
 def page_info(cfg: dict) -> dict:
     """What the review page needs to build names the same way."""
     return {"server": server(cfg), "server_name": server_name(cfg), "extras_suffix": extras_suffixed(cfg),
-            "episodes_upper": episodes_upper(cfg)}
+            "episodes_upper": episodes_upper(cfg), **_handbrake_info(cfg)}
+
+
+def _handbrake_info(cfg: dict) -> dict:
+    """For the page's file names: HandBrake may write .mp4, and only for some titles."""
+    try:
+        import handbrake
+        if handbrake.enabled(cfg):
+            return {"handbrake": {"ext": handbrake.extension(cfg), "scope": cfg.get("handbrake_scope") or "main",
+                                  "preset": cfg.get("handbrake_preset") or ""}}
+    except Exception:
+        pass
+    return {}
