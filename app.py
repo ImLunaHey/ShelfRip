@@ -1230,10 +1230,10 @@ def settings_view() -> dict:
             import music
             mr = str(music.music_root(merged))
             row["placeholder"] = f"{mr} ({'found in your library' if os.path.isdir(mr) else 'made when the first CD is filed'})"
-    password_storage = {"mode": "windows" if os.name == "nt" else "legacy"}
+    password_storage = {}
     if sys.platform.startswith("linux"):
         import linux_keyring
-        password_storage = linux_keyring.status(raw.get("opensubtitles_password") or "")
+        password_storage = linux_keyring.status()
     return {"settings": out, "path": str(identify.CONFIG_PATH), "setup": setup_check(), "version": UPDATE,
             "password_storage": password_storage,
             "desktop": {"tray_active": bool(TRAY and TRAY.ok),
@@ -1341,30 +1341,6 @@ def _save_settings(values: dict) -> None:
         linux_keyring.cleanup(previous_password)
 
 
-def migrate_password() -> None:
-    """Move an existing plaintext password only after explicit user action."""
-    if not sys.platform.startswith("linux"):
-        raise ValueError("Keyring migration is available on Linux.")
-    import linux_keyring
-    import refsubs
-    with paths.CONFIG_LOCK:
-        raw = _read_config(strict=True)
-        stored = raw.get("opensubtitles_password") or ""
-        if not stored or linux_keyring.is_reference(stored):
-            return
-        password = refsubs.reveal(stored)
-        if not password:
-            raise ValueError("The old password cannot be read here. Enter it again in Settings.")
-        reference = linux_keyring.store(password)
-        raw["opensubtitles_password"] = reference
-        try:
-            paths.write_config(raw)
-        except OSError:
-            linux_keyring.cleanup(reference)
-            raise ValueError("Couldn't save settings. The original password has been kept.") from None
-    review.reload_config()
-
-
 # --------------------------------------------------------------------------- web
 
 class Handler(review.Handler):
@@ -1409,12 +1385,6 @@ class Handler(review.Handler):
                                               f"http://127.0.0.1:{review.PORT}"):
             return self.send(403, {"error": "forbidden"})
         u = urllib.parse.urlparse(self.path)
-        if u.path == "/api/keyring/migrate":
-            try:
-                migrate_password()
-                return self.send(200, {"ok": True, **settings_view()})
-            except ValueError as exc:
-                return self.send(200, {"error": str(exc)})
         if u.path == "/api/report":
             if REPORT.get("state") != "running":
                 threading.Thread(target=build_report, daemon=True).start()

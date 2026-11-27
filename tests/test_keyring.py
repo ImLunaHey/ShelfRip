@@ -56,13 +56,13 @@ class Backend(unittest.TestCase):
         with patch.object(keyring.subprocess, "run") as run:
             with self.assertRaisesRegex(ValueError, "Invalid password reference"):
                 keyring.lookup("secret-service:--help")
-            keyring.cleanup("legacy")
+            keyring.cleanup("invalid-reference")
         run.assert_not_called()
 
     def test_failed_cleanup_is_reported_without_undoing_save(self):
         with patch.object(keyring, "_run", side_effect=keyring.KeyringError("locked")):
             keyring.cleanup(OLD)
-        self.assertIn("could not be removed", keyring.status(NEW)["warning"])
+        self.assertIn("could not be removed", keyring.status()["warning"])
         with patch.object(keyring, "_run", return_value=""):
             keyring.cleanup(OLD)
         self.assertEqual(keyring.WARNING, "")
@@ -117,7 +117,6 @@ class Settings(unittest.TestCase):
         with patch.object(keyring, "lookup", side_effect=AssertionError("must not unlock")) as lookup:
             view = app.settings_view()
         lookup.assert_not_called()
-        self.assertEqual(view["password_storage"]["mode"], "keyring")
         row = next(r for r in view["settings"] if r["key"] == "opensubtitles_password")
         self.assertIs(row["value"], True)
         self.assertNotIn(OLD, json.dumps(view))
@@ -132,24 +131,13 @@ class Settings(unittest.TestCase):
         store.assert_not_called()
         clear.assert_called_once_with(OLD)
 
-    def test_migration_preserves_legacy_password_exactly_and_is_idempotent(self):
-        password = " legacy ü\n"
-        paths.write_config({"opensubtitles_password": password})
-        with patch.object(keyring, "store", return_value=NEW) as store:
-            app.migrate_password()
-            app.migrate_password()
-        store.assert_called_once_with(password)
-        self.assertEqual(self.saved(), NEW)
-
-    def test_failed_migration_retains_legacy_settings(self):
-        paths.write_config({"opensubtitles_password": "legacy"})
-        with patch.object(keyring, "store", return_value=NEW), \
-                patch.object(paths, "write_config", side_effect=OSError()), \
-                patch.object(keyring, "cleanup") as clear:
-            with self.assertRaisesRegex(ValueError, "original password has been kept"):
-                app.migrate_password()
-        self.assertEqual(self.saved(), "legacy")
-        clear.assert_called_once_with(NEW)
+    def test_linux_passwords_require_keyring_references(self):
+        with patch.object(keyring.subprocess, "run") as run:
+            self.assertEqual(refsubs.reveal(""), "")
+            for stored in ("plaintext-password", "dpapi:windows-password"):
+                with self.assertRaisesRegex(ValueError, "Invalid password reference"):
+                    refsubs.reveal(stored)
+        run.assert_not_called()
 
 
 if __name__ == "__main__":

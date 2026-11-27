@@ -85,7 +85,7 @@ def protect(password: str) -> str:
 
 
 def reveal(stored: str) -> str:
-    if stored and stored.startswith("secret-service:"):
+    if stored and (sys.platform.startswith("linux") or stored.startswith("secret-service:")):
         import linux_keyring
         return linux_keyring.lookup(stored)
     if not stored or not stored.startswith(PROTECTED):
