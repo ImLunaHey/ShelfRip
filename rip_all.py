@@ -45,7 +45,7 @@ CONFIG_PATH = paths.CONFIG_PATH
 
 DEFAULT_CONFIG = {
     # Where MakeMKV is installed. 64-bit is used if it exists.
-    "makemkvcon_path": r"C:\Program Files (x86)\MakeMKV\makemkvcon64.exe",
+    "makemkvcon_path": r"C:\Program Files (x86)\MakeMKV\makemkvcon64.exe" if os.name == "nt" else "",
     "output_root": "",   # chosen in the setup step (Settings)
     # Titles shorter than this are skipped (menus, logos, FBI warnings).
     # 30s keeps short extras like trailers; raise it if you get junk.
@@ -408,20 +408,27 @@ def windows_drives() -> list[dict] | None:
     } for i, d in enumerate(data)]
 
 
+_LINUX_AUDIO_DRIVES: dict[str, dict] = {}
+
+
 def scan_drives(cfg: dict) -> list[dict]:
-    """Optical drives and the discs in them. Asks Windows first (doesn't disturb busy drives),
-    falling back to MakeMKV's own drive list."""
+    """Optical drives and their media, using the OS's cached information when available.
+    Falls back to MakeMKV's drive list when native discovery is unavailable."""
     drives = None
     if os.name == "nt":
         drives = windows_drives()
         if drives is None:  # PowerShell can be slow while drives are busy; try once more
             drives = windows_drives()
+    elif sys.platform.startswith("linux"):
+        import linux_support
+        drives = linux_support.scan_drives()
     if drives is None:
         _, out = run_makemkv(cfg, ["--cache=1", "info", "disc:9999"])
         drives = parse_drives(out)
     if cfg.get("drives"):
-        wanted = {d.upper().rstrip("\\") for d in cfg["drives"]}
-        drives = [d for d in drives if d["device"].upper() in wanted]
+        normal = (lambda d: d.upper().rstrip("\\")) if os.name == "nt" else os.path.realpath
+        wanted = {normal(d) for d in cfg["drives"]}
+        drives = [d for d in drives if normal(d["device"]) in wanted]
     if os.name == "nt":
         try:  # audio CDs get a label from their MusicBrainz disc id ("Audio CD" isn't unique)
             import music
@@ -429,14 +436,35 @@ def scan_drives(cfg: dict) -> list[dict]:
                 music.label_drive(d)
         except Exception as exc:
             log(f"couldn't check for audio CDs: {exc}")
+    elif sys.platform.startswith("linux"):
+        import music
+        for d in drives:
+            dev = d["device"]
+            if d.get("audio"):
+                if dev in PROCS or (cfg.get("output_root") and drive_locked(cfg, dev)):
+                    previous = _LINUX_AUDIO_DRIVES.get(dev, {})
+                    d["disc_label"] = previous.get("disc_label", "Audio CD")
+                    if "toc" in previous:
+                        d["toc"] = previous["toc"]
+                else:
+                    music.label_drive(d)
+                    _LINUX_AUDIO_DRIVES[dev] = dict(d)
+            else:
+                _LINUX_AUDIO_DRIVES.pop(dev, None)
+        present = {d["device"] for d in drives}
+        for dev in list(_LINUX_AUDIO_DRIVES):
+            if dev not in present:
+                _LINUX_AUDIO_DRIVES.pop(dev, None)
     return drives
 
 
 def makemkv_source(drive: dict) -> str:
-    """dev:D: when we know the drive letter, otherwise MakeMKV's own drive index."""
+    """Use the device path/drive letter when known, otherwise MakeMKV's drive index."""
     dev = drive["device"]
     if re.fullmatch(r"[A-Za-z]:", dev):
         return f"dev:{dev.upper()}"
+    if sys.platform.startswith("linux") and dev.startswith("/dev/"):
+        return f"dev:{dev}"
     return f"disc:{drive['index']}"
 
 
@@ -495,6 +523,10 @@ def eject(device: str) -> None:
     The letter goes into a PowerShell command, so anything that isn't a plain drive letter is
     ignored rather than passed through (a drive name comes from MakeMKV and config files).
     """
+    if sys.platform.startswith("linux"):
+        import linux_support
+        linux_support.eject(device)
+        return
     m = re.fullmatch(r"\s*([A-Za-z]):?\\?\s*", str(device or ""))
     if not m:
         log(f"Not ejecting {device!r}: that isn't a drive letter")
