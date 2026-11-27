@@ -15,4 +15,3 @@ Existing catalog entries, saved rip metadata and shared-database records are not
 rewritten. An old hash for a disc with additional files will not match a new filtered
 hash. The old digest alone cannot be converted: the original file sizes or disc are
 needed. Compatibility handling for those records must be agreed before release.
-This change is intentionally separate from Linux platform support.
