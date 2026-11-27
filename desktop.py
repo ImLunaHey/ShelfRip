@@ -139,7 +139,6 @@ def _shelfrip_windows() -> list:
 
 def relaunch_command() -> str:
     """What a pinned taskbar button runs: Shelfrip.exe, or pythonw app.py when run from the scripts."""
-    import sys
     if getattr(sys, "frozen", False):
         return f'"{sys.executable}"'
     exe = Path(sys.executable)
@@ -152,7 +151,6 @@ def brand_window(hwnd) -> bool:
     with Shelfrip's icon, and pinning it pins Shelfrip. Uses the window's property store."""
     try:
         import ctypes
-        import sys
 
         class GUID(ctypes.Structure):
             _fields_ = [("a", ctypes.c_uint32), ("b", ctypes.c_uint16), ("c", ctypes.c_uint16), ("d", ctypes.c_ubyte * 8)]
@@ -268,7 +266,6 @@ LOG_PATH = paths.DATA_DIR / "shelfrip.log"
 def use_log_file() -> bool:
     """Started without a console window (Shelfrip.exe, pythonw)? Send what would have been
     printed there to shelfrip.log in the data folder instead. Returns True if it did."""
-    import sys
     if sys.stdout is not None and sys.stderr is not None:
         return False
     try:
@@ -366,7 +363,6 @@ def owns_console() -> bool:
         if not hwnd:
             return False
         ids = (ctypes.c_uint32 * 4)()
-        import sys
         # a one-file exe runs as two processes (unpacker + app) sharing the console
         return k32.GetConsoleProcessList(ids, 4) <= (2 if getattr(sys, "frozen", False) else 1)
     except Exception:
