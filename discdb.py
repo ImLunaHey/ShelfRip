@@ -58,11 +58,11 @@ def fingerprint(root: str) -> dict | None:
     """TheDiscDB content hash for a disc mounted at root (e.g. 'D:\\').
 
     MD5 over each file's size as an 8-byte little-endian number, files sorted by
-    name: BDMV\\STREAM\\*.m2ts for Blu-ray/4K, every file in VIDEO_TS for DVD.
+    name: BDMV\\STREAM\\*.m2ts for Blu-ray/4K, VIDEO_TS .IFO/.BUP/.VOB files for DVD.
     Only reads the directory listing, so it's quick and doesn't disturb the drive.
     """
     base = Path(root)
-    for sub, ext, layout in ((("BDMV", "STREAM"), ".m2ts", "bluray"), (("VIDEO_TS",), None, "dvd")):
+    for sub, ext, layout in ((("BDMV", "STREAM"), ".m2ts", "bluray"), (("VIDEO_TS",), (".ifo", ".bup", ".vob"), "dvd")):
         d = base.joinpath(*sub)
         try:
             if not d.is_dir():
