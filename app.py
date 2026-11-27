@@ -66,10 +66,10 @@ SETTINGS = [  # (key, label, kind)
     ("use_community", "Look discs up in the shared Shelfrip disc database", "bool"),
     ("shared_tmdb", "With no TMDB key of my own, use Shelfrip's shared key (asks TMDB through the Shelfrip server)", "bool"),
     ("share_discs", "Share what I file with the Shelfrip disc database (anonymous: disc fingerprint, title lengths and names only)", "bool"),
-    ("makemkvcon_path", "MakeMKV (makemkvcon64.exe)", "text"),
+    ("makemkvcon_path", "MakeMKV command-line program", "text"),
     ("mkvtoolnix_dir", "MKVToolNix folder", "text"),
     ("plex_url", "Plex address (Plex only, optional: lets the app check what Plex matched)", "text"),
-    ("cyanrip_path", "cyanrip for music CDs (empty = tools\\cyanrip\\cyanrip.exe)", "text"),
+    ("cyanrip_path", "cyanrip for music CDs (leave empty to find automatically)", "text"),
     ("cd_offsets", "CD drive read offsets, e.g. D:6, E:667 (for AccurateRip)", "text"),
     ("music_lyrics", "Save lyrics next to music tracks (.lrc / .txt, from LRCLIB)", "bool"),
     ("min_length_seconds", "Skip titles shorter than (seconds)", "number"),
@@ -79,7 +79,7 @@ SETTINGS = [  # (key, label, kind)
     ("eject_after_filing", "Eject each disc once you've filed (or discarded) it", "bool"),
     ("eject_when_done", "Eject each disc as soon as its rip finishes instead", "bool"),
     ("check_plex_before_rip", "Don't rip discs your library already has in the same or better quality", "bool"),
-    ("notifications", "Windows notifications when a rip finishes", "bool"),
+    ("notifications", "Desktop notifications when a rip finishes", "bool"),
     ("phone_notify_url", "Phone alerts: ntfy.sh topic address (optional, e.g. https://ntfy.sh/your-topic)", "text"),
     ("auto_rip", "Turn auto-rip on when the app opens", "bool"),
     ("auto_file", "File discs automatically when everything matched with confidence", "bool"),
@@ -101,7 +101,7 @@ SETTINGS = [  # (key, label, kind)
     ("opensubtitles_password", "OpenSubtitles.com password", "secret"),
     ("opensubtitles_api_key", "OpenSubtitles API key (optional: replaces Shelfrip's)", "secret"),
     ("reference_subtitles_per_disc", "Most subtitle downloads per disc", "number"),
-    ("tesseract_path", "Tesseract OCR (tesseract.exe), for reading Blu-ray and DVD subtitles", "text"),
+    ("tesseract_path", "Tesseract OCR, for reading Blu-ray and DVD subtitles", "text"),
     ("plex_token", "Plex token (Plex only, optional)", "secret"),
     ("check_updates", "Tell me when a new version of Shelfrip is out", "bool"),
     ("sounds", "Play sounds (a chime when a disc is filed, a fanfare when you level up)", "bool"),
@@ -142,6 +142,8 @@ def notify(title: str, text: str) -> None:
                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             except Exception:
                 pass
+        elif sys.platform.startswith("linux"):
+            desktop.notify(title, text)
         url = (cfg.get("phone_notify_url") or "").strip()
         if url.startswith("https://"):
             try:
@@ -847,7 +849,7 @@ def setup_check() -> list[dict]:
     import music
     cy = music.find_cyanrip(cfg)
     out.append({"name": "cyanrip (music CDs)", "ok": bool(cy),
-                "detail": cy or f"not found: needed to rip music CDs. Put cyanrip.exe (cyanrip-win64.exe) in {music.BUNDLED}",
+                "detail": cy or "not found: install cyanrip and add it to PATH, or set its location in Settings.",
                 "link": "" if cy else music.CYANRIP_URL, "required": False})
     mr = music.music_root(cfg)
     out.append({"name": "Music library folder", "ok": mr.is_dir(),
@@ -857,8 +859,8 @@ def setup_check() -> list[dict]:
     import subcheck  # shown even with the subtitle check off, so its Settings box gets a found / not found mark
     tess = subcheck.tesseract(cfg)
     out.append({"name": "Tesseract OCR (subtitle check)", "ok": bool(tess),
-                "detail": tess or "not found: needed to read Blu-ray and DVD picture subtitles for the subtitle check. "
-                          "Install it with: winget install UB-Mannheim.TesseractOCR",
+                "detail": tess or ("not found: needed to read Blu-ray and DVD picture subtitles for the subtitle check. " +
+                          ("Install it with: winget install UB-Mannheim.TesseractOCR" if os.name == "nt" else "Install your distribution's tesseract package.")),
                 "link": "" if tess else subcheck.TESSERACT_URL, "required": False})
     if cfg.get("subtitle_check"):
         if cfg.get("reference_subtitles"):
@@ -1141,7 +1143,7 @@ def settings_view() -> dict:
             mr = str(music.music_root(merged))
             row["placeholder"] = f"{mr} ({'found in your library' if os.path.isdir(mr) else 'made when the first CD is filed'})"
     return {"settings": out, "path": str(identify.CONFIG_PATH), "setup": setup_check(), "version": UPDATE,
-            "first_run": not raw.get("setup_done") and not raw.get("migrated_from"),
+            "platform": sys.platform, "first_run": not raw.get("setup_done") and not raw.get("migrated_from"),
             "setup_step": raw.get("setup_step") or 0}
 
 
@@ -1350,9 +1352,9 @@ class Handler(review.Handler):
             import community
             cfg = {**rip_all.DEFAULT_CONFIG, **JOB_DEFAULTS, **_read_config()}
             r = community.save_feedback_logs(int(self.body().get("id") or 0), cfg)
-            if r.get("path") and os.name == "nt":
+            if r.get("path"):
                 try:
-                    os.startfile(r["path"])
+                    desktop.open_file(Path(r["path"]))
                 except OSError:
                     pass
             return self.send(200, r)
@@ -1364,6 +1366,11 @@ class Handler(review.Handler):
             if os.name == "nt":
                 import subprocess
                 subprocess.Popen(["explorer", "/select,", str(dst)])
+            elif sys.platform.startswith("linux"):
+                try:
+                    desktop.open_file(dst.parent)
+                except OSError:
+                    pass  # the response still contains the report's path
             return self.send(200, {"path": str(dst), "issues": paths.APP_URL + "/issues/new"})
         if u.path == "/api/update":
             if not (UPDATE.get("installer") and UPDATE.get("can_install")):

@@ -8,8 +8,8 @@ desktop.py - Shelfrip as a Windows app: its own window, and an icon by the clock
   write_icon(path)   writes shelfrip.ico (the tray, the exe and the installer use it).
   hide_console()     hides the black console window once the tray icon is up.
 
-Everything here is standard library (ctypes); on other systems it does nothing, and the page
-opens in the browser as before.
+Windows integration uses ctypes. Linux uses desktop programs on PATH for opening files,
+dialogs and notifications; the tray remains Windows-only. Python dependencies are standard library.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ import os
 import shutil
 import struct
 import subprocess
+import sys
 import threading
 import webbrowser
 from pathlib import Path
@@ -77,6 +78,9 @@ def write_icon(path: Path = ICON_PATH) -> Path:
 # --------------------------------------------------------------------------- app window
 
 def _find_browser() -> str | None:
+    if sys.platform.startswith("linux"):
+        return next((p for name in ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable")
+                     if (p := shutil.which(name))), None)
     if os.name != "nt":
         return None
     roots = [os.environ.get(k) for k in ("ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA")]
@@ -248,7 +252,8 @@ def open_window(url: str, use_window: bool = True) -> None:
                              getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              close_fds=True)
-            threading.Thread(target=_brand_when_open, args=(before,), daemon=True).start()
+            if os.name == "nt":
+                threading.Thread(target=_brand_when_open, args=(before,), daemon=True).start()
             return
         except OSError:
             pass
@@ -293,10 +298,57 @@ def message_box(title: str, text: str) -> None:
 
 
 def open_file(path: Path) -> None:
+    if sys.platform.startswith("linux"):
+        exe = shutil.which("xdg-open")
+        if not exe:
+            raise OSError("Install xdg-utils to open files and folders from Shelfrip.")
+        proc = subprocess.Popen([exe, str(Path(path).resolve())], stdin=subprocess.DEVNULL,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        # Some desktop openers wait for the player/editor to close. Don't block the API.
+        threading.Thread(target=proc.wait, daemon=True).start()
+        return
+    os.startfile(str(path))  # type: ignore[attr-defined]
+
+
+def notify(title: str, text: str) -> bool:
+    """Linux desktop notification; optional on headless systems."""
+    exe = shutil.which("notify-send") if sys.platform.startswith("linux") else None
+    if not exe:
+        return False
     try:
-        os.startfile(str(path))  # type: ignore[attr-defined]
-    except Exception:
-        pass
+        return subprocess.run([exe, "--app-name=Shelfrip", "--", title, text],
+                              capture_output=True, timeout=10).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _pick_linux(kind: str, start: str, title: str) -> tuple[str | None, str]:
+    if kind not in ("folder", "file"):
+        return None, "Choose a file or folder."
+    title = title or ("Choose a folder" if kind == "folder" else "Choose the program")
+    filename = str(Path(start).expanduser().absolute()) if start else str(Path.home()) + "/"
+    if Path(filename).is_dir() and not filename.endswith("/"):
+        filename += "/"
+    zenity, kdialog = shutil.which("zenity"), shutil.which("kdialog")
+    kde = "kde" in os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
+    if kdialog and (kde or not zenity):
+        cmd = [kdialog, "--title", title, "--getexistingdirectory" if kind == "folder" else "--getopenfilename", filename]
+    elif zenity:
+        cmd = [zenity, "--file-selection", "--title=" + title, "--filename=" + filename]
+        if kind == "folder":
+            cmd.append("--directory")
+    else:
+        return None, "Install zenity or kdialog for the folder picker, or type the path instead."
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if result.returncode == 1:  # user cancelled
+            return "", ""
+        if result.returncode:
+            return None, result.stderr.strip() or "Couldn't open the picker. Type the path instead."
+        return result.stdout.rstrip("\r\n"), ""
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, f"Couldn't open the picker: {exc}. Type the path instead."
+
 
 def _console():
     import ctypes
@@ -676,6 +728,8 @@ def _pick_powershell(kind: str, start: str, title: str) -> str:
 def pick(kind: str = "folder", start: str = "", title: str = "") -> tuple[str | None, str]:
     """Windows' own folder (or .exe file) picker, for the Settings page.
     Returns (path, error): path is '' if cancelled, None if there's no picker (error says why)."""
+    if sys.platform.startswith("linux"):
+        return _pick_linux(kind, start, title)
     if os.name != "nt":
         return None, "There's no folder picker on this computer."
     errors = []

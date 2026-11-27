@@ -1420,8 +1420,8 @@ class Handler(BaseHTTPRequestHandler):
                 src = folder / Path(b["source"]).name
                 if b["source"].startswith("rip/"):  # a music CD's track
                     src = folder / "rip" / Path(b["source"]).name
-                if hasattr(os, "startfile"):
-                    os.startfile(str(src))  # opens in your default video player
+                import desktop
+                desktop.open_file(src)
                 return self.send(200, {"ok": True})
             if u.path == "/api/save":
                 plan = b["plan"]

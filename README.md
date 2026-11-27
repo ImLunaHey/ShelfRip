@@ -73,6 +73,17 @@ server expects it.
 - **Makes it a bit of a game.** Every disc you file earns XP towards your next rank, with daily goals,
   streaks and badges, and your collection fills a shelf.
 
+## Linux (experimental, from source)
+
+This fork adds Linux drive discovery and ejection, audio-CD table-of-contents reads,
+native file/folder dialogs, file playback and desktop notifications. Python 3.10+ is
+required, along with Linux MakeMKV for DVDs/Blu-rays and cyanrip for audio CDs.
+
+Run `python3 app.py`, then open `http://127.0.0.1:8765`. See the
+[Linux setup and testing guide](docs/linux.md) for dependencies, NixOS instructions,
+hardware checks and the remaining differences from Windows. Linux support is still
+experimental; automated tests do not substitute for testing real discs and drives.
+
 ## Quick start (Windows 10 or 11)
 
 1. **Install [MakeMKV](https://www.makemkv.com/download/).** It does the actual ripping. It's free
@@ -254,7 +265,8 @@ The server code, and how answers are decided, are in [server/](server/).
 
 ## Run from source
 
-You need Python 3.10 or newer on Windows. Only the standard library is used.
+You need Python 3.10 or newer. Only the Python standard library is used. Windows
+is the original supported platform; this fork's experimental Linux setup is described above.
 
 ```
 python app.py

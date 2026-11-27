@@ -1838,11 +1838,11 @@ function wzBody(id){
     }
     case "library": return `<h2>Where's your media library?</h2>
       <p>The folder that holds (or will hold) your Movies and TV Shows folders. It can be on another drive or a network share.</p>
-      ${wzFolder("plex_library_root", "Media library folder", "Click to choose a folder, for example D:\\Media")}
+      ${wzFolder("plex_library_root", "Media library folder", (SETS.platform || "").startsWith("linux") ? "For example /home/you/Media" : "Click to choose a folder, for example D:\\Media")}
       <label class="chk wz-chk"><input type="checkbox" data-w="format_folders" ${wzVal("format_folders") ? "checked" : ""}> Keep each format in its own folder (Movies\\Blu-Ray\\…, Movies\\DVD\\…)</label>`;
     case "rips": return `<h2>Where should discs be ripped to?</h2>
       <p>Discs are ripped here first, then moved into your library once you've checked the names. Pick a drive with plenty of room: about 50 GB per Blu-ray and 100 GB per 4K disc.</p>
-      ${wzFolder("output_root", "Rip folder", "Click to choose a folder, for example D:\\Ripped")}`;
+      ${wzFolder("output_root", "Rip folder", (SETS.platform || "").startsWith("linux") ? "For example /home/you/Ripped" : "Click to choose a folder, for example D:\\Ripped")}`;
     case "makemkv": {
       const c = wzChk("MakeMKV");
       return `<h2>${c.ok ? "MakeMKV is ready" : "Install MakeMKV"}</h2>
@@ -1850,7 +1850,7 @@ function wzBody(id){
         ${c.ok ? wzStatus("MakeMKV") : `<div class="wz-row"><a class="wz-btn primary" href="${esc(c.link || "https://www.makemkv.com/download/")}" target="_blank" rel="noopener">Download MakeMKV</a>
           <button id="wzrecheck">I've installed it, check again</button></div>
           ${wzStatus("MakeMKV")}
-          <p class="wz-muted">Installed somewhere unusual? <button class="linkish" data-wpick="makemkvcon_path" data-kind="file">Find makemkvcon64.exe…</button></p>`}`;
+          <p class="wz-muted">Installed somewhere unusual? <button class="linkish" data-wpick="makemkvcon_path" data-kind="file">Find the MakeMKV executable…</button></p>`}`;
     }
     case "tmdb": {
       const c = wzChk("TMDB key");
@@ -1920,7 +1920,7 @@ function wizard(){
     <div id="wizmsg" class="wz-muted" role="status"></div>
   </div>`;
 }
-// Opens Windows' folder or file picker for one setting and saves what's chosen.
+// Opens the native folder or file picker for one setting and saves what's chosen.
 async function pickInto(input, kind, title, start){
   const r = await api("/api/pick", {kind, start: start ?? input.value, title});
   if (r.available === false){ input.focus(); toast("Type the path", r.error || "There's no folder picker on this computer."); return null; }
@@ -1986,7 +1986,7 @@ function wireWizard(el){
     const key = b.dataset.wpick, input = $("#wz_" + key, el) || {value: wzVal(key) || "", focus(){}};
     b.disabled = true;
     try {
-      const got = await pickInto(input, b.dataset.kind, b.dataset.kind === "file" ? "Find makemkvcon64.exe" : "Choose a folder");
+      const got = await pickInto(input, b.dataset.kind, b.dataset.kind === "file" ? "Find the MakeMKV executable" : "Choose a folder");
       if (got) await save({[key]: got});
     } finally { b.disabled = false; }
   });
@@ -2052,7 +2052,7 @@ const SET_GROUPS = [
     ["share_discs", "Share what I file", "Anonymous: only the disc's fingerprint, title lengths and the names you chose. Makes the next person's rip of the same disc more reliable."],
     ["use_dvdcompare", "Also look up extras on DVDCompare", "Reads DVDCompare's web pages for extras lists by release."],
     ["omdb_api_key", "OMDb key", "Optional second opinion on a movie's year and length.", {link:"https://www.omdbapi.com/apikey.aspx", linkText:"Get a free key", adv:1}],
-    ["subtitle_check", "Check episode numbers against the subtitles", "After a TV disc is named, Shelfrip reads each episode's subtitles and checks the numbers against what is said, so discs that list episodes out of order and clip shows get the right numbers. It only reads: your files and tracks don't change. A disc whose dialogue disagrees waits for you instead of filing automatically. Blu-ray and DVD subtitles are pictures, so this needs the free Tesseract OCR (winget install UB-Mannheim.TesseractOCR)."],
+    ["subtitle_check", "Check episode numbers against the subtitles", "After a TV disc is named, Shelfrip reads each episode's subtitles and checks the numbers against what is said, so discs that list episodes out of order and clip shows get the right numbers. It only reads: your files and tracks don't change. A disc whose dialogue disagrees waits for you instead of filing automatically. Blu-ray and DVD subtitles are pictures, so this needs Tesseract OCR installed on your computer."],
     ["reference_subtitles", "Compare with subtitles from OpenSubtitles.com", "Much more reliable than plot summaries: each episode's dialogue is compared with that episode's subtitles. Needs a free OpenSubtitles.com account (20 downloads a day). Each episode is downloaded once and kept on this PC; the files are only used for matching and are never shared or added to your rips."],
     ["opensubtitles_username", "OpenSubtitles.com username", "", {link:"https://www.opensubtitles.com/en/users/sign_up", linkText:"Make a free account", short:1}],
     ["opensubtitles_password", "OpenSubtitles.com password", "Kept in your settings file, encrypted for your Windows account."],
@@ -2065,16 +2065,16 @@ const SET_GROUPS = [
   ]},
   {id:"music", name:"Music CDs", icon:"M9 18V5l12-2v13M9 18a3 3 0 1 1-6 0a3 3 0 0 1 6 0M21 16a3 3 0 1 1-6 0a3 3 0 0 1 6 0", intro:"Ripped to FLAC with cyanrip, named from MusicBrainz.", items:[
     ["music_lyrics", "Save lyrics next to tracks", "From LRCLIB, as .lrc (synced) or .txt files."],
-    ["cyanrip_path", "cyanrip", "Leave empty to use the copy in Shelfrip's tools folder.", {pick:"file", adv:1}],
+    ["cyanrip_path", "cyanrip", "Leave empty to find cyanrip in Shelfrip's tools folder or on PATH.", {pick:"file", adv:1}],
     ["cd_offsets", "CD drive read offsets", "For AccurateRip, for example D:6, E:667.", {adv:1}],
   ]},
   {id:"tools", name:"Programs", icon:"M14 7l3 3l4-4l-3-3zM3 21l9-9", intro:"Shelfrip finds these by itself; change them only if it can't.", items:[
-    ["makemkvcon_path", "MakeMKV (makemkvcon64.exe)", "Does the ripping.", {pick:"file"}],
+    ["makemkvcon_path", "MakeMKV command-line program", "Does the ripping.", {pick:"file"}],
     ["mkvtoolnix_dir", "MKVToolNix folder", "Splits TV discs that hold several episodes in one video.", {pick:"folder"}],
-    ["tesseract_path", "Tesseract OCR (tesseract.exe)", "Reads Blu-ray and DVD subtitles for the subtitle check. Leave empty to find it by itself.", {pick:"file", adv:1}],
+    ["tesseract_path", "Tesseract OCR", "Reads Blu-ray and DVD subtitles for the subtitle check. Leave empty to find it by itself.", {pick:"file", adv:1}],
   ]},
   {id:"alerts", name:"Notifications", icon:"M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10 21h4", intro:"", items:[
-    ["notifications", "Windows notifications", "When a rip finishes or a disc is filed."],
+    ["notifications", "Desktop notifications", "When a rip finishes or a disc is filed."],
     ["phone_notify_url", "Phone alerts", "An ntfy.sh topic address, for example https://ntfy.sh/your-topic. Install the ntfy app and subscribe to the same topic."],
   ]},
   {id:"app", name:"Shelfrip", icon:"M4 4h16v12H4zM8 20h8", intro:"", items:[
@@ -2090,7 +2090,13 @@ let SETS = null, SETGROUP = "library", SHOWADV = false;
 const statusOf = n => (SETS.setup || []).find(x => x.name === n) || {};
 const SET_STATUS = {output_root:"Rip folder", plex_library_root:"Media library folder", makemkvcon_path:"MakeMKV", mkvtoolnix_dir:"MKVToolNix", tmdb_api_key:"TMDB key", cyanrip_path:"cyanrip (music CDs)", tesseract_path:"Tesseract OCR (subtitle check)"};
 function setField(row, meta){
-  const [key, label, help, o = {}] = meta, v = row.value, id = "s_" + key;
+  let [key, label, help, o = {}] = meta;
+  const v = row.value, id = "s_" + key;
+  if ((SETS.platform || "").startsWith("linux")) {
+    if (key === "opensubtitles_password") help = "Stored in your settings file with access restricted to your user account; it is not encrypted on Linux.";
+    if (key === "cd_offsets") help = "For AccurateRip, for example /dev/sr0=6, /dev/sr1=667.";
+    if (key === "app_window") help = "Uses Chromium or Chrome when installed, otherwise your default browser. Keep Shelfrip running in the terminal; quit using the page's Quit button.";
+  }
   const st = SET_STATUS[key] ? statusOf(SET_STATUS[key]) : null;
   const flag = st && st.name ? `<span class="chip ${st.ok ? "good" : st.required ? "warnc" : ""}">${st.ok ? "✓ found" : st.required ? "needed" : "not found"}</span>` : "";
   const link = o.link ? `<a href="${esc(o.link)}" target="_blank" rel="noopener">${esc(o.linkText || "More")}</a>` : "";
@@ -2167,7 +2173,7 @@ function renderSettings(){
   if (!groups.some(g => g.id === SETGROUP)) SETGROUP = groups[0].id;
   const need = (j.setup||[]).filter(x => x.required && !x.ok);
   const g = groups.find(x => x.id === SETGROUP);
-  const items = g.items.filter(m => rows[m[0]] && !((m[3] || {}).when && !rows[m[3].when].value));
+  const items = g.items.filter(m => (m[0] !== "tray_icon" || !(SETS.platform || "").startsWith("linux")) && rows[m[0]] && !((m[3] || {}).when && !rows[m[3].when].value));
   const basic = items.filter(m => !(m[3] || {}).adv), adv = items.filter(m => (m[3] || {}).adv);
   const icon = d => `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"/></svg>`;
   const groupNeeds = gg => gg.items.some(m => SET_STATUS[m[0]] && need.some(x => x.name === SET_STATUS[m[0]]));
@@ -2327,7 +2333,7 @@ function feedbackDialog(pre){
       <label>In a few words<input type="text" id="fbt" maxlength="200" value="${esc(keep.t)}" placeholder="${FBKIND === "problem" ? "e.g. Filing stops at 50% on TV discs" : "e.g. Show the runtime on each title"}"></label>
       <label>Details<textarea id="fbm" maxlength="5000" placeholder="${FBKIND === "problem" ? "What did you do, what happened, and what did you expect?" : "Tell us more"}">${esc(keep.m)}</textarea></label>
       <label>Your email, if you'd like a reply (optional)<input type="text" id="fbc" maxlength="200" value="${esc(keep.c)}" autocomplete="email"></label>
-      <label class="chk"><input type="checkbox" id="fbv" checked> Add my Shelfrip and Windows versions</label>
+      <label class="chk"><input type="checkbox" id="fbv" checked> Add my Shelfrip and operating system versions</label>
       ${FBKIND !== "idea" ? `<label class="chk"><input type="checkbox" id="fbl" ${keep.l === false ? "" : "checked"}> Include logs from ${pre && pre.label ? "this disc's rip" : "my latest rips"}
         <span style="color:var(--muted);font-size:12px">(MakeMKV's list of the disc's titles and tracks, the rip and activity logs, the proposed names and the setup check; your user name, keys and tokens are left out)</span>
         <a href="#" id="fblsee" style="font-size:12px">See what's sent</a></label>
