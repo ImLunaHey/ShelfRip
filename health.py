@@ -48,6 +48,9 @@ def _linux_pids(names: set[str]) -> list[int]:
 # --------------------------------------------------------------------------- leftover MakeMKV
 
 def _makemkv_pids() -> list[int]:
+    if sys.platform == "darwin":
+        import macos_support
+        return macos_support.process_ids({"makemkvcon"})
     if sys.platform.startswith("linux"):
         return _linux_pids({"makemkvcon", "makemkvcon64", ".makemkvcon-wrapped"})
     if os.name != "nt":
@@ -68,6 +71,9 @@ def _makemkv_pids() -> list[int]:
 def makemkv_window_open() -> bool:
     """Is MakeMKV's own window (makemkv.exe) open? It can hold on to the drives it shows, and two
     programs reading one drive make rips crawl, or fail as if the disc were scratched."""
+    if sys.platform == "darwin":
+        import macos_support
+        return bool(macos_support.process_ids({"makemkv"}))
     if sys.platform.startswith("linux"):
         return bool(_linux_pids({"makemkv", ".makemkv-wrapped"}))
     if os.name != "nt":
@@ -104,7 +110,7 @@ def stop_leftovers() -> int:
     alive = set(_makemkv_pids())
     for pid in list(LEFTOVER):
         if pid in alive:  # still a MakeMKV process (not a reused process id)
-            if sys.platform.startswith("linux"):
+            if sys.platform.startswith("linux") or sys.platform == "darwin":
                 try:
                     os.kill(pid, signal.SIGTERM)
                     n += 1

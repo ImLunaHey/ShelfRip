@@ -73,6 +73,9 @@ def _dpapi(data: bytes, protect: bool) -> bytes:
 
 def protect(password: str) -> str:
     """Protect a newly entered password; Linux requires a working desktop keyring."""
+    if password and sys.platform == "darwin":
+        import macos_keyring
+        return macos_keyring.store(password)
     if password and sys.platform.startswith("linux"):
         import linux_keyring
         return linux_keyring.store(password)
@@ -85,6 +88,9 @@ def protect(password: str) -> str:
 
 
 def reveal(stored: str) -> str:
+    if stored and (sys.platform == "darwin" or stored.startswith("keychain:")):
+        import macos_keyring
+        return macos_keyring.lookup(stored)
     if stored and (sys.platform.startswith("linux") or stored.startswith("secret-service:")):
         import linux_keyring
         return linux_keyring.lookup(stored)

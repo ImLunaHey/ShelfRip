@@ -19,13 +19,16 @@ import processes
 
 
 def alive(pid):
+    if sys.platform == "darwin":
+        result = subprocess.run(["/bin/ps", "-p", str(pid), "-o", "stat="], capture_output=True, text=True)
+        return result.returncode == 0 and bool(result.stdout.strip()) and not result.stdout.strip().startswith("Z")
     try:
         return Path(f"/proc/{pid}/stat").read_text().split(")", 1)[1].split()[0] != "Z"
     except FileNotFoundError:
         return False
 
 
-@unittest.skipUnless(sys.platform.startswith("linux"), "Linux process supervision")
+@unittest.skipUnless(sys.platform.startswith("linux") or sys.platform == "darwin", "POSIX process supervision")
 class Ownership(unittest.TestCase):
     def test_output_input_and_exit_code(self):
         proc = processes.spawn([sys.executable, "-c", "import sys; print(input().upper()); sys.exit(7)"],

@@ -69,7 +69,8 @@ class Backend(unittest.TestCase):
 
     def test_polling_does_not_unlock_keyring_but_actual_use_reports_failure(self):
         cfg = {"opensubtitles_username": "user", "opensubtitles_password": OLD}
-        with patch.object(keyring, "lookup", side_effect=keyring.KeyringError("Unlock the keyring")) as lookup:
+        with patch.object(sys, "platform", "linux"), \
+                patch.object(keyring, "lookup", side_effect=keyring.KeyringError("Unlock the keyring")) as lookup:
             self.assertEqual(refsubs.OpenSubtitles(cfg, resolve_password=False).ready(), "")
             lookup.assert_not_called()
             self.assertEqual(refsubs.OpenSubtitles(cfg).ready(), "Unlock the keyring")

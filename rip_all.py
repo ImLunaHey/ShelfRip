@@ -168,6 +168,8 @@ def find_makemkv(cfg: dict) -> str | None:
         cands += [p, p.with_name("makemkvcon64.exe"), p.with_name("makemkvcon.exe")]
     for base in (r"C:\Program Files (x86)\MakeMKV", r"C:\Program Files\MakeMKV"):
         cands += [Path(base) / "makemkvcon64.exe", Path(base) / "makemkvcon.exe"]
+    if sys.platform == "darwin":
+        cands += [root / "MakeMKV.app/Contents/MacOS/makemkvcon" for root in (Path("/Applications"), Path.home() / "Applications")]
     for c in cands:
         if c.is_file():
             return str(c)
@@ -423,6 +425,9 @@ def scan_drives(cfg: dict) -> list[dict]:
     elif sys.platform.startswith("linux"):
         import linux_support
         drives = linux_support.scan_drives()
+    elif sys.platform == "darwin":
+        import macos_support
+        drives = macos_support.scan_drives()
     if drives is None:
         _, out = run_makemkv(cfg, ["--cache=1", "info", "disc:9999"])
         drives = parse_drives(out)
@@ -437,7 +442,7 @@ def scan_drives(cfg: dict) -> list[dict]:
                 music.label_drive(d)
         except Exception as exc:
             log(f"couldn't check for audio CDs: {exc}")
-    elif sys.platform.startswith("linux"):
+    elif sys.platform.startswith("linux") or sys.platform == "darwin":
         import music
         for d in drives:
             dev = d["device"]
@@ -466,6 +471,9 @@ def makemkv_source(drive: dict) -> str:
     dev = drive["device"]
     if re.fullmatch(r"[A-Za-z]:", dev):
         return f"dev:{dev.upper()}"
+    if sys.platform == "darwin" and (dev.startswith("macos:") or dev.startswith("/dev/")):
+        import macos_support
+        return "dev:" + macos_support.media_device(dev)
     if sys.platform.startswith("linux") and dev.startswith("/dev/"):
         return f"dev:{dev}"
     return f"disc:{drive['index']}"
@@ -526,6 +534,10 @@ def eject(device: str) -> None:
     The letter goes into a PowerShell command, so anything that isn't a plain drive letter is
     ignored rather than passed through (a drive name comes from MakeMKV and config files).
     """
+    if sys.platform == "darwin":
+        import macos_support
+        macos_support.eject(device)
+        return
     if sys.platform.startswith("linux"):
         import linux_support
         linux_support.eject(device)
@@ -819,7 +831,7 @@ def record_disc_metadata(cfg: dict, device: str, disc: dict, out_dir: Path) -> N
     import discdb
     root = discdb.mounted_root(device)
     if not root:
-        if sys.platform.startswith("linux"):
+        if sys.platform.startswith("linux") or sys.platform == "darwin":
             log(f"{device} has no accessible mounted disc. Fingerprinting and TheDiscDB scanning skipped; "
                 "mount the disc in your file manager to enable them. Ripping can continue.")
         return

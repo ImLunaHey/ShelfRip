@@ -144,7 +144,7 @@ def notify(title: str, text: str) -> None:
                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             except Exception:
                 pass
-        elif sys.platform.startswith("linux"):
+        elif sys.platform.startswith("linux") or sys.platform == "darwin":
             desktop.notify(title, text)
         url = (cfg.get("phone_notify_url") or "").strip()
         if url.startswith("https://"):
@@ -676,14 +676,15 @@ def restart_app(ask: bool = True, entry: Path | None = None) -> None:
     import subprocess
     if not _confirm_exit(ask):
         return
-    if sys.platform.startswith("linux"):
+    if sys.platform.startswith("linux") or sys.platform == "darwin":
         if not _EXIT_LOCK.acquire(blocking=False):
             return
         stop_work()
         if TRAY:
             TRAY.remove()
-        import linux_window
-        linux_window.close()
+        if sys.platform.startswith("linux"):
+            import linux_window
+            linux_window.close()
         # exec preserves the process ID and environment, closes non-inheritable
         # sockets and resets all worker threads. No helper can race the old server.
         command = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, str(entry or Path(__file__).resolve())]
@@ -726,7 +727,7 @@ def start_tray(url: str, use_window: bool) -> None:
         desktop.show_console(shown["console"])
 
     def tray_action(action):
-        if sys.platform.startswith("linux") and not _confirm_exit(True):
+        if (sys.platform.startswith("linux") or sys.platform == "darwin") and not _confirm_exit(True):
             desktop.open_window(url, use_window)
             desktop.notify("Shelfrip is still working", "Use Restart or Quit on the page to confirm stopping active jobs.")
             return
@@ -946,7 +947,9 @@ def setup_check() -> list[dict]:
     tess = subcheck.tesseract(cfg)
     out.append({"name": "Tesseract OCR (subtitle check)", "ok": bool(tess),
                 "detail": tess or ("not found: needed to read Blu-ray and DVD picture subtitles for the subtitle check. " +
-                          ("Install it with: winget install UB-Mannheim.TesseractOCR" if os.name == "nt" else "Install your distribution's tesseract package.")),
+                          ("Install it with: winget install UB-Mannheim.TesseractOCR" if os.name == "nt" else
+                           "Install Tesseract for macOS and put it on PATH." if sys.platform == "darwin" else
+                           "Install your distribution's tesseract package.")),
                 "link": "" if tess else subcheck.TESSERACT_URL, "required": False})
     if cfg.get("subtitle_check"):
         if cfg.get("reference_subtitles"):
@@ -1185,7 +1188,7 @@ def check_update() -> None:
                         UPDATE.update(installer=url, size=int(a.get("size") or 0), digest=a["digest"],
                                       can_install=installed_copy())
                     continue
-                if _re.search(r"setup.*\.exe$", str(a.get("name") or ""), _re.I) and home.startswith("https://github.com/") and \
+                if os.name == "nt" and _re.search(r"setup.*\.exe$", str(a.get("name") or ""), _re.I) and home.startswith("https://github.com/") and \
                         url.lower().startswith(home + "/releases/download/"):
                     UPDATE.update(installer=url, size=int(a.get("size") or 0), can_install=installed_copy())
     except Exception:
@@ -1254,6 +1257,9 @@ def settings_view() -> dict:
             mr = str(music.music_root(merged))
             row["placeholder"] = f"{mr} ({'found in your library' if os.path.isdir(mr) else 'made when the first CD is filed'})"
     password_storage = {}
+    if sys.platform == "darwin":
+        import macos_keyring
+        password_storage = macos_keyring.status()
     if sys.platform.startswith("linux"):
         import linux_keyring
         password_storage = linux_keyring.status()
@@ -1363,13 +1369,19 @@ def _save_settings(values: dict) -> None:
     try:
         paths.write_config(raw)
     except OSError as e:
-        if password_changed and sys.platform.startswith("linux"):
-            import linux_keyring
-            linux_keyring.cleanup(raw.get("opensubtitles_password") or "")
+        if password_changed and (sys.platform.startswith("linux") or sys.platform == "darwin"):
+            if sys.platform == "darwin":
+                import macos_keyring as keyring
+            else:
+                import linux_keyring as keyring
+            keyring.cleanup(raw.get("opensubtitles_password") or "")
         raise ValueError(f"Couldn't save settings ({e}). Another program may have config.json open: try again in a moment.")
-    if password_changed and sys.platform.startswith("linux"):
-        import linux_keyring
-        linux_keyring.cleanup(previous_password)
+    if password_changed and (sys.platform.startswith("linux") or sys.platform == "darwin"):
+        if sys.platform == "darwin":
+            import macos_keyring as keyring
+        else:
+            import linux_keyring as keyring
+        keyring.cleanup(previous_password)
 
 
 # --------------------------------------------------------------------------- web
@@ -1530,7 +1542,7 @@ class Handler(review.Handler):
             if os.name == "nt":
                 import subprocess
                 subprocess.Popen(["explorer", "/select,", str(dst)])
-            elif sys.platform.startswith("linux"):
+            elif sys.platform.startswith("linux") or sys.platform == "darwin":
                 try:
                     desktop.open_file(dst.parent)
                 except OSError:
@@ -1665,8 +1677,8 @@ def open_server() -> tuple[Server | None, int]:
 def main() -> None:
     global RIPPER
     if "--detach" in sys.argv or "--desktop-launch" in sys.argv:
-        if not sys.platform.startswith("linux"):
-            raise SystemExit("--detach is supported on Linux.")
+        if not (sys.platform.startswith("linux") or sys.platform == "darwin"):
+            raise SystemExit("--detach is supported on Linux and macOS.")
         import background
         args = [a for a in sys.argv[1:] if a not in ("--detach", "--background", "--desktop-launch")]
         if "--desktop-launch" in sys.argv and "--background" not in sys.argv:
@@ -1681,7 +1693,7 @@ def main() -> None:
             if not 1 <= port <= 65515:
                 raise SystemExit("Port must be between 1 and 65515.")
             review.PORT = port
-    if sys.platform.startswith("linux"):
+    if sys.platform.startswith("linux") or sys.platform == "darwin":
         # The server loop performs cleanup outside the signal handler. Even
         # starting a thread here could acquire a lock held by interrupted code.
         def stop_signal(*_):
@@ -1699,14 +1711,14 @@ def main() -> None:
     if srv is None:
         print("Shelfrip is already running. Opening it.")
         if "--background" not in sys.argv or "--open-window" in sys.argv:
-            if sys.platform.startswith("linux"):
+            if sys.platform.startswith("linux") or sys.platform == "darwin":
                 data = json.dumps({"startup_id": os.environ.get("XDG_ACTIVATION_TOKEN") or os.environ.get("DESKTOP_STARTUP_ID", "")}).encode()
                 with urllib.request.urlopen(urllib.request.Request(url + "api/open", data=data,
                     headers={"Content-Type": "application/json"}), timeout=5) as response:
                     response.read()
             else:
                 desktop.open_window(url, use_window)
-        if sys.platform.startswith("linux"):
+        if sys.platform.startswith("linux") or sys.platform == "darwin":
             import background
             background.ready(port, existing=True)
         return
@@ -1733,7 +1745,7 @@ def main() -> None:
         start_tray(url, use_window)  # with no console window, the tray icon is the way to quit
     if "--background" not in sys.argv or "--open-window" in sys.argv:
         threading.Timer(0.8, lambda: desktop.open_window(url, use_window)).start()
-    if sys.platform.startswith("linux"):
+    if sys.platform.startswith("linux") or sys.platform == "darwin":
         import background
         background.ready(port)
     try:

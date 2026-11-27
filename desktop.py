@@ -40,7 +40,10 @@ def create_tray(tip, on_click, menu):
         icon.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 64, 64, 8, 6, 0, 0, 0))
                          + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
         return LinuxTray(tip, on_click, menu, str(icon))
-    return Tray(tip, on_click, menu)
+    tray = Tray(tip, on_click, menu)
+    if sys.platform == "darwin":
+        tray.error = "The macOS menu-bar icon is not implemented yet. Use the page to quit."
+    return tray
 
 
 # --------------------------------------------------------------------------- icon
@@ -314,6 +317,11 @@ def message_box(title: str, text: str) -> None:
 
 
 def open_file(path: Path) -> None:
+    if sys.platform == "darwin":
+        result = subprocess.run(["/usr/bin/open", str(Path(path).resolve())], capture_output=True, timeout=15)
+        if result.returncode:
+            raise OSError("macOS could not open this file. Choose a default application in Finder.")
+        return
     if sys.platform.startswith("linux"):
         exe = shutil.which("xdg-open")
         if not exe:
@@ -328,6 +336,9 @@ def open_file(path: Path) -> None:
 
 def notify(title: str, text: str) -> bool:
     """Linux desktop notification; optional on headless systems."""
+    if sys.platform == "darwin":
+        import macos_desktop
+        return macos_desktop.notify(title, text)
     exe = shutil.which("notify-send") if sys.platform.startswith("linux") else None
     if not exe:
         return False
@@ -745,6 +756,9 @@ def pick(kind: str = "folder", start: str = "", title: str = "") -> tuple[str | 
     Returns (path, error): path is '' if cancelled, None if there's no picker (error says why)."""
     if sys.platform.startswith("linux"):
         return _pick_linux(kind, start, title)
+    if sys.platform == "darwin":
+        import macos_desktop
+        return macos_desktop.pick_path(kind, start, title)
     if os.name != "nt":
         return None, "There's no folder picker on this computer."
     errors = []

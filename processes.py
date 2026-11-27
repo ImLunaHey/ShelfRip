@@ -1,4 +1,4 @@
-"""Own Linux rip processes even if the application exits abruptly.
+"""Own Linux and macOS rip processes even if the application exits abruptly.
 
 A small supervisor watches a pipe held only by Shelfrip. EOF (including SIGKILL
 of Shelfrip) stops the child's process group. This avoids preexec_fn in a threaded
@@ -20,7 +20,7 @@ _stopping = False
 
 
 def spawn(args, **kwargs) -> subprocess.Popen:
-    if not sys.platform.startswith("linux"):
+    if not (sys.platform.startswith("linux") or sys.platform == "darwin"):
         return subprocess.Popen(args, **kwargs)
     with _lock:
         if _stopping:

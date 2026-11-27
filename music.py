@@ -66,6 +66,9 @@ def read_toc(device: str) -> dict:
     if sys.platform.startswith("linux"):
         import linux_support
         return parse_toc(linux_support.read_toc(device))
+    if sys.platform == "darwin":
+        import macos_support
+        return parse_toc(macos_support.read_toc(device))
     import ctypes
     wintypes = _wintypes()
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -103,8 +106,8 @@ def _wintypes():
 
 def read_cdtext(device: str) -> dict:
     """The album and track names stored on the CD itself (CD-Text), if it has any (Windows)."""
-    if sys.platform.startswith("linux"):
-        return {}  # Linux CD-Text is not implemented yet; MusicBrainz still supplies names.
+    if sys.platform.startswith("linux") or sys.platform == "darwin":
+        return {}  # Unix CD-Text is not implemented yet; MusicBrainz still supplies names.
     import ctypes
     wintypes = _wintypes()
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -196,7 +199,7 @@ def track_seconds(toc: dict) -> list[float]:
 def label_drive(d: dict) -> bool:
     """Mark a scanned drive as an audio CD and give it a stable label from its disc id."""
     dev = d.get("device") or ""
-    if sys.platform.startswith("linux"):
+    if sys.platform.startswith("linux") or sys.platform == "darwin":
         if not d.get("audio"):
             return False
     elif not re.fullmatch(r"[A-Za-z]:", dev) or not is_audio_cd(dev):
@@ -224,6 +227,10 @@ def find_cyanrip(cfg: dict) -> str | None:
 def drive_offset(cfg: dict, device: str) -> int:
     """Read offset for a drive from the cd_offsets setting, e.g. "D:6, E:667"."""
     text = str(cfg.get("cd_offsets") or "")
+    if device.startswith("macos:"):
+        for dev, off in re.findall(r"(macos:[0-9a-f]{24})\s*=\s*([+-]?\d+)", text):
+            if dev == device:
+                return int(off)
     if device.startswith("/dev/"):
         for dev, off in re.findall(r"(/dev/[^\s,=:]+)\s*[=:]\s*([+-]?\d+)", text):
             if os.path.realpath(dev) == os.path.realpath(device):
@@ -302,7 +309,11 @@ def rip_cd(cfg: dict, drive: dict) -> dict:
     log_path = out_dir / "rip.log"
     rc, cancelled, tail = 0, False, ""
     if todo:
-        args = [exe, "-d", device, "-s", str(drive_offset(cfg, device)), "-o", "flac",
+        source = device
+        if sys.platform == "darwin":
+            import macos_support
+            source = macos_support.media_device(device)
+        args = [exe, "-d", source, "-s", str(drive_offset(cfg, device)), "-o", "flac",
                 "-N", "-U", "-B", "-X", "-D", "rip", "-F", "{track}", "-L", "cyanrip"]
         if len(todo) < n:
             args += ["-l", ",".join(map(str, todo))]

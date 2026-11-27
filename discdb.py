@@ -61,6 +61,9 @@ def mounted_root(device: str) -> str | None:
     if sys.platform.startswith("linux"):
         import linux_support
         return linux_support.mounted_root(device)
+    if sys.platform == "darwin":
+        import macos_support
+        return macos_support.mounted_root(device)
     return None
 
 

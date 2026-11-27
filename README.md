@@ -73,6 +73,14 @@ server expects it.
 - **Makes it a bit of a game.** Every disc you file earns XP towards your next rank, with daily goals,
   streaks and badges, and your collection fills a shelf.
 
+## macOS (experimental)
+
+The source version includes native optical-drive discovery, mounted-disc metadata,
+Keychain password storage, macOS file/folder actions and supervised background
+operation. Install Python 3.10+ and MakeMKV, then run `python3 app.py`.
+See [macOS setup and validation](docs/macos.md) for dependencies and the remaining
+work. A packaged Mac app and full hardware validation are not available yet.
+
 ## Linux (experimental)
 
 Linux support includes drive discovery and ejection, audio-CD table-of-contents reads,

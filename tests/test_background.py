@@ -62,7 +62,7 @@ class TrayFallback(unittest.TestCase):
         self.assertFalse(tray.ok)
 
 
-@unittest.skipUnless(sys.platform.startswith("linux"), "Linux detached lifecycle")
+@unittest.skipUnless(sys.platform.startswith("linux") or sys.platform == "darwin", "POSIX detached lifecycle")
 class Background(unittest.TestCase):
     def test_failed_start_is_reported_and_log_is_private(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -100,7 +100,8 @@ class Background(unittest.TestCase):
                 settings = request("/api/settings")
                 self.assertTrue(settings["desktop"]["background"])
                 self.assertFalse(settings["desktop"]["tray_active"])
-                self.assertIn("No graphical session", settings["desktop"]["tray_error"])
+                self.assertIn("not implemented" if sys.platform == "darwin" else "No graphical session",
+                              settings["desktop"]["tray_error"])
                 boot = request("/api/drives")["boot"]
                 again = subprocess.run(launcher, env=env, capture_output=True, text=True, timeout=20)
                 self.assertEqual(again.returncode, 0, again.stderr)

@@ -1839,11 +1839,11 @@ function wzBody(id){
     }
     case "library": return `<h2>Where's your media library?</h2>
       <p>The folder that holds (or will hold) your Movies and TV Shows folders. It can be on another drive or a network share.</p>
-      ${wzFolder("plex_library_root", "Media library folder", (SETS.platform || "").startsWith("linux") ? "For example /home/you/Media" : "Click to choose a folder, for example D:\\Media")}
+      ${wzFolder("plex_library_root", "Media library folder", SETS.platform === "darwin" ? "For example /Users/you/Movies/Library" : (SETS.platform || "").startsWith("linux") ? "For example /home/you/Media" : "Click to choose a folder, for example D:\\Media")}
       <label class="chk wz-chk"><input type="checkbox" data-w="format_folders" ${wzVal("format_folders") ? "checked" : ""}> Keep each format in its own folder (Movies\\Blu-Ray\\…, Movies\\DVD\\…)</label>`;
     case "rips": return `<h2>Where should discs be ripped to?</h2>
       <p>Discs are ripped here first, then moved into your library once you've checked the names. Pick a drive with plenty of room: about 50 GB per Blu-ray and 100 GB per 4K disc.</p>
-      ${wzFolder("output_root", "Rip folder", (SETS.platform || "").startsWith("linux") ? "For example /home/you/Ripped" : "Click to choose a folder, for example D:\\Ripped")}`;
+      ${wzFolder("output_root", "Rip folder", SETS.platform === "darwin" ? "For example /Users/you/Ripped" : (SETS.platform || "").startsWith("linux") ? "For example /home/you/Ripped" : "Click to choose a folder, for example D:\\Ripped")}`;
     case "makemkv": {
       const c = wzChk("MakeMKV");
       return `<h2>${c.ok ? "MakeMKV is ready" : "Install MakeMKV"}</h2>
@@ -2094,6 +2094,12 @@ const SET_STATUS = {output_root:"Rip folder", plex_library_root:"Media library f
 function setField(row, meta){
   let [key, label, help, o = {}] = meta;
   const v = row.value, id = "s_" + key;
+  if (SETS.platform === "darwin") {
+    if (key === "opensubtitles_password") help = "Saved in macOS Keychain. Unlock your login keychain before saving or using it. Settings contain only a reference." + (SETS.password_storage?.warning ? " " + SETS.password_storage.warning : "");
+    if (key === "cd_offsets") help = "Enter one offset for all drives, or a drive ID and offset such as macos:0123456789abcdef01234567=6. Use the ID shown on its drive card.";
+    if (key === "app_window") help = "The macOS version currently opens your default browser. Closing the tab leaves ripping running; use Quit on this page to stop Shelfrip.";
+    if (key === "tray_icon") { label = "Show a menu-bar icon"; help = "Not implemented on macOS yet. Use the page to restart or quit."; }
+  }
   if ((SETS.platform || "").startsWith("linux")) {
     if (key === "opensubtitles_password") {
       const storage = SETS.password_storage || {};
@@ -2124,7 +2130,7 @@ function setField(row, meta){
   else ctl = `<input id="${id}" data-k="${key}" type="${row.kind === "number" ? "number" : "text"}" ${row.kind === "number" ? 'min="0"' : ""} value="${esc(v)}" ${row.placeholder ? `placeholder="${esc(row.placeholder)}"` : o.pick ? `placeholder="Click to choose a ${o.pick === "file" ? "file" : "folder"}"` : ""} class="${o.unit || o.short ? "short" : ""}" ${key.endsWith("_root") || key.endsWith("_dir") || key.endsWith("_folder") || key.endsWith("_path") ? 'spellcheck="false"' : ""}>`
     + (o.unit ? `<span class="unit">${esc(o.unit)}</span>` : "")
     + (o.pick ? `<button data-pick="${key}" data-kind="${o.pick}" ${o.under ? `data-under="${o.under}"` : ""}>Browse…</button>` : "");
-  if (key === "opensubtitles_password" && (SETS.platform || "").startsWith("linux") && v) {
+  if (key === "opensubtitles_password" && ((SETS.platform || "").startsWith("linux") || SETS.platform === "darwin") && v) {
     ctl += `<button id="clear-password">Remove saved password</button>`;
   }
   return `<div class="srow"><div class="lbl"><label for="${id}">${esc(label)}</label> ${flag}${helpHtml}</div><div class="ctl">${ctl}<span class="saved" data-saved="${key}"></span></div></div>`;
