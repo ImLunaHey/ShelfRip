@@ -1,4 +1,4 @@
-# Linux support in this fork
+# Linux support
 
 Linux support is experimental and runs from source. The shared naming, review,
 filing and subtitle-processing code remains the same as on Windows.
@@ -42,20 +42,22 @@ System tools used by the Linux integration:
 Desktop tools need a graphical login session. They are optional for using the
 local web interface on a headless machine. Drive access is still required for ripping.
 
-## NixOS
+## Distribution compatibility
 
-For development and automated tests, without changing the system configuration:
+The application uses standard Linux interfaces and discovers external tools on
+PATH. It does not require a specific distribution, package manager or init system.
+Install the tools above using your distribution's packages or the tool's own Linux
+installation instructions; package names and availability vary. No Python packages
+from pip are required.
 
-```sh
-nix shell nixpkgs#python312 nixpkgs#nodejs --command python3 tests/run_all.py
-```
+Optical-drive discovery uses sysfs and udev's cached properties. This needs a running
+udev-compatible device manager and `udevadm`, but does not require systemd as PID 1.
+Containers and restricted environments must expose the optical devices and the
+necessary system interfaces to use hardware features.
 
-Run the app in a Nix environment that also provides the tools above, or add them
-to your normal NixOS/Home Manager packages. MakeMKV is an unfree package in nixpkgs
-and needs your normal unfree-package configuration. Python packages from pip are
-not required. This change does not modify your system configuration or permissions.
-
-The current development host was tested with NixOS 26.11 and Python 3.12.16.
+Headless systems can use the local web interface without desktop helper programs.
+For desktop features, install the appropriate helpers listed above and run Shelfrip
+in your graphical login session. Missing optional helpers do not prevent ripping.
 
 ## Drives and permissions
 
@@ -112,4 +114,4 @@ folder and auto-rip/auto-file disabled:
 - Desktop keyring storage for passwords, instead of permission-restricted settings.
 - Full physical-drive and graphical-session testing as listed above.
 
-Do not describe this branch as complete 1:1 Windows parity yet.
+Linux support does not yet provide complete Windows feature parity.
