@@ -1,7 +1,47 @@
 # Linux support
 
-Linux support is experimental and runs from source. The shared naming, review,
+Linux support is experimental. The shared naming, review,
 filing and subtitle-processing code remains the same as on Windows.
+
+## Installing, updating and removing
+
+Linux releases can include `Shelfrip-VERSION-linux.tar.gz`. This is an
+architecture-independent application package requiring Python 3.10 or later;
+it does not bundle Python, MakeMKV or desktop libraries. Download it from the
+[project's releases](https://github.com/Shelfrip/ShelfRip/releases), extract it,
+then run `python3 shelfrip/linux_install.py`. Use `--autostart` to opt into starting
+at graphical login. No source checkout or administrator access is required.
+
+The installer puts versioned program files under `$XDG_DATA_HOME/shelfrip` (normally
+`~/.local/share/shelfrip`), a launcher at `~/.local/bin/shelfrip`, and an app-menu
+entry under `$XDG_DATA_HOME/applications`. Open **Shelfrip** from your app menu, or
+run `~/.local/bin/shelfrip`. The launcher detaches the server and opens its window;
+repeat launches open the running instance. Settings > Shelfrip has a **Start Shelfrip
+when I sign in** switch. Its XDG autostart entry runs in the background without
+opening a window; no particular init system is required.
+
+Installed copies offer **update now** when the upstream release includes a Linux
+archive and its SHA-256 digest in GitHub's asset metadata. The updater verifies
+the download, safely unpacks and checks the package, then atomically selects the
+new version and restarts on the same port. Downloads or validation failures keep
+the previous version active. Active work blocks updates; new jobs are held while
+updating. Previous version directories are retained so files used by the running
+application do not change beneath it. Settings, keyring items and media are kept
+separate from installed code. Source checkouts receive the release link instead.
+
+To uninstall, quit Shelfrip and run:
+
+```sh
+python3 "${XDG_DATA_HOME:-$HOME/.local/share}/shelfrip/current/linux_install.py" --uninstall
+```
+
+This removes installed code and Shelfrip's menu/login launchers while keeping your
+settings, keyring and media. Uninstall refuses while an installed instance is running.
+
+Maintainers can build the archive with `python3 build_linux.py`. The Linux package
+workflow builds a reviewable artifact for pull requests and attaches it, with a
+checksum file, when a matching-version GitHub release is published. A Linux asset
+must actually be published before users can download or update to that release.
 
 ## Running
 
@@ -15,8 +55,9 @@ From the checkout:
 python3 app.py
 ```
 
-The interface opens in Chromium/Chrome app mode when available, otherwise in your
-default browser. You can also open `http://127.0.0.1:8765` yourself. Keep the terminal
+The interface uses a reusable GTK3/WebKitGTK app window when available, otherwise
+Chromium/Chrome app mode or your default browser. You can also open
+`http://127.0.0.1:8765` yourself. Keep the terminal
 running, or use `python3 app.py --detach` to start an independent background process.
 The launcher prints the actual URL and log path, then exits. A second launch reuses
 the running instance. Logs go to `shelfrip.log` in the settings folder with mode 0600.
@@ -50,6 +91,8 @@ System tools used by the Linux integration:
   Keyring or a compatible KWallet configuration: OpenSubtitles password storage.
 - GTK3 and Ayatana AppIndicator3 (or legacy AppIndicator3), plus a desktop
   StatusNotifier/AppIndicator host: optional tray icon.
+- WebKitGTK 4.1 (or 4.0) and GTK3: optional reusable app window. Closing it leaves
+  the server running; opening Shelfrip again reuses or recreates the window.
 - `cyanrip`: audio-CD ripping. CD drive offsets accept `/dev/sr0=6, /dev/sr1=667`.
 - MKVToolNix (`mkvmerge`, `mkvextract`, `mkvpropedit`): media inspection and splitting.
 - `tesseract`: optional subtitle OCR.
@@ -90,8 +133,11 @@ Settings > App shows why the tray could not connect. After installing or enablin
 tray support, restart Shelfrip. Detached mode works without a tray.
 
 Run desktop features within your graphical login session so they inherit its
-display and session bus. `--detach` does not install a login-startup entry or a
-system service, and does not promise to survive logging out of that session.
+display and session bus. Window activation uses GTK's desktop APIs; focus remains
+subject to the compositor's policy. The native window opens external web links in
+your default browser and keeps its web storage under the settings folder's `webview`
+directory. Browser fallbacks retain their browser's window-management behaviour.
+Neither `--detach` nor the opt-in login entry promises to survive logout.
 
 ## Distribution compatibility
 
@@ -172,6 +218,7 @@ python3 tests/test_processes.py
 python3 tests/test_keyring.py
 python3 tests/test_background.py
 python3 tests/test_disc_metadata.py
+python3 tests/test_linux_install.py
 python3 tests/run_all.py
 ```
 
@@ -193,6 +240,9 @@ vectors, case-sensitive folders, pre-rip identification, saved rip metadata and
 scanner discovery. An executable test scanner verifies command arguments, output
 publication, failure cleanup, timeout and cancellation. This validates the integration
 contract, not an upstream scanner binary or its disc parsing.
+Package tests build and install the real archive into temporary homes, check XDG
+entries and uninstall protection, reject damaged/unsafe updates, and update a
+running installed app to a new test version on the same port without losing settings.
 
 An additional native integration suite runs with a temporary home, private D-Bus
 session, Xvfb, a real GNOME Keyring and a test StatusNotifier host:
@@ -201,12 +251,15 @@ session, Xvfb, a real GNOME Keyring and a test StatusNotifier host:
 python3 tests/desktop_services.py
 ```
 
-It needs `dbus-run-session`, Xvfb, xauth, GTK3, Ayatana AppIndicator3, libsecret tools,
-GNOME Keyring and PyGObject. PyGObject is only used by the test host, not Shelfrip.
+It needs `dbus-run-session`, Xvfb, xauth, GTK3, WebKitGTK 4.1, Ayatana AppIndicator3,
+libsecret tools, GNOME Keyring, Openbox, wmctrl, desktop-file-utils and PyGObject.
+PyGObject is only used by the test host, not Shelfrip.
 The suite checks real password saving/replacement/removal, exported tray menus,
 menu activation, status updates, host reconnection, missing-host fallback and helper
-cleanup after abrupt parent death. CI runs this separately from the standard-library
-test suite and the Debian/Alpine portability tests. It does not establish appearance
+cleanup after abrupt parent death. It also checks native desktop-entry argument
+parsing and launches an installed app through its real menu entry, checking window
+reuse, closure, reopening and shutdown. CI runs this separately from the
+standard-library test suite and the Debian/Alpine portability tests. It does not establish appearance
 or window behaviour in a user's actual GNOME/KDE Wayland session.
 
 Before calling Linux support hardware-validated, test with a separate rip/library
@@ -247,15 +300,22 @@ events reset the temporary permissions on media removal, so normal use needs
 persistent optical-device access configured through the system's device rules or
 group/session permissions. Shelfrip now diagnoses these missing prerequisites.
 
+A copy of the real DVD title was also passed through the review/save/play/file HTTP
+workflow using a manual review plan and a separate test library. Play decoded 30
+seconds of video and audio without errors using a test player command; it was not
+a visual playback check. Filing completed, saved its catalog/plan records and
+cleared the temporary rip folder. The filed MKV retained its 1,610.52-second duration
+and identical encoded video packets. The original validation rip was preserved.
+
 This validates one DVD drive and disc. Audio CDs, Blu-rays, multiple simultaneous
-drives, full review/filing and graphical desktop integration still need hardware or
-desktop validation. Application shutdown/crash and restart coverage uses isolated
+drives, automatic identification of additional discs and actual GNOME/KDE graphical
+sessions still need hardware or desktop validation. Native desktop tests use an
+isolated X11 display; Wayland session behaviour and human-visible playback remain
+unvalidated. Application shutdown/crash and restart coverage uses isolated
 subprocess and HTTP integration tests.
 
 ## Remaining Windows parity work
 
-- Linux installer/packages and an appropriate update mechanism. The Windows
-  installer/update flow is not a Linux updater.
 - Reading CD-Text from audio discs on Linux. MusicBrainz lookup works independently.
 - Validation with an upstream native TheDiscDB scanner binary.
 - Full physical-drive and graphical-session testing as listed above.

@@ -247,9 +247,13 @@ def _focus_existing() -> bool:
         return False
 
 
-def open_window(url: str, use_window: bool = True) -> None:
+def open_window(url: str, use_window: bool = True, startup_id: str = "") -> None:
     """Open Shelfrip in its own window (falls back to a browser tab). If its window is already
     open (say you clicked the tray icon again), that window comes to the front instead."""
+    if sys.platform.startswith("linux") and use_window:
+        import linux_window
+        if linux_window.open_window(url, startup_id):
+            return
     if use_window and "#" not in url and _focus_existing():
         return
     exe = _find_browser() if use_window else None

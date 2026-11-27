@@ -2113,7 +2113,7 @@ function setField(row, meta){
       if (storage.warning) help += " " + storage.warning;
     }
     if (key === "cd_offsets") help = "For AccurateRip, for example /dev/sr0=6, /dev/sr1=667.";
-    if (key === "app_window") help = "Uses Chromium or Chrome when installed, otherwise your default browser. Closing the window leaves ripping running. Quit from this page or the tray menu.";
+    if (key === "app_window") help = "Uses a reusable GTK/WebKit window when installed, otherwise Chromium, Chrome or your default browser. Closing the window leaves ripping running. Quit from this page or the tray menu.";
     if (key === "tray_icon") {
       label = "Show a desktop tray icon";
       help = ((SETS.desktop || {}).tray_active ? "Tray connected: open Shelfrip, pause auto-rip, restart or quit from its menu."
@@ -2210,6 +2210,7 @@ function renderSettings(){
       <section class="setbody">
         <h2>${esc(g.name)}</h2>${g.intro ? `<p class="intro">${esc(g.intro)}</p>` : ""}
         <div class="sgroup">${basic.map(m => setField(rows[m[0]], m)).join("")}</div>
+        ${g.id === "app" && (SETS.platform || "").startsWith("linux") ? `<div class="srow"><div class="lbl"><label for="login-start">Start Shelfrip when I sign in</label><div class="help">Runs in the background at graphical login. ${SETS.desktop?.installed ? "" : "Install the Linux package to enable this."}</div></div><div class="ctl"><input type="checkbox" id="login-start" ${SETS.desktop?.start_at_login ? "checked" : ""} ${SETS.desktop?.installed ? "" : "disabled"}></div></div>` : ""}
         ${adv.length ? `<button class="advtoggle" id="advt" aria-expanded="${SHOWADV}">${SHOWADV ? "Hide" : "Show"} more options (${adv.length})</button>
           <div class="sgroup ${SHOWADV ? "" : "hide"}">${adv.map(m => setField(rows[m[0]], m)).join("")}</div>` : ""}
         ${g.id === "app" ? `<div class="srow"><div class="lbl"><label>Something not working?</label><div class="help">Makes a zip of Shelfrip's logs and settings, with your keys removed, to attach to a bug report.</div></div>
@@ -2223,6 +2224,12 @@ function renderSettings(){
   if ($("#advt", el)) $("#advt", el).onclick = () => { SHOWADV = !SHOWADV; renderSettings(); };
   el.querySelectorAll("[data-change]").forEach(b => b.onclick = () => { const i = $("#s_" + b.dataset.change, el); i.classList.remove("hide"); i.focus(); b.remove(); });
   el.querySelectorAll("[data-k]").forEach(i => i.onchange = () => saveOne(i));
+  const loginStart = $("#login-start", el);
+  if (loginStart) loginStart.onchange = async () => {
+    loginStart.disabled = true;
+    try { SETS = await api("/api/linux/login", {enabled:loginStart.checked}); renderSettings(); }
+    catch (e) { loginStart.checked = !loginStart.checked; loginStart.disabled = false; alert(e.message); }
+  };
   const clearPassword = $("#clear-password", el);
   if (clearPassword) {
     clearPassword.onclick = async () => {

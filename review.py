@@ -66,6 +66,7 @@ def reload_config() -> None:
 
 JOBS: dict[str, dict] = {}
 LOCK = threading.Lock()
+UPDATING = False  # the Linux updater temporarily prevents new filing jobs
 THREADS: dict[str, threading.Thread] = {}  # the worker filing each disc, to spot one that died
 
 
@@ -506,6 +507,8 @@ def start_filing(folder: Path, plan: dict) -> list[str]:
         save_plan(folder, plan)
         return problems
     with LOCK:
+        if UPDATING:
+            return ["Shelfrip is updating. File this disc after it restarts."]
         if JOBS.get(folder.name, {}).get("state") == "running":
             return ["Already filing this disc."]
         old = THREADS.get(folder.name)
