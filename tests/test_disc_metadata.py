@@ -88,8 +88,9 @@ class Fingerprints(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.touch()
                 sizes[path] = size
-            # Non-media files and nested backups must not change the hash.
-            next(iter(sizes)).parent.joinpath("README.txt").write_text("ignore")
+            # Preserve the existing DVD hash recipe; Blu-ray ignores non-m2ts files.
+            if layout == "bluray":
+                next(iter(sizes)).parent.joinpath("README.txt").write_text("ignore")
             backup = next(iter(sizes)).parent / "BACKUP"
             backup.mkdir()
             (backup / next(iter(sizes)).name).write_bytes(b"not part of the hash")
@@ -101,6 +102,17 @@ class Fingerprints(unittest.TestCase):
             with patch.object(Path, "stat", metadata), patch.object(Path, "open", side_effect=AssertionError("data read")):
                 self.assertEqual(discdb.fingerprint(str(root)),
                                  {"content_hash": expected, "layout": layout, "files": len(files)})
+
+    def test_dvd_preserves_existing_hashes_including_non_video_files(self):
+        import hashlib
+        import struct
+        dvd = self.root / "VIDEO_TS"
+        dvd.mkdir()
+        (dvd / "README.txt").write_bytes(b"extra")
+        (dvd / "VIDEO_TS.IFO").write_bytes(b"abc")
+        expected = hashlib.md5(struct.pack("<QQ", 5, 3), usedforsecurity=False).hexdigest().upper()
+        self.assertEqual(discdb.fingerprint(str(self.root)),
+                         {"content_hash": expected, "layout": "dvd", "files": 2})
 
     def test_lowercase_disc_directories_and_missing_or_unreadable_disc(self):
         dvd = self.root / "video_ts"

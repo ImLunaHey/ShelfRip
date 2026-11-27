@@ -73,7 +73,10 @@ server expects it.
 - **Makes it a bit of a game.** Every disc you file earns XP towards your next rank, with daily goals,
   streaks and badges, and your collection fills a shelf.
 
-## Linux (experimental)
+## Linux (experimental, community supported)
+
+Linux support is experimental and community supported. Please report Linux issues
+with logs and distribution details; @ImLunaHey is the contact for this integration.
 
 Linux support includes drive discovery and ejection, audio-CD table-of-contents reads,
 native file/folder dialogs, file playback, desktop notifications, a tray menu and

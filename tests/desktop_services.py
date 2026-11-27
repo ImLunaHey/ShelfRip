@@ -120,9 +120,11 @@ if "--session" in sys.argv:
             manager = subprocess.Popen(["openbox"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             url = f"http://127.0.0.1:{server.server_port}/"
             def windows():
-                return [line for line in subprocess.check_output(["wmctrl", "-lp"], text=True).splitlines()
+                return [line for line in subprocess.run(["wmctrl", "-lp"], capture_output=True, text=True, check=False).stdout.splitlines()
                         if line.endswith(" Shelfrip")]
             try:
+                eventually(lambda: manager.poll() is None and subprocess.run(
+                    ["wmctrl", "-m"], capture_output=True).returncode == 0)
                 self.assertTrue(linux_window.open_window(url))
                 first = linux_window._window.proc.pid
                 eventually(lambda: len(windows()) == 1)
@@ -190,9 +192,11 @@ if "--session" in sys.argv:
                 except OSError:
                     return False
             def windows():
-                return [line for line in subprocess.check_output(["wmctrl", "-lp"], text=True).splitlines()
+                return [line for line in subprocess.run(["wmctrl", "-lp"], capture_output=True, text=True, check=False).stdout.splitlines()
                         if line.endswith(" Shelfrip")]
             try:
+                eventually(lambda: manager.poll() is None and subprocess.run(
+                    ["wmctrl", "-m"], capture_output=True).returncode == 0)
                 self.assertTrue(appinfo.launch([], context))
                 eventually(ready, 15)
                 eventually(lambda: len(windows()) == 1, 15)

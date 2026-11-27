@@ -9,7 +9,7 @@ import tarfile
 
 MODULES = ("app review identify rip_all split music plex extras discdb catalog crosscheck naming paths "
            "community desktop progress health tidy dupes trouble importer ripfiles subcheck epmatch refsubs "
-           "processes background linux_support linux_tray linux_keyring linux_window linux_install linux_update").split()
+           "handbrake processes background linux_support linux_tray linux_keyring linux_window linux_install linux_update").split()
 
 
 def build(source: Path, output: Path) -> Path:

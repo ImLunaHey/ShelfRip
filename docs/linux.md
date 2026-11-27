@@ -1,6 +1,6 @@
 # Linux support
 
-Linux support is experimental. The shared naming, review,
+Linux support is experimental and community supported. The shared naming, review,
 filing and subtitle-processing code remains the same as on Windows.
 
 ## Installing, updating and removing
@@ -188,8 +188,9 @@ it does not assume a `/media` or `/run/media` layout. Subdirectory mounts are sk
 The mounted filesystem must be visible and readable by Shelfrip's user and process.
 Shelfrip does not mount discs automatically or change permissions.
 
-Fingerprints use file sizes from `VIDEO_TS` or `BDMV/STREAM`, following the
-[TheDiscDB content-hash recipe](https://github.com/TheDiscDb/optical-disc-manifest/blob/main/specification/v1/README.md).
+Fingerprints preserve the existing cross-platform recipe: every file directly in
+`VIDEO_TS` for DVD, or `.m2ts` files in `BDMV/STREAM` for Blu-ray. A proposed DVD
+filter change is tracked separately because it changes existing catalog hashes.
 They support catalog/TheDiscDB identification before ripping and are recorded in
 `disc_info.json` for subsequent matching. Lower-case disc directory names are
 supported on case-sensitive filesystems. Unmounted or unreadable discs still rip

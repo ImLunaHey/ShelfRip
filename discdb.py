@@ -83,18 +83,18 @@ def fingerprint(root: str) -> dict | None:
     """TheDiscDB content hash for a disc mounted at root (e.g. 'D:\\').
 
     MD5 over each file's size as an 8-byte little-endian number, files sorted by
-    name: BDMV\\STREAM\\*.m2ts for Blu-ray/4K, VIDEO_TS .IFO/.BUP/.VOB files for DVD.
+    name: BDMV\\STREAM\\*.m2ts for Blu-ray/4K, every file in VIDEO_TS for DVD.
     Only reads file metadata, not video contents.
     """
     base = Path(root)
     for sub, extensions, layout in ((("BDMV", "STREAM"), {".m2ts"}, "bluray"),
-                                     (("VIDEO_TS",), {".ifo", ".bup", ".vob"}, "dvd")):
+                                     (("VIDEO_TS",), None, "dvd")):
         try:
             d = disc_directory(base, *sub)
             if d is None:
                 continue
             names = sorted(p.name for p in d.iterdir()
-                           if p.is_file() and p.suffix.lower() in extensions)
+                           if p.is_file() and (extensions is None or p.suffix.lower() in extensions))
             if not names:
                 continue
             md5 = hashlib.md5(usedforsecurity=False)
