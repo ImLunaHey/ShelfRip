@@ -77,10 +77,10 @@ if "--session" in sys.argv:
             cls.loop.quit()
             cls.thread.join(timeout=3)
 
-        def test_real_keyring_migration_replacement_and_removal(self):
+        def test_real_keyring_save_replacement_and_removal(self):
             password = " test-only ü\n"
-            paths.write_config({"opensubtitles_password": password})
-            app.migrate_password()
+            paths.write_config({})
+            app._save_settings({"opensubtitles_password": password})
             first = json.loads(paths.CONFIG_PATH.read_text())["opensubtitles_password"]
             self.assertTrue(linux_keyring.is_reference(first))
             self.assertEqual(linux_keyring.lookup(first), password)

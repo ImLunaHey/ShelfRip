@@ -2096,8 +2096,7 @@ function setField(row, meta){
   if ((SETS.platform || "").startsWith("linux")) {
     if (key === "opensubtitles_password") {
       const storage = SETS.password_storage || {};
-      help = storage.mode === "legacy" ? "The existing password is still in your settings file. Move it to your desktop keyring below. Older backups are not changed."
-        : "Saved in your desktop Secret Service keyring. Settings contain only a reference; the keyring may ask you to unlock it.";
+      help = "Saved in your desktop Secret Service keyring. Settings contain only a reference; the keyring may ask you to unlock it.";
       if (!storage.helper_available) help += " Install secret-tool (libsecret tools) and enable a Secret Service keyring to save or read passwords.";
       if (storage.warning) help += " " + storage.warning;
     }
@@ -2125,7 +2124,6 @@ function setField(row, meta){
     + (o.unit ? `<span class="unit">${esc(o.unit)}</span>` : "")
     + (o.pick ? `<button data-pick="${key}" data-kind="${o.pick}" ${o.under ? `data-under="${o.under}"` : ""}>Browse…</button>` : "");
   if (key === "opensubtitles_password" && (SETS.platform || "").startsWith("linux") && v) {
-    if ((SETS.password_storage || {}).mode === "legacy") ctl += `<button id="migrate-password">Move to keyring</button>`;
     ctl += `<button id="clear-password">Remove saved password</button>`;
   }
   return `<div class="srow"><div class="lbl"><label for="${id}">${esc(label)}</label> ${flag}${helpHtml}</div><div class="ctl">${ctl}<span class="saved" data-saved="${key}"></span></div></div>`;
@@ -2213,17 +2211,15 @@ function renderSettings(){
   if ($("#advt", el)) $("#advt", el).onclick = () => { SHOWADV = !SHOWADV; renderSettings(); };
   el.querySelectorAll("[data-change]").forEach(b => b.onclick = () => { const i = $("#s_" + b.dataset.change, el); i.classList.remove("hide"); i.focus(); b.remove(); });
   el.querySelectorAll("[data-k]").forEach(i => i.onchange = () => saveOne(i));
-  for (const id of ["migrate-password", "clear-password"]) {
-    const button = $("#" + id, el);
-    if (!button) continue;
-    button.onclick = async () => {
-      button.disabled = true;
+  const clearPassword = $("#clear-password", el);
+  if (clearPassword) {
+    clearPassword.onclick = async () => {
+      clearPassword.disabled = true;
       try {
-        const result = id === "migrate-password" ? await api("/api/keyring/migrate", {})
-          : await api("/api/settings", {values:{opensubtitles_password:null}});
+        const result = await api("/api/settings", {values:{opensubtitles_password:null}});
         if (result.error) throw new Error(result.error);
         SETS = result; renderSettings();
-      } catch (e) { alert(e.message || String(e)); button.disabled = false; }
+      } catch (e) { alert(e.message || String(e)); clearPassword.disabled = false; }
     };
   }
   wireLibs(el);

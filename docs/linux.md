@@ -66,14 +66,11 @@ actionable message and keeps the previous settings; it does not save plaintext.
 Other ripping features remain available without a keyring. Settings polling does
 not unlock the keyring; a password lookup happens when OpenSubtitles is used.
 
-Existing plaintext passwords remain readable for compatibility. In Settings >
-Names and lookups, choose **Move to keyring** to migrate one explicitly, or enter
-a replacement. **Remove saved password** clears the settings reference and removes
-the saved keyring item. Replacement verifies the new item before updating settings
+In Settings > Names and lookups, **Remove saved password** clears the settings
+reference and removes the saved keyring item. Replacement verifies the new item before updating settings
 and deleting the old item. Failed writes keep the previous credentials. If deletion
 fails, Settings asks you to remove the unused item in your keyring manager.
-Migration does not rewrite old settings backups; remove any obsolete copies that
-contain the old password. A settings reference alone is not a password backup:
+A settings reference alone is not a password backup:
 after moving to another machine or account, enter your password again.
 
 ## Tray and background operation
@@ -155,7 +152,7 @@ Process tests create real subprocess trees and verify cancellation, graceful
 shutdown and abrupt parent death, including children that ignore termination.
 The application smoke test also verifies restart and quit through their APIs.
 Password tests cover missing/locked keyrings, exact password round-trips, secret
-redaction, migration and rollback when settings cannot be written. Background tests
+redaction and rollback when settings cannot be written. Background tests
 launch the real detached application, reuse it, restart it and quit it without a
 graphical session.
 
@@ -168,7 +165,7 @@ python3 tests/desktop_services.py
 
 It needs `dbus-run-session`, Xvfb, xauth, GTK3, Ayatana AppIndicator3, libsecret tools,
 GNOME Keyring and PyGObject. PyGObject is only used by the test host, not Shelfrip.
-The suite checks real password migration/replacement/removal, exported tray menus,
+The suite checks real password saving/replacement/removal, exported tray menus,
 menu activation, status updates, host reconnection, missing-host fallback and helper
 cleanup after abrupt parent death. CI runs this separately from the standard-library
 test suite and the Debian/Alpine portability tests. It does not establish appearance

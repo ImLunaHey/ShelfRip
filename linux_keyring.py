@@ -70,6 +70,5 @@ def cleanup(reference: str) -> None:
         WARNING = "An unused Shelfrip password item could not be removed. You can remove it in your desktop keyring manager."
 
 
-def status(stored: str) -> dict:
-    return {"mode": "keyring" if is_reference(stored) else "legacy" if stored else "none",
-            "helper_available": bool(shutil.which("secret-tool")), "warning": WARNING}
+def status() -> dict:
+    return {"helper_available": bool(shutil.which("secret-tool")), "warning": WARNING}
