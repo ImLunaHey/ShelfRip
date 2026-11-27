@@ -163,7 +163,6 @@ MAKEMKV_URL = "https://www.makemkv.com/download/"
 
 def find_makemkv(cfg: dict) -> str | None:
     """makemkvcon: where the settings say, else the usual install folders, else on PATH."""
-    import shutil
     cands = []
     if cfg.get("makemkvcon_path"):
         p = Path(cfg["makemkvcon_path"])

@@ -328,6 +328,56 @@ def _ts(sec: float) -> str:
     return f"{int(h):02d}:{int(m):02d}:{s:06.3f}"
 
 
+def _identify(mkvmerge: str, path: Path) -> dict:
+    return json.loads(subprocess.run([mkvmerge, "-J", str(path)], capture_output=True, text=True,
+                                     encoding="utf-8", errors="replace", creationflags=NOWIN).stdout or "{}")
+
+
+def _duration(info: dict) -> float:
+    return (info.get("container", {}).get("properties", {}).get("duration") or 0) / 1e9
+
+
+def _sig(t: dict) -> tuple:
+    pr = t.get("properties") or {}
+    return (t.get("type"), t.get("codec"), pr.get("language"), pr.get("track_name"), pr.get("audio_channels"))
+
+
+def _missing_tracks(src_info: dict, out_info: dict) -> list[dict]:
+    """Source tracks (audio or subtitles) that aren't in the cut file: they have nothing in its range."""
+    left = [_sig(t) for t in out_info.get("tracks", [])]
+    gone = []
+    for t in src_info.get("tracks", []):
+        if _sig(t) in left:
+            left.remove(_sig(t))
+        elif t.get("type") in ("audio", "subtitles"):
+            gone.append(t)
+    return gone
+
+
+def _cut_once(mkvmerge: str, src: Path, parts: str, work: Path, title: str, i: int,
+              drop: list[dict]) -> tuple[list[Path], dict]:
+    """One mkvmerge cut into work/, leaving out the tracks in drop. Returns (files made, their info)."""
+    cmd = [mkvmerge, "-o", str(work / "episode.mkv"), "--split", f"parts:{parts}"]
+    if title:
+        cmd += ["--title", title]
+    if drop:
+        info = _identify(mkvmerge, src)
+        out_ids = {t.get("id") for t in drop}
+        for kind, keep_flag, none_flag in (("audio", "-a", "-A"), ("subtitles", "-s", "-S")):
+            ids = [t["id"] for t in info.get("tracks", []) if t.get("type") == kind]
+            keep = [x for x in ids if x not in out_ids]
+            if ids and len(keep) < len(ids):
+                cmd += [keep_flag, ",".join(map(str, keep))] if keep else [none_flag]
+    cmd.append(str(src))
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       creationflags=NOWIN)
+    made = sorted(work.glob("*.mkv"))
+    if r.returncode >= 2 or len(made) != 1:
+        last = ((r.stdout or "") + (r.stderr or "")).strip().splitlines()[-1:]
+        raise RuntimeError(f"mkvmerge couldn't cut episode {i + 1}" + (f": {last[0]}" if last else ""))
+    return made, _identify(mkvmerge, made[0])
+
+
 def cut(src: Path, split: dict, i: int, out: Path, cfg: dict, title: str = "") -> Path:
     """Write episode i of src to out (via a temp folder next to out). Returns out."""
     mkvmerge = tool(cfg, "mkvmerge")
@@ -337,22 +387,22 @@ def cut(src: Path, split: dict, i: int, out: Path, cfg: dict, title: str = "") -
     parts = ",".join(("+" if k else "") + f"{_ts(a)}-{_ts(b)}" for k, (a, b) in enumerate(ranges))
     out.parent.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="split_", dir=str(out.parent)))
+    want = sum(b - a for a, b in ranges)
     try:
-        cmd = [mkvmerge, "-o", str(work / "episode.mkv"), "--split", f"parts:{parts}"]
-        if title:
-            cmd += ["--title", title]
-        cmd.append(str(src))
-        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                           creationflags=NOWIN)
-        made = sorted(work.glob("*.mkv"))
-        if r.returncode >= 2 or len(made) != 1:
-            last = ((r.stdout or "") + (r.stderr or "")).strip().splitlines()[-1:]
-            raise RuntimeError(f"mkvmerge couldn't cut episode {i + 1}" + (f": {last[0]}" if last else ""))
-        # sanity check: the result should be about as long as the ranges asked for
-        want = sum(b - a for a, b in ranges)
-        info = json.loads(subprocess.run([mkvmerge, "-J", str(made[0])], capture_output=True, text=True,
-                                         encoding="utf-8", errors="replace", creationflags=NOWIN).stdout or "{}")
-        got = (info.get("container", {}).get("properties", {}).get("duration") or 0) / 1e9
+        made, info = _cut_once(mkvmerge, src, parts, work, title, i, [])
+        got = _duration(info)
+        if got and abs(got - want) > max(5, 0.03 * want):
+            # A track that ends before this episode starts (say a commentary covering only the first
+            # episode) is left out by mkvmerge, but it throws the timestamps after it off by hours
+            # (Fairy Tail, 2026-11-26: 7345s instead of 1508s). Cut again without the tracks that
+            # came out empty.
+            src_info = _identify(mkvmerge, src)
+            gone = _missing_tracks(src_info, info)
+            if gone and len(src_info.get("tracks", [])) - len(info.get("tracks", [])) == len(gone):
+                for f in made:
+                    f.unlink()
+                made, info = _cut_once(mkvmerge, src, parts, work, title, i, gone)
+                got = _duration(info)
         if got and abs(got - want) > max(5, 0.03 * want):
             raise RuntimeError(f"episode {i + 1} came out {got:.0f}s long, expected {want:.0f}s")
         renumber_chapters(made[0], split, ranges, cfg)

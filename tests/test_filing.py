@@ -156,6 +156,50 @@ class Stuck(unittest.TestCase):
         self.assertTrue(src.exists())
 
 
+class SplitResume(unittest.TestCase):
+    def test_failed_split_keeps_the_episodes_already_filed(self):
+        """Fairy Tail, 2026-11-26: cutting the last episode failed after e02-e05 were in the library.
+        Filing again said they were "already in Plex" and set the whole video to Skip."""
+        import split
+        name = "SPLITFAIL"
+        d = TMP / "rip" / name
+        d.mkdir()
+        (d / "disc_info.json").write_text("{}")
+        (d / "b.mkv").write_bytes(b"x" * 1000)
+        lib = "TV Shows\\DVD\\Splitshow (2009) {tmdb-777}"
+        names = [f"Splitshow (2009) - s02e0{k} - Ep {k}" for k in (1, 2, 3)]
+        plan = {"kind": "tv", "title": "Splitshow", "year": "2009", "tmdb_id": "777", "season": 2, "status": "proposed",
+                "format": "DVD", "disc_label": name, "library_dir": lib,
+                "items": [{"source": "b.mkv", "action": "move", "role": "episode", "season": 2, "episodes": [1, 2, 3],
+                           "needs_split": True, "dest_dir": lib + "\\Season 2", "name": "Splitshow (2009) - s02e01-e03",
+                           "split": {"chapters": [0, 100, 200], "starts": [0, 1, 2], "total": 300, "names": names}}]}
+        review.save_plan(d, plan)
+        cut, fail = [], {"on": 2}
+
+        def fake_cut(src, sp, k, out, cfg, title=""):
+            if k == fail["on"]:
+                raise RuntimeError(f"episode {k + 1} came out 7345s long, expected 100s")
+            cut.append(k)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(b"e" * 10)
+            return out
+        real = (split.cut, split.tag_audio, split.set_default_tracks, split.available)
+        split.cut, split.tag_audio, split.set_default_tracks = fake_cut, lambda *a: "", lambda *a: ""
+        split.available = lambda cfg: True
+        try:
+            self.assertEqual(review.start_filing(d, json.loads((d / "plan.json").read_text())), [])
+            self.assertEqual(wait(name)["state"], "error")
+            plan = json.loads((d / "plan.json").read_text())
+            self.assertEqual(len(plan["items"][0]["filed_to"]), 2)  # e01 and e02 noted as this disc's own
+            self.assertFalse(review.item_done(plan["items"][0]))
+            fail["on"] = None
+            self.assertEqual(review.start_filing(d, plan), [])  # not "already in Plex", not "already exists"
+            self.assertEqual(wait(name)["state"], "done")
+            self.assertEqual(cut, [0, 1, 2])  # only e03 was cut the second time
+        finally:
+            split.cut, split.tag_audio, split.set_default_tracks, split.available = real
+
+
 class StartOver(unittest.TestCase):
     def test_start_naming_over(self):
         d, plan = make_disc("AGAIN")
