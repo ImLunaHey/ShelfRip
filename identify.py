@@ -1392,6 +1392,14 @@ def plan_tv(folder: Path, rip_root: Path, disc: dict, titles: list[dict], label_
             "action": "move", "note": note,
         })
 
+    if tmdb_eps:  # numbered past the end of TMDB's season: often a special (OVA) that belongs in Season 0
+        beyond = sorted({e for i in items if i.get("role") == "episode" for e in i["episodes"] if e not in tmdb_eps})
+        if beyond:
+            warnings.append(f"TMDB's season {season} has {len(tmdb_eps)} episodes, so "
+                            + ", ".join(f"e{e:02d}" for e in beyond) + (" has no TMDB title. It may be a special"
+                            if len(beyond) == 1 else " have no TMDB titles. They may be specials")
+                            + " (Season 0) or the episodes may be numbered wrong: check before filing.")
+
     ep_files = {i["source"] for i in items}
     n = 0
     for t in sorted(titles, key=lambda t: t["title_id"]):

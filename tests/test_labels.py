@@ -101,5 +101,16 @@ class FirstEpisode(unittest.TestCase):
         self.assertNotIn("guessed from the disc number", " ".join(warnings))
 
 
+class PastTheSeason(unittest.TestCase):
+    def test_episode_tmdb_doesnt_have_is_flagged(self):
+        """Haven't You Heard? I'm Sakamoto, 2026-11-26: an OVA on the last disc was filed as s01e13 with
+        no title. Episodes past the end of TMDB's last season now get a warning, which holds the disc."""
+        plan, eps, warnings = episodes("LASTSHOW_SEASON_3", n=15)
+        self.assertEqual(eps[-2:], [(3, 14), (3, 15)])
+        self.assertIn("e14, e15 have no TMDB titles", " ".join(warnings))
+        plan, eps, warnings = episodes("FITSHOW_SEASON_3", n=13)
+        self.assertNotIn("no TMDB title", " ".join(warnings))
+
+
 if __name__ == "__main__":
     unittest.main()
