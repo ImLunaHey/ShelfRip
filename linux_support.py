@@ -16,6 +16,7 @@ from pathlib import Path
 
 SYS_BLOCK = Path('/sys/class/block')
 SYS_DEV = Path('/sys/dev/block')
+MOUNTINFO = Path('/proc/self/mountinfo')
 
 
 def optical_device(device: str) -> str:
@@ -28,6 +29,39 @@ def optical_device(device: str) -> str:
     if kind.read_text().strip() != '5':
         raise ValueError(f'{device} is not an optical drive')
     return str(path)
+
+
+def mounted_root(device: str) -> str | None:
+    """Find a visible whole-disc mount by device number, never by label or path spelling.
+
+    mountinfo belongs to this process's mount namespace. Full-root bind mounts
+    are usable; subtree binds and mounts hidden by another filesystem are not.
+    This only reads metadata and does not mount media or change permissions.
+    """
+    def unescape(value):
+        return re.sub(r'\\(040|011|012|134)', lambda m: chr(int(m[1], 8)), value)
+
+    try:
+        info = Path(optical_device(device)).stat()
+        number = f'{os.major(info.st_rdev)}:{os.minor(info.st_rdev)}'
+        lines = MOUNTINFO.read_text(encoding='utf-8', errors='surrogateescape').splitlines()
+        for line in lines:
+            fields = line.partition(' - ')[0].split()
+            if ' - ' not in line or len(fields) < 6 or fields[2] != number or unescape(fields[3]) != '/':
+                continue
+            root = Path(unescape(fields[4]))
+            if not root.is_absolute():
+                continue
+            try:
+                mounted = root.stat()
+                if (stat.S_ISDIR(mounted.st_mode) and mounted.st_dev == info.st_rdev
+                        and os.access(root, os.R_OK | os.X_OK)):
+                    return str(root)
+            except OSError:  # inaccessible, stale or hidden; another mount may work
+                continue
+    except (OSError, ValueError):  # removed drive, unavailable procfs or not an optical device
+        pass
+    return None
 
 
 def _decode_label(value: str) -> str:

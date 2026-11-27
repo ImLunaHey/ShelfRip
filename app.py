@@ -109,6 +109,7 @@ SETTINGS = [  # (key, label, kind)
     ("opensubtitles_api_key", "OpenSubtitles API key (optional: replaces Shelfrip's)", "secret"),
     ("reference_subtitles_per_disc", "Most subtitle downloads per disc", "number"),
     ("tesseract_path", "Tesseract OCR, for reading Blu-ray and DVD subtitles", "text"),
+    ("thediscdb_scan_path", "TheDiscDB scanner (optional)", "text"),
     ("plex_token", "Plex token (Plex only, optional)", "secret"),
     ("check_updates", "Tell me when a new version of Shelfrip is out", "bool"),
     ("sounds", "Play sounds (a chime when a disc is filed, a fanfare when you level up)", "bool"),
@@ -168,12 +169,15 @@ def notify(title: str, text: str) -> None:
 
 def disc_kind(root: str) -> str:
     """'dvd', 'bluray' or '4k' from the disc's folders (UHD discs use index.bdmv version 0300)."""
-    from pathlib import Path as _P
+    import discdb
     try:
-        idx = _P(root) / "BDMV" / "index.bdmv"
-        if idx.is_file():
-            return "4k" if idx.read_bytes()[:8] == b"INDX0300" else "bluray"
-        if (_P(root) / "VIDEO_TS").is_dir():
+        bdmv = discdb.disc_directory(root, "BDMV")
+        if bdmv:
+            idx = next((p for p in bdmv.iterdir() if p.name.lower() == "index.bdmv"), None)
+            if idx and idx.is_file():
+                with idx.open("rb") as f:
+                    return "4k" if f.read(8) == b"INDX0300" else "bluray"
+        if discdb.disc_directory(root, "VIDEO_TS"):
             return "dvd"
     except OSError:
         pass
@@ -185,7 +189,8 @@ def identify_disc(dev: str, label: str, cfg: dict) -> dict | None:
     from a label you've filed before. {kind, title, year, tmdb_id, episodes: [(season, ep)], how}"""
     import catalog
     import discdb
-    fp = discdb.fingerprint(dev + "\\") if len(dev) == 2 and dev[1] == ":" else None
+    root = discdb.mounted_root(dev)
+    fp = discdb.fingerprint(root) if root else None
     h = (fp or {}).get("content_hash")
     if h and catalog.DB_PATH.exists():
         con = catalog.connect()
@@ -253,7 +258,9 @@ def label_guess(label: str, tmdb) -> dict | None:
 
 def in_plex_already(dev: str, label: str, cfg: dict, ident: dict | None = None) -> str:
     """A sentence saying Plex already has this disc in the same or better quality, else ''."""
-    kind = disc_kind(dev + "\\")
+    import discdb
+    root = discdb.mounted_root(dev)
+    kind = disc_kind(root) if root else ""
     ident = ident if ident is not None else identify_disc(dev, label, cfg)
     if not ident or not kind:
         return ""

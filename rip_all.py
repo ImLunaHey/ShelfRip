@@ -59,9 +59,8 @@ DEFAULT_CONFIG = {
     # --watch mode: seconds between checks for newly inserted discs.
     "watch_poll_seconds": 15,
     # Optional: TheDiscDB's scan tool, to make an upload-ready disc manifest while the disc
-    # is in the drive (download thediscdb-scan.exe from
-    # https://github.com/TheDiscDb/optical-disc-manifest/releases?q=scan-cli )
-    "thediscdb_scan_path": str(HERE / "tools" / "thediscdb-scan.exe"),
+    # is mounted. Supply a native scanner implementing the CLI below.
+    "thediscdb_scan_path": str(HERE / "tools" / "thediscdb-scan.exe") if os.name == "nt" else "",
 }
 
 # A drive is "in use" while its lock file in output_root is fresh. The rip that
@@ -758,6 +757,82 @@ def drive_lost(text: str) -> bool:
     return bool(re.search(r"Unknown device|Failed to open disc", text, re.I))
 
 
+DISC_SCAN_TIMEOUT = 300
+
+
+def disc_scanner(cfg: dict) -> str | None:
+    """An explicit executable takes precedence; otherwise discover the native CLI."""
+    configured = str(cfg.get("thediscdb_scan_path") or "").strip()
+    if configured:
+        return shutil.which(configured)
+    name = "thediscdb-scan.exe" if os.name == "nt" else "thediscdb-scan"
+    return shutil.which(str(HERE / "tools" / name)) or shutil.which(name)
+
+
+def scan_manifest(scanner: str, root: str, out_dir: Path, device: str) -> None:
+    """Run the optional scanner under the rip's cancellation/shutdown ownership.
+
+    Publish only a successful JSON manifest. Failed scans leave no partial upload
+    candidate and never prevent normal ripping.
+    """
+    import processes
+    import tempfile
+    proc = None
+    st = STATUS.setdefault(device, {})
+    if st.get("cancel"):
+        return
+    try:
+        with tempfile.TemporaryDirectory(prefix=".disc-scan-", dir=out_dir) as tmp:
+            output = Path(tmp) / "disc.odm.json"
+            proc = processes.spawn([scanner, root, "--output", str(output), "--force", "--quiet"],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            end_with_us(proc)
+            PROCS[device] = proc
+            try:
+                if st.get("cancel"):
+                    proc.terminate()
+                code = proc.wait(timeout=DISC_SCAN_TIMEOUT)
+                if st.get("cancel"):
+                    return
+                if code:
+                    raise ValueError(f"scanner exited with status {code}")
+                manifest = json.loads(output.read_text(encoding="utf-8-sig"))
+                if not isinstance(manifest, dict) or not isinstance(manifest.get("disc"), dict):
+                    raise ValueError("scanner did not produce a disc manifest")
+                output.replace(out_dir / "disc.odm.json")
+            finally:
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
+                if PROCS.get(device) is proc:
+                    PROCS.pop(device, None)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        log(f"{device} TheDiscDB scan skipped ({exc})")
+
+
+def record_disc_metadata(cfg: dict, device: str, disc: dict, out_dir: Path) -> None:
+    import discdb
+    root = discdb.mounted_root(device)
+    if not root:
+        if sys.platform.startswith("linux"):
+            log(f"{device} has no accessible mounted disc. Fingerprinting and TheDiscDB scanning skipped; "
+                "mount the disc in your file manager to enable them. Ripping can continue.")
+        return
+    fp = discdb.fingerprint(root)
+    if fp:
+        disc.update(content_hash=fp["content_hash"], disc_layout=fp["layout"])
+    scanner = disc_scanner(cfg)
+    if scanner:
+        scan_manifest(scanner, root, out_dir, device)
+    elif cfg.get("thediscdb_scan_path"):
+        log(f"{device} TheDiscDB scan skipped: configured scanner was not found or is not executable.")
+
+
 def rip_disc(cfg: dict, drive: dict) -> dict:
     """Rip one disc: read its titles, leave out duplicates and scene-by-scene copies, rip the
     rest (resuming an interrupted rip), retry titles that came out short, and save
@@ -812,22 +887,7 @@ def rip_disc(cfg: dict, drive: dict) -> dict:
         "ripped_at": started.isoformat(timespec="seconds"),
         "min_length_seconds": int(min_len),
     })
-    if re.fullmatch(r"[A-Za-z]:", device):
-        try:  # TheDiscDB fingerprint (file sizes only), used by the naming step
-            import discdb
-            fp = discdb.fingerprint(device + "\\")
-            if fp:
-                disc.update(content_hash=fp["content_hash"], disc_layout=fp["layout"])
-        except Exception as exc:
-            log(f"{device} [{label}] couldn't fingerprint disc ({exc})")
-        scanner = Path(cfg.get("thediscdb_scan_path") or "")
-        if scanner.is_file():
-            try:  # reads disc structure only; the file is offered for upload after filing
-                subprocess.run([str(scanner), device + "\\", "--output", str(out_dir / "disc.odm.json"),
-                                "--force", "--quiet"], capture_output=True, timeout=300,
-                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            except Exception as exc:
-                log(f"{device} [{label}] TheDiscDB scan skipped ({exc})")
+    record_disc_metadata(cfg, device, disc, out_dir)
     n_titles = len(disc["titles"])
     total_min = sum(t.get("duration_seconds", 0) for t in disc["titles"]) // 60
     log(f"{device} [{label}] {n_titles} titles, {total_min} min total. Ripping...")

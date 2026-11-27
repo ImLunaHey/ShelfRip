@@ -2084,6 +2084,7 @@ const SET_GROUPS = [
     ["makemkvcon_path", "MakeMKV command-line program", "Does the ripping.", {pick:"file"}],
     ["mkvtoolnix_dir", "MKVToolNix folder", "Splits TV discs that hold several episodes in one video.", {pick:"folder"}],
     ["tesseract_path", "Tesseract OCR", "Reads Blu-ray and DVD subtitles for the subtitle check. Leave empty to find it by itself.", {pick:"file", adv:1}],
+    ["thediscdb_scan_path", "TheDiscDB scanner (optional)", "Creates a disc manifest for you to upload after filing. Choose the native scanner executable, or leave empty to find thediscdb-scan in the tools folder or on PATH. The disc must be mounted.", {pick:"file", adv:1}],
   ]},
   {id:"alerts", name:"Notifications", icon:"M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10 21h4", intro:"", items:[
     ["notifications", "Desktop notifications", "When a rip finishes or a disc is filed."],
